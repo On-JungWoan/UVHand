@@ -166,24 +166,25 @@ class DeformableDETR(nn.Module):
         ### backbone ###
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_hand_coord_unact, enc_outputs_obj_coord_unact = self.transformer(srcs, masks, pos, query_embeds)
         # hs : result include intermeditate feature (num_decoder_layer, B, num_queries, hidden_dim)
-        dataset = 'H2O' if len(self.cfg.hand_idx) == 2 else 'FPHA'
+        # dataset = 'H2O' if len(self.cfg.hand_idx) == 2 else 'FPHA'
+        dataset = 'AssemblyHands' if len(self.cfg.hand_idx) == 2 else 'FPHA'
         outputs_classes = []
         outputs_keypoints = [] 
-        outputs_obj_keypoints = [] 
+        # outputs_obj_keypoints = [] 
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
                 reference = inverse_sigmoid(reference)
             else:
                 reference = inter_references[lvl - 1]
-                if dataset == 'H2O':
-                    reference = inverse_sigmoid(reference)
-                else:
-                    reference = inverse_sigmoid((reference+ 0.5)/2)
+                # if dataset == 'H2O':
+                #     reference = inverse_sigmoid(reference)
+                # else:
+                reference = inverse_sigmoid((reference+ 0.5)/2)
 
             outputs_class = self.cls_embed[lvl](hs[lvl])
             key = self.keypoint_embed[lvl](hs[lvl]) 
-            obj_key = self.obj_keypoint_embed[lvl](hs[lvl]) 
+            # obj_key = self.obj_keypoint_embed[lvl](hs[lvl]) 
                 
             if reference.shape[-1] == 42:
                 ref_x = reference[...,0::2].mean(-1).unsqueeze(-1)
@@ -193,9 +194,9 @@ class DeformableDETR(nn.Module):
                 key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
                 key = key.reshape(key.shape[0], key.shape[1], -1)
 
-                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
-                obj_key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
-                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
+                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
+                # obj_key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
+                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
 
             else:
                 assert reference.shape[-1] == 2
@@ -203,40 +204,46 @@ class DeformableDETR(nn.Module):
                 key[..., :2] += reference[:,:,None,:] 
                 key = key.reshape(key.shape[0], key.shape[1], -1)
                 
-                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
-                obj_key[..., :2] += reference[:,:,None,:] 
-                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
+                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
+                # obj_key[..., :2] += reference[:,:,None,:] 
+                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
 
-            if dataset == 'H2O':
-                outputs_keypoint = key.sigmoid() 
-                outputs_obj_keypoint = obj_key.sigmoid() 
-            else:
-                outputs_keypoint = key.sigmoid()*2 - 0.5
-                outputs_obj_keypoint = obj_key.sigmoid()*2 - 0.5
+            # if dataset == 'H2O':
+            #     outputs_keypoint = key.sigmoid() 
+            #     outputs_obj_keypoint = obj_key.sigmoid() 
+            # else:
+            outputs_keypoint = key.sigmoid()*2 - 0.5
+            # outputs_obj_keypoint = obj_key.sigmoid()*2 - 0.5
             outputs_classes.append(outputs_class)
             outputs_keypoints.append(outputs_keypoint) 
-            outputs_obj_keypoints.append(outputs_obj_keypoint) 
+            # outputs_obj_keypoints.append(outputs_obj_keypoint) 
         outputs_class = torch.stack(outputs_classes)
         outputs_keypoints = torch.stack(outputs_keypoints) 
-        outputs_obj_keypoints = torch.stack(outputs_obj_keypoints) 
+        # outputs_obj_keypoints = torch.stack(outputs_obj_keypoints) 
 
-        out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1], 'pred_obj_keypoints': outputs_obj_keypoints[-1]} 
+        # out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1], 'pred_obj_keypoints': outputs_obj_keypoints[-1]} 
+        out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1]} 
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints, outputs_obj_keypoints) 
+            # out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints, outputs_obj_keypoints) 
+            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints) 
 
         if self.two_stage:
             enc_outputs_hand_coord = enc_outputs_hand_coord_unact.sigmoid()
-            enc_outputs_obj_coord = enc_outputs_obj_coord_unact.sigmoid()
-            out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_keypoints': enc_outputs_hand_coord, 'pred_obj_keypoints': enc_outputs_obj_coord}
+            # enc_outputs_obj_coord = enc_outputs_obj_coord_unact.sigmoid()
+            # out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_keypoints': enc_outputs_hand_coord, 'pred_obj_keypoints': enc_outputs_obj_coord}
+            out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_keypoints': enc_outputs_hand_coord}
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_keypoints, outputs_obj_keypoints) : 
+    # def _set_aux_loss(self, outputs_class, outputs_keypoints, outputs_obj_keypoints) : 
+    def _set_aux_loss(self, outputs_class, outputs_keypoints) : 
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_keypoints': b,  'pred_obj_keypoints': c}
-                for a, b, c, in zip(outputs_class[:-1], outputs_keypoints[:-1], outputs_obj_keypoints[:-1])] 
+        return [{'pred_logits': a, 'pred_keypoints': b}
+                for a, b in zip(outputs_class[:-1], outputs_keypoints[:-1])]
+        # return [{'pred_logits': a, 'pred_keypoints': b,  'pred_obj_keypoints': c}
+        #         for a, b, c, in zip(outputs_class[:-1], outputs_keypoints[:-1], outputs_obj_keypoints[:-1])] 
 
 class SetCriterion(nn.Module):
     """ This class computes the loss for DETR.

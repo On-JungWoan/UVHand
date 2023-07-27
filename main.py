@@ -293,20 +293,21 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        if not args.eval:
-            if args.distributed:
-                sampler_train.set_epoch(epoch)
-            train_stats = train_pose(
-                model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
-            lr_scheduler.step()
+        # if not args.eval:
+        if args.distributed:
+            sampler_train.set_epoch(epoch)
+        train_stats = train_pose(
+            # model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
+            model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm)
+        lr_scheduler.step()
 
-            utils.save_on_master({
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
-                'epoch': epoch,
-                'args': args,
-            }, f'{args.output_dir}/{args.dataset_file}_aug45/{epoch}.pth')
+        utils.save_on_master({
+            'model': model_without_ddp.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict(),
+            'epoch': epoch,
+            'args': args,
+        }, f'{args.output_dir}/{args.dataset_file}_aug45/{epoch}.pth')
 
         val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
         print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")

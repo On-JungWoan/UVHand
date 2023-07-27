@@ -68,18 +68,19 @@ class HungarianMatcher(nn.Module):
             # We flatten to compute the cost matrices in a batch
             out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()
             out_kp = outputs["pred_keypoints"].flatten(0,1)
-            out_objkp = outputs["pred_obj_keypoints"].flatten(0,1)
+            # out_objkp = outputs["pred_obj_keypoints"].flatten(0,1)
 
             # Also concat the target labels and boxes
             tgt_ids = torch.cat([v["labels"] for v in targets])
             tgt_kp = torch.cat([v["keypoints"] for v in targets])
 
-            hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
-            obj_idx = torch.ones_like(tgt_ids, dtype=torch.bool)
-            for idx in [0] + self.cfg.hand_idx:
-                obj_idx &= (tgt_ids != idx)
-                if idx != 0:
-                    hand_idx |= (tgt_ids == idx)
+            # hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
+            # obj_idx = torch.ones_like(tgt_ids, dtype=torch.bool)
+            # for idx in [0] + self.cfg.hand_idx:
+            #     obj_idx &= (tgt_ids != idx)
+            #     if idx != 0:
+            #         hand_idx |= (tgt_ids == idx)
+            hand_idx = tgt_ids != 0
             
             # Compute the classification cost.
             alpha = 0.25
@@ -91,10 +92,10 @@ class HungarianMatcher(nn.Module):
             # Compute the L1 cost between boxes
             cost_keypoints = torch.zeros_like(cost_class)
             cost_hand = torch.cdist(out_kp, tgt_kp.reshape(-1, 63)[hand_idx], p=1)
-            cost_obj = torch.cdist(out_objkp, tgt_kp.reshape(-1, 63)[obj_idx], p=1)
+            # cost_obj = torch.cdist(out_objkp, tgt_kp.reshape(-1, 63)[obj_idx], p=1)
 
             cost_keypoints[:,hand_idx] = cost_hand
-            cost_keypoints[:,obj_idx] = cost_obj
+            # cost_keypoints[:,obj_idx] = cost_obj
 
             C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
             C = C.view(bs, num_queries, -1).cpu()

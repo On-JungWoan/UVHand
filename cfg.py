@@ -4,7 +4,7 @@ class Config:
     def __init__(self, args):
         if args.dataset_file == 'AssemblyHands':
             self.num_obj_classes = 3
-            self.hand_idx = [0, 1]
+            self.hand_idx = [1, 2] # left 1, right 2
 
 
         elif args.dataset_file == 'H2O':
