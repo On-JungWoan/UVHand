@@ -43,51 +43,51 @@ def visualize(cv_img, img_points, mode='left'):
     else:
         color = (0,0,255)
     line_thickness = 2
-    cv2.line(cv_img, tuple([img_points[1][0], img_points[1][1]]), tuple(
-        [img_points[2][0], img_points[2][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[2][0], img_points[2][1]]), tuple(
-        [img_points[3][0], img_points[3][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[3][0], img_points[3][1]]), tuple(
-        [img_points[4][0], img_points[4][1]]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[1][:-1]), tuple(
+        img_points[2][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[2][:-1]), tuple(
+        img_points[3][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[3][:-1]), tuple(
+        img_points[4][:-1]), color, line_thickness)
 
-    cv2.line(cv_img, tuple([img_points[5][0], img_points[5][1]]), tuple(
-        [img_points[6][0], img_points[6][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[6][0], img_points[6][1]]), tuple(
-        [img_points[7][0], img_points[7][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[7][0], img_points[7][1]]), tuple(
-        [img_points[8][0], img_points[8][1]]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[5][:-1]), tuple(
+        img_points[6][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[6][:-1]), tuple(
+        img_points[7][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[7][:-1]), tuple(
+        img_points[8][:-1]), color, line_thickness)
 
-    cv2.line(cv_img, tuple([img_points[9][0], img_points[9][1]]), tuple(
-        [img_points[10][0], img_points[10][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[10][0], img_points[10][1]]), tuple(
-        [img_points[11][0], img_points[11][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[11][0], img_points[11][1]]), tuple(
-        [img_points[12][0], img_points[12][1]]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[9][:-1]), tuple(
+        img_points[10][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[10][:-1]), tuple(
+        img_points[11][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[11][:-1]), tuple(
+        img_points[12][:-1]), color, line_thickness)
 
-    cv2.line(cv_img, tuple([img_points[13][0], img_points[13][1]]), tuple(
-        [img_points[14][0], img_points[14][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[14][0], img_points[14][1]]), tuple(
-        [img_points[15][0], img_points[15][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[15][0], img_points[15][1]]), tuple(
-        [img_points[16][0], img_points[16][1]]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[13][:-1]), tuple(
+        img_points[14][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[14][:-1]), tuple(
+        img_points[15][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[15][:-1]), tuple(
+        img_points[16][:-1]), color, line_thickness)
 
-    cv2.line(cv_img, tuple([img_points[17][0], img_points[17][1]]), tuple(
-        [img_points[18][0], img_points[18][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[18][0], img_points[18][1]]), tuple(
-        [img_points[19][0], img_points[19][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[19][0], img_points[19][1]]), tuple(
-        [img_points[20][0], img_points[20][1]]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[17][:-1]), tuple(
+        img_points[18][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[18][:-1]), tuple(
+        img_points[19][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[19][:-1]), tuple(
+        img_points[20][:-1]), color, line_thickness)
 
-    cv2.line(cv_img, tuple([img_points[0][0], img_points[0][1]]), tuple(
-        [img_points[1][0], img_points[1][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[0][0], img_points[0][1]]), tuple(
-        [img_points[5][0], img_points[5][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[0][0], img_points[0][1]]), tuple(
-        [img_points[9][0], img_points[9][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[0][0], img_points[0][1]]), tuple(
-        [img_points[13][0], img_points[13][1]]), color, line_thickness)
-    cv2.line(cv_img, tuple([img_points[0][0], img_points[0][1]]), tuple(
-        [img_points[17][0], img_points[17][1]]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[1][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[5][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[9][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[13][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[17][:-1]), color, line_thickness)
 
     # plt.imshow(cv_img)
     return cv_img

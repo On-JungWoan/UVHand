@@ -124,6 +124,7 @@ def get_args_parser():
 
     # for hand challenge
     parser.add_argument('--eval', default=False, action='store_true')
+    parser.add_argument('--visualization', default=False, action='store_true')
     return parser
 
 
@@ -149,6 +150,18 @@ def main(args):
     cudnn.benchmark = False
     cudnn.deterministic = True
     random.seed(seed)
+
+    if args.visualization:
+        model, criterion = build_model(args, cfg)
+        model.to(device)
+
+        if args.resume:
+            checkpoint = torch.load(args.resume, map_location='cpu')
+            missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
+
+        from visualization import vis
+        while True:
+            vis(model, device, cfg)
 
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)

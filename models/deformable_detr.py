@@ -366,7 +366,7 @@ class SetCriterion(nn.Module):
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
             'hand_keypoint': self.loss_hand_keypoints,
-            'obj_keypoint': self.loss_obj_keypoints,
+#            'obj_keypoint': self.loss_obj_keypoints,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

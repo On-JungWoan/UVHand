@@ -434,10 +434,10 @@ class DeformableTransformerDecoder(nn.Module):
                 elif reference_points.shape[-1] == 42:
                     ref_x = reference_points[...,0::2].mean(-1).unsqueeze(-1)
                     ref_y = reference_points[...,1::2].mean(-1).unsqueeze(-1)
-                    if len(self.cfg.hand_idx) == 2:
-                        new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
-                    else:
-                        new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
+                    # if len(self.cfg.hand_idx) == 2:
+                    #     new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
+                    # else:
+                    new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
                 new_reference_points[hand_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[hand_idx][...,:2] 
                     
             if self.obj_keypoint_embed is not None:
