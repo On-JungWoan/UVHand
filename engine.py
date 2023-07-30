@@ -36,6 +36,7 @@ import pickle
 from manopth.manolayer import ManoLayer
 import trimesh
 import json
+import wandb
 
 def visualize(cv_img, img_points, mode='left'):
     if mode == 'left':
@@ -176,9 +177,68 @@ def rigid_transform_3D_numpy(A, B):
     t = -np.matmul(c[:,None,None]*R, centroid_A[...,None])[...,-1] + centroid_B
     return c, R, t
 
+def vis(data_loader, targets, FPHA=False):
+    filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
+    if FPHA:
+        filepath = data_loader.dataset.root / 'Video_files'/ filename
+    else:
+        filepath = data_loader.dataset.root / filename
+    cv_img = np.array(Image.open(filepath))
+    img_points = targets[0]['keypoints'][0].cpu().detach().numpy().astype(np.int32)
+    color = (0,0,255)
+    line_thickness = 2
+    cv2.line(cv_img, tuple(img_points[1][:-1]), tuple(
+        img_points[2][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[2][:-1]), tuple(
+        img_points[3][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[3][:-1]), tuple(
+        img_points[4][:-1]), color, line_thickness)
+
+    cv2.line(cv_img, tuple(img_points[5][:-1]), tuple(
+        img_points[6][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[6][:-1]), tuple(
+        img_points[7][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[7][:-1]), tuple(
+        img_points[8][:-1]), color, line_thickness)
+
+    cv2.line(cv_img, tuple(img_points[9][:-1]), tuple(
+        img_points[10][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[10][:-1]), tuple(
+        img_points[11][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[11][:-1]), tuple(
+        img_points[12][:-1]), color, line_thickness)
+
+    cv2.line(cv_img, tuple(img_points[13][:-1]), tuple(
+        img_points[14][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[14][:-1]), tuple(
+        img_points[15][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[15][:-1]), tuple(
+        img_points[16][:-1]), color, line_thickness)
+
+    cv2.line(cv_img, tuple(img_points[17][:-1]), tuple(
+        img_points[18][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[18][:-1]), tuple(
+        img_points[19][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[19][:-1]), tuple(
+        img_points[20][:-1]), color, line_thickness)
+
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[1][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[5][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[9][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[13][:-1]), color, line_thickness)
+    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
+        img_points[17][:-1]), color, line_thickness)
+
+    return cv_img
+
+
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0):
+                    device: torch.device, epoch: int, max_norm: float = 0, args=None):
     model.train()
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -192,6 +252,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     prefetcher = data_prefetcher(data_loader, device, prefetch=True)
     samples, targets = prefetcher.next()
     pbar = tqdm(range(len(data_loader)))
+
+    total_loss = 0
+    total_ce_loss = 0
+    total_hand_loss = 0
 
     for _ in pbar:
 
@@ -235,9 +299,24 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
             # 'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
             })
+        
+        total_loss += loss_value
+        total_ce_loss += loss_dict_reduced_scaled['loss_ce'].item()
+        total_hand_loss += loss_dict_reduced_scaled['loss_hand_keypoint'].item()
     
-        samples, targets = prefetcher.next()
+        if args.debug:
+            if args.num_debug == _:
+                break
 
+        samples, targets = prefetcher.next()
+        
+    wandb.log(
+        {
+            "total_loss": total_loss / len(data_loader),
+            "total_ce_loss": total_ce_loss / len(data_loader),
+            "total_hand_loss": total_hand_loss / len(data_loader)
+        }, step=epoch
+    )
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

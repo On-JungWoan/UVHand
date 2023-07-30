@@ -28,6 +28,7 @@ import os
 # import wandb
 import torch.backends.cudnn as cudnn
 from cfg import Config
+import wandb
 
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
 
@@ -125,12 +126,19 @@ def get_args_parser():
     # for hand challenge
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visualization', default=False, action='store_true')
+    parser.add_argument('--debug', default=False, action='store_true')
+    parser.add_argument('--num_debug', default=10, type=int)
     return parser
 
 
 def main(args):
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
+
+    wandb.init(
+        project='2023_ICCV_hand'
+    )
+    wandb.config.update(args)
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
@@ -166,9 +174,11 @@ def main(args):
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
+    dataset_val[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)
+    wandb.watch(model)
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -266,9 +276,10 @@ def main(args):
             pretraind_model = checkpoint["model"]
             name_list = [name for name in new_model_dict.keys() if name in pretraind_model.keys()]
 
-            name_list = list(filter(lambda x : "cls" not in x, name_list))
-            name_list = list(filter(lambda x : "obj" not in x, name_list)) # for dn_detr
-            pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list } # if "class" not in k => this method used in diff class list
+            if args.dataset_file == 'AssemblyHands':
+                name_list = list(filter(lambda x : "cls" not in x, name_list))
+                name_list = list(filter(lambda x : "obj" not in x, name_list))
+            pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list }
             
             new_model_dict.update(pretraind_model_dict)
         missing_keys, unexpected_keys = model_without_ddp.load_state_dict(new_model_dict, strict=False)
@@ -309,7 +320,7 @@ def main(args):
             sampler_train.set_epoch(epoch)
 
         train_stats = train_pose(
-            model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm)
+            model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm, args)
         lr_scheduler.step()
 
         utils.save_on_master({

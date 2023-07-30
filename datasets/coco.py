@@ -95,9 +95,6 @@ class ConvertCocoPolysToMask(object):
             keypoints = [obj["keypoints"] for obj in anno]
             if self.dataset == 'AssemblyHands':
                 keypoints = [keypoints[0][21:], keypoints[0][:21]]
-                for i in range(len(keypoints)):
-                    if all([-100000,-100000,1] == key for key in keypoints[i]):
-                        keypoints.pop(i)
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             num_keypoints = keypoints.shape[0]
             if num_keypoints:
@@ -105,9 +102,7 @@ class ConvertCocoPolysToMask(object):
 
         if num_keypoints != len(classes):
             # print('==Not matching!==')
-            if len(classes) > num_keypoints:
-                import sys
-                sys.exit(0)
+            assert len(classes) < num_keypoints
             keypoints = keypoints[classes.item()-1][None]
 
                  #max_y         min_y          max_x           min_x
@@ -120,12 +115,24 @@ class ConvertCocoPolysToMask(object):
             keypoints = keypoints[keep]
 
         fx, fy, cx, cy, _, _ = cam_param
-        uvd = torch.stack([
-            cam2pixel(keypoints[i], (fx, fy), (cx, cy)) \
-                if keypoints[i].sum()!=0 else \
-            torch.zeros(21,3) \
-                for i in range(len(classes)) 
-        ])
+
+        if self.dataset == 'AssemblyHands':
+            assert len(keypoints.shape) == 3
+            for key in keypoints:
+                for i in range(2):
+                    target = key[..., i]
+                    val = w if i == 0 else h
+                    target[target > val] = val
+                    target[target < -1] = -1
+            uvd = keypoints
+        else:
+            uvd = torch.stack([
+                cam2pixel(keypoints[i], (fx, fy), (cx, cy)) \
+                    if keypoints[i].sum()!=0 else \
+                torch.zeros(21,3) \
+                    for i in range(len(classes)) 
+            ])
+
         if self.dataset == 'FPHA':
             uvd[...,2] /= 1000
         target = {}
@@ -135,7 +142,7 @@ class ConvertCocoPolysToMask(object):
         target["labels"] = classes
         target["keypoints"] = uvd
 
-        target['check'] = torch.tensor([num_keypoints, len(classes)])
+        # target['check'] = torch.tensor([num_keypoints, len(classes)])
 
         if obj6D is not None:
             target["obj6Dpose"] = obj6D
