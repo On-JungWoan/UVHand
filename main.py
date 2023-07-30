@@ -198,7 +198,7 @@ def main(args):
     data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                  drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
                                  pin_memory=True)
-    
+
     if args.dataset_file == 'H2O':
         dataset_test = build_dataset(image_set='test', args=args)
         if args.distributed:
@@ -259,8 +259,19 @@ def main(args):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
-        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+            new_model_dict = model_without_ddp.state_dict()
+            
+            #temp dir
+            checkpoint = torch.load(args.resume)
+            pretraind_model = checkpoint["model"]
+            name_list = [name for name in new_model_dict.keys() if name in pretraind_model.keys()]
+
+            name_list = list(filter(lambda x : "cls" not in x, name_list))
+            name_list = list(filter(lambda x : "obj" not in x, name_list)) # for dn_detr
+            pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list } # if "class" not in k => this method used in diff class list
+            
+            new_model_dict.update(pretraind_model_dict)
+        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(new_model_dict, strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
             print('Missing Keys: {}'.format(missing_keys))
@@ -296,8 +307,8 @@ def main(args):
         # if not args.eval:
         if args.distributed:
             sampler_train.set_epoch(epoch)
+
         train_stats = train_pose(
-            # model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
             model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm)
         lr_scheduler.step()
 
@@ -309,8 +320,8 @@ def main(args):
             'args': args,
         }, f'{args.output_dir}/{args.dataset_file}_aug45/{epoch}.pth')
 
-        val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
-        print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
+        # val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
+        # print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
         
         if args.dataset_file == 'H2O':
             test_stats = test_pose(model, criterion, data_loader_test, device, cfg)

@@ -233,7 +233,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
             'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
-            'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
+            # 'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
             })
     
         samples, targets = prefetcher.next()

@@ -6,12 +6,12 @@
 # Modified from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
-
 """
 COCO dataset which returns image_id for evaluation.
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
+import matplotlib.pyplot as plt
 from pathlib import Path
 import torch
 import torch.utils.data
@@ -24,19 +24,7 @@ class CocoDetection(TvCocoDetection):
     def __init__(self, img_folder, ann_file, dataset, transforms, cache_mode=False, local_rank=0, local_size=1, mode='train'):
         super(CocoDetection, self).__init__(img_folder, ann_file,
                                             cache_mode=cache_mode, local_rank=local_rank, local_size=local_size)
-        self.etc_ann = None
-        if dataset == 'AssemblyHands':
-            PATHS = {
-                'calib' : (ann_file.parent / f'assemblyhands_{mode}_ego_calib_v1-1.json'),
-                'joint_3d' : (ann_file.parent / f'assemblyhands_{mode}_joint_3d_v1-1.json')
-            }
-
-            etc_ann = {}
-            for key in PATHS.keys():
-                with open(PATHS[key], 'r') as f:
-                    etc_ann[key] = json.load(f)
-            self.etc_ann = etc_ann        
-        
+        self.etc_ann = None   
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(self.coco, dataset, self.etc_ann)
         self.mode = mode
@@ -62,7 +50,6 @@ class ConvertCocoPolysToMask(object):
     def __init__(self, coco, dataset, etc_ann=None):
         self.coco = coco
         self.dataset = dataset
-        self.etc_ann= etc_ann
 
     def __call__(self, image, target):
         w, h = image.size
@@ -87,27 +74,42 @@ class ConvertCocoPolysToMask(object):
 
         classes = None
         obj6D = None
-        if not self.dataset == 'AssemblyHands':
+        if self.dataset == 'AssemblyHands':
+            name_to_idx = {'left':1, 'right':2}
+            classes = [key for key, val in anno[0]['bbox'].items() if val is not None]
+            classes = [name_to_idx[c] for c in classes]
+        else:
             classes = [obj["category_id"] for obj in anno]
-            classes = torch.tensor(classes, dtype=torch.int64)
 
             obj6D = [obj["obj6Dpose"] for obj in anno]
             obj6D = torch.tensor(obj6D)
+        classes = torch.tensor(classes, dtype=torch.int64)
 
         if self.dataset == 'AssemblyHands':
-            seq_name, camera = [self.coco.loadImgs(image_id.item())[0][name] for name in ['seq_name', 'camera']]
-            cam_matrix = self.etc_ann['calib']['calibration'][seq_name]['intrinsics'][camera+'_mono10bit']
-            cam_param = torch.Tensor([cam_matrix[0][0], cam_matrix[1][1], cam_matrix[0][-1], cam_matrix[1][-1], 0, 0])
+            cam_param = torch.Tensor(sum(list(anno[0]['cam_param'].values()), []) + [0,0])
         else:
             cam_param = torch.Tensor(self.coco.loadImgs(image_id.item())[0]['cam_param'])
 
         keypoints = None
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
+            if self.dataset == 'AssemblyHands':
+                keypoints = [keypoints[0][21:], keypoints[0][:21]]
+                for i in range(len(keypoints)):
+                    if all([-100000,-100000,1] == key for key in keypoints[i]):
+                        keypoints.pop(i)
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             num_keypoints = keypoints.shape[0]
             if num_keypoints:
                 keypoints = keypoints.view(num_keypoints, -1, 3)
+
+        if num_keypoints != len(classes):
+            # print('==Not matching!==')
+            if len(classes) > num_keypoints:
+                import sys
+                sys.exit(0)
+            keypoints = keypoints[classes.item()-1][None]
+
                  #max_y         min_y          max_x           min_x
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
@@ -118,19 +120,25 @@ class ConvertCocoPolysToMask(object):
             keypoints = keypoints[keep]
 
         fx, fy, cx, cy, _, _ = cam_param
-        uvd = torch.stack([cam2pixel(keypoints[i], (fx, fy), (cx, cy)) if keypoints[i].sum()!=0 else torch.zeros(21,3) for i in range(len(anno)) ])
+        uvd = torch.stack([
+            cam2pixel(keypoints[i], (fx, fy), (cx, cy)) \
+                if keypoints[i].sum()!=0 else \
+            torch.zeros(21,3) \
+                for i in range(len(classes)) 
+        ])
         if self.dataset == 'FPHA':
             uvd[...,2] /= 1000
         target = {}
         target["boxes"] = boxes
         target["cam_param"] = cam_param
         target["image_id"] = image_id
-        if classes is not None:
-            target["labels"] = classes
+        target["labels"] = classes
+        target["keypoints"] = uvd
+
+        target['check'] = torch.tensor([num_keypoints, len(classes)])
+
         if obj6D is not None:
             target["obj6Dpose"] = obj6D
-        if keypoints is not None:
-            target["keypoints"] = uvd
 
         # for conversion to coco api
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
@@ -181,8 +189,8 @@ def build(image_set, args):
         }
     elif args.dataset_file == 'AssemblyHands':
         PATHS = {
-            "train": (root , root / 'annotations/train/assemblyhands_train_ego_data_v1-1.json'),
-            "val": (root , root / 'annotations/val/assemblyhands_val_ego_data_v1-1.json'),
+            "train": (root , root / 'annotations/train.json'),
+            "val": (root , root / 'annotations/val.json'),
         }
 
     img_folder, ann_file = PATHS[image_set]

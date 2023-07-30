@@ -477,6 +477,7 @@ def build(args, cfg):
         weight_dict.update(aux_weight_dict)
 
     losses = ['labels', 'cardinality', 'hand_keypoint', 'obj_keypoint']
+    losses = ['labels', 'cardinality', 'hand_keypoint']
 
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
     criterion = SetCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha, cfg=cfg)
