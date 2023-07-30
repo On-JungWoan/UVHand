@@ -318,7 +318,7 @@ def main(args):
             'lr_scheduler': lr_scheduler.state_dict(),
             'epoch': epoch,
             'args': args,
-        }, f'{args.output_dir}/{args.dataset_file}_aug45/{epoch}.pth')
+        }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
 
         # val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
         # print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
