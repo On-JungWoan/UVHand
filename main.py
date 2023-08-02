@@ -123,12 +123,15 @@ def get_args_parser():
     parser.add_argument('--img_size', default=(960, 540), type=tuple)
     parser.add_argument('--make_pickle', default=False, action='store_true')
 
-    # for hand challenge
+    # for debug
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visualization', default=False, action='store_true')
     parser.add_argument('--debug', default=False, action='store_true')
     parser.add_argument('--num_debug', default=10, type=int)
+
+    # for train
     parser.add_argument('--use_h2o_pth', default=False, action='store_true', help='When you use h2o pretrained wegihts, use this argument.')
+    parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
     return parser
 
 
@@ -136,10 +139,11 @@ def main(args):
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
-    wandb.init(
-        project='2023_ICCV_hand'
-    )
-    wandb.config.update(args)
+    if args.wandb:
+        wandb.init(
+            project='2023_ICCV_hand'
+        )
+        wandb.config.update(args)
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
@@ -179,7 +183,8 @@ def main(args):
 
     model, criterion = build_model(args, cfg)
     model.to(device)
-    wandb.watch(model)
+    if args.wandb:
+        wandb.watch(model)
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

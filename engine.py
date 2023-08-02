@@ -295,14 +295,16 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 break
 
         samples, targets = prefetcher.next()
-        
-    wandb.log(
-        {
-            "total_loss": total_loss / len(data_loader),
-            "total_ce_loss": total_ce_loss / len(data_loader),
-            "total_hand_loss": total_hand_loss / len(data_loader)
-        }, step=epoch
-    )
+    
+    if args is not None and args.wandb:
+        wandb.log(
+            {
+                "total_loss": total_loss / len(data_loader),
+                "total_ce_loss": total_ce_loss / len(data_loader),
+                "total_hand_loss": total_hand_loss / len(data_loader)
+            }, step=epoch
+        )
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
