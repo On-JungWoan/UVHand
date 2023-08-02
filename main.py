@@ -128,6 +128,7 @@ def get_args_parser():
     parser.add_argument('--visualization', default=False, action='store_true')
     parser.add_argument('--debug', default=False, action='store_true')
     parser.add_argument('--num_debug', default=10, type=int)
+    parser.add_argument('--use_h2o_pth', default=False, action='store_true', help='When you use h2o pretrained wegihts, use this argument.')
     return parser
 
 
@@ -174,7 +175,7 @@ def main(args):
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
-    dataset_val[0]
+    # dataset_val[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)
@@ -276,7 +277,7 @@ def main(args):
             pretraind_model = checkpoint["model"]
             name_list = [name for name in new_model_dict.keys() if name in pretraind_model.keys()]
 
-            if args.dataset_file == 'AssemblyHands':
+            if args.use_h2o_pth:
                 name_list = list(filter(lambda x : "cls" not in x, name_list))
                 name_list = list(filter(lambda x : "obj" not in x, name_list))
             pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list }
@@ -315,24 +316,24 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        # if not args.eval:
-        if args.distributed:
-            sampler_train.set_epoch(epoch)
+        if not args.eval:
+            if args.distributed:
+                sampler_train.set_epoch(epoch)
 
-        train_stats = train_pose(
-            model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm, args)
-        lr_scheduler.step()
+            train_stats = train_pose(
+                model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm, args)
+            lr_scheduler.step()
 
-        utils.save_on_master({
-            'model': model_without_ddp.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'lr_scheduler': lr_scheduler.state_dict(),
-            'epoch': epoch,
-            'args': args,
-        }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
+            utils.save_on_master({
+                'model': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
+                'epoch': epoch,
+                'args': args,
+            }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
 
-        # val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
-        # print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
+        val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
+        print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
         
         if args.dataset_file == 'H2O':
             test_stats = test_pose(model, criterion, data_loader_test, device, cfg)

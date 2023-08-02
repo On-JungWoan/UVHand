@@ -38,57 +38,43 @@ import trimesh
 import json
 import wandb
 
+def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
+    if -1 not in tuple(img_points[idx_1][:-1]):
+        if -1 not in tuple(img_points[idx_2][:-1]):
+            cv2.line(cv_img, tuple(img_points[idx_1][:-1]), tuple(
+                img_points[idx_2][:-1]), color, line_thickness)    
+
 def visualize(cv_img, img_points, mode='left'):
     if mode == 'left':
         color = (255,0,0)
     else:
         color = (0,0,255)
-    line_thickness = 2
-    cv2.line(cv_img, tuple(img_points[1][:-1]), tuple(
-        img_points[2][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[2][:-1]), tuple(
-        img_points[3][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[3][:-1]), tuple(
-        img_points[4][:-1]), color, line_thickness)
+    
+    make_line(cv_img, img_points, 0, 1, color, line_thickness=2)
+    make_line(cv_img, img_points, 1, 2, color, line_thickness=2)
+    make_line(cv_img, img_points, 2, 3, color, line_thickness=2)
 
-    cv2.line(cv_img, tuple(img_points[5][:-1]), tuple(
-        img_points[6][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[6][:-1]), tuple(
-        img_points[7][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[7][:-1]), tuple(
-        img_points[8][:-1]), color, line_thickness)
+    make_line(cv_img, img_points, 4, 5, color, line_thickness=2)
+    make_line(cv_img, img_points, 5, 6, color, line_thickness=2)
+    make_line(cv_img, img_points, 6, 7, color, line_thickness=2)
 
-    cv2.line(cv_img, tuple(img_points[9][:-1]), tuple(
-        img_points[10][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[10][:-1]), tuple(
-        img_points[11][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[11][:-1]), tuple(
-        img_points[12][:-1]), color, line_thickness)
+    make_line(cv_img, img_points, 8, 9, color, line_thickness=2)
+    make_line(cv_img, img_points, 9, 10, color, line_thickness=2)
+    make_line(cv_img, img_points, 10, 11, color, line_thickness=2)
 
-    cv2.line(cv_img, tuple(img_points[13][:-1]), tuple(
-        img_points[14][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[14][:-1]), tuple(
-        img_points[15][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[15][:-1]), tuple(
-        img_points[16][:-1]), color, line_thickness)
+    make_line(cv_img, img_points, 12, 13, color, line_thickness=2)
+    make_line(cv_img, img_points, 13, 14, color, line_thickness=2)
+    make_line(cv_img, img_points, 14, 15, color, line_thickness=2)
 
-    cv2.line(cv_img, tuple(img_points[17][:-1]), tuple(
-        img_points[18][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[18][:-1]), tuple(
-        img_points[19][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[19][:-1]), tuple(
-        img_points[20][:-1]), color, line_thickness)
+    make_line(cv_img, img_points, 16, 17, color, line_thickness=2)
+    make_line(cv_img, img_points, 17, 18, color, line_thickness=2)
+    make_line(cv_img, img_points, 18, 19, color, line_thickness=2)
 
-    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
-        img_points[1][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
-        img_points[5][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
-        img_points[9][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
-        img_points[13][:-1]), color, line_thickness)
-    cv2.line(cv_img, tuple(img_points[0][:-1]), tuple(
-        img_points[17][:-1]), color, line_thickness)
+    make_line(cv_img, img_points, 20, 3, color, line_thickness=2)
+    make_line(cv_img, img_points, 20, 7, color, line_thickness=2)
+    make_line(cv_img, img_points, 20, 11, color, line_thickness=2)
+    make_line(cv_img, img_points, 20, 15, color, line_thickness=2)
+    make_line(cv_img, img_points, 20, 19, color, line_thickness=2)
 
     # plt.imshow(cv_img)
     return cv_img
@@ -358,10 +344,11 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
     criterion.eval()
     
     dataset = 'H2O' if len(cfg.hand_idx) ==2 else 'FPHA'
-    idx2obj = {v:k for k, v in cfg.obj2idx.items()}
-    GT_obj_vertices_dict = {}
-    GT_3D_bbox_dict = {}
+
     try:
+        idx2obj = {v:k for k, v in cfg.obj2idx.items()}
+        GT_obj_vertices_dict = {}
+        GT_3D_bbox_dict = {}        
         for i in range(1,cfg.hand_idx[0]):
             with open(os.path.join(data_loader.dataset.root, 'obj_pkl', f'{idx2obj[i]}_2000.pkl'), 'rb') as f:
                 vertices = pickle.load(f)
@@ -393,10 +380,8 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
-        try:
-            samples, targets = prefetcher.next()
-        except:
-            continue
+        samples, targets = prefetcher.next()
+        
         gt_keypoints = [t['keypoints'] for t in targets]
         if 'labels' in targets[0].keys():
             gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
@@ -434,26 +419,27 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
                 metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
                 ####################################################                
             # model output
-            out_logits,  pred_keypoints, pred_obj_keypoints = outputs['pred_logits'], outputs['pred_keypoints'], outputs['pred_obj_keypoints']
+            out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
 
             prob = out_logits.sigmoid()
             B, num_queries, num_classes = prob.shape
 
             # query index select
             best_score = torch.zeros(B).to(device)
-            obj_idx = torch.zeros(B).to(device).to(torch.long)
-            for i in range(1, cfg.hand_idx[0]):
-                score, idx = torch.max(prob[:,:,i], dim=-1)
-                obj_idx[best_score < score] = idx[best_score < score]
-                best_score[best_score < score] = score[best_score < score]
+            # obj_idx = torch.zeros(B).to(device).to(torch.long)
+            # for i in range(1, cfg.hand_idx[0]):
+            #     score, idx = torch.max(prob[:,:,i], dim=-1)
+            #     obj_idx[best_score < score] = idx[best_score < score]
+            #     best_score[best_score < score] = score[best_score < score]
 
             hand_idx = []
             for i in cfg.hand_idx:
                 hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
             hand_idx = torch.stack(hand_idx, dim=-1)   
-            keep = torch.cat([hand_idx, obj_idx[:,None]], dim=-1)
+            # keep = torch.cat([hand_idx, obj_idx[:,None]], dim=-1)
+            keep = hand_idx
             hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
-            obj_kp = torch.gather(pred_obj_keypoints, 1, obj_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63)).reshape(B, 21, 3)
+            # obj_kp = torch.gather(pred_obj_keypoints, 1, obj_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63)).reshape(B, 21, 3)
 
             orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
             im_h, im_w = orig_target_sizes[:,0], orig_target_sizes[:,1]
@@ -462,16 +448,22 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
 
             labels = torch.gather(out_logits, 1, keep.unsqueeze(2).repeat(1,1,num_classes)).softmax(dim=-1)
             hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
-            obj_kp[...,:2] *=  target_sizes.unsqueeze(1); obj_kp[...,2] *= 1000
-            key_points = torch.cat([hand_kp, obj_kp.unsqueeze(1)], dim=1)
+            # obj_kp[...,:2] *=  target_sizes.unsqueeze(1); obj_kp[...,2] *= 1000
+            # key_points = torch.cat([hand_kp, obj_kp.unsqueeze(1)], dim=1)
+            key_points = hand_kp
             
             if vis:
                 batch, js, _, _ = key_points.shape
                 for b in range(batch):
                     for j in range(js):
                         pred_kp = key_points[b][j]
+
+                        target_keys = targets[0]['keypoints']
+                        target_keys[...,:2] *=  target_sizes.unsqueeze(1)
+                        target_keys = target_keys[0]
                         if j ==0:
-                            source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'left')
+                            # gt = visualize(source_img, target_keys.detach().cpu().numpy().astype(np.int32), 'left')
+                            pred = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'left')
                         elif j == 1:
                             source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'right')
                         else:
