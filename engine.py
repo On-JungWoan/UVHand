@@ -340,13 +340,12 @@ def pixel2cam(pixel_coord, f, c, T_=None):
         cam_coord = cam_coord - cam_coord[:, :, :1] + T_[:,:1]
     return cam_coord
 
-def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle=False):
+def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False):
     
     model.eval()
     criterion.eval()
     
     dataset = 'H2O' if len(cfg.hand_idx) ==2 else 'FPHA'
-
     try:
         idx2obj = {v:k for k, v in cfg.obj2idx.items()}
         GT_obj_vertices_dict = {}
@@ -361,6 +360,7 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
     except:
         dataset = 'AssemblyHands'
         print('Not exist obj pkl')
+
     _mano_root = 'mano/models'
     mano_left = ManoLayer(flat_hand_mean=True,
                     side="left",
@@ -384,11 +384,23 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
     for _ in pbar:
         samples, targets = prefetcher.next()
         
-        gt_keypoints = [t['keypoints'] for t in targets]
+        try:
+            gt_keypoints = [t['keypoints'] for t in targets]
+        except:
+            print('no gts')
+            continue
+
         if 'labels' in targets[0].keys():
             gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
 
+        if (gt_keypoints[0]<0).sum() > 0:
+            continue
+
         filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
+        if args.test_viewpoint is not None:
+            if args.test_viewpoint != '/'.join(filename.split('/')[:-1]):
+                continue
+
         if vis:
             assert data_loader.batch_size == 1  
             if dataset == 'H2O' or dataset == 'AssemblyHands':
@@ -396,30 +408,42 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
             else:
                 filepath = data_loader.dataset.root / 'Video_files'/ filename
             source_img = np.array(Image.open(filepath))
-        if os.path.exists(os.path.join(f'./pickle/{dataset}_aug45/{data_loader.dataset.mode}', f'{filename[:-4]}_data.pkl')):
-            samples, targets = prefetcher.next()
-            # continue
+
+        # if os.path.exists(os.path.join(f'./pickle/{dataset}_aug45/{data_loader.dataset.mode}', f'{filename[:-4]}_data.pkl')):
+        #     samples, targets = prefetcher.next()
+        #     # continue
+
         with torch.no_grad():
             outputs = model(samples)
+
+            # # occlusion pre-process (fot gt)
+            # occlusion_mask = targets[0]['keypoints']<0
+            # targets[0]['keypoints'][occlusion_mask] = -1
+            # # occlusion pre-process (fot dt)
+            # occlusion_mask = occlusion_mask.view(-1, 63)
+            # occlusion_mask = occlusion_mask.unsqueeze(1).repeat(1,300,1)
+            # outputs['pred_keypoints'][occlusion_mask] = -1
+            # for aux_output in outputs['aux_outputs']:
+            #     aux_output['pred_keypoints'][occlusion_mask] = -1
             
-            if dataset != 'AssemblyHands':
-                # reduce losses over all GPUs for logging purposes
-                loss_dict = criterion(outputs, targets)
-                loss_dict_reduced = utils.reduce_dict(loss_dict)
-                weight_dict = criterion.weight_dict
-                losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+            # reduce losses over all GPUs for logging purposes
+            loss_dict = criterion(outputs, targets)
+            loss_dict_reduced = utils.reduce_dict(loss_dict)
+            weight_dict = criterion.weight_dict
+            losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
-                
-                loss_dict_reduced = utils.reduce_dict(loss_dict)
-                loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                            for k, v in loss_dict_reduced.items()}
-                loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                            for k, v in loss_dict_reduced.items() if k in weight_dict}
-                losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+            
+            loss_dict_reduced = utils.reduce_dict(loss_dict)
+            loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                        for k, v in loss_dict_reduced.items()}
+            loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                        for k, v in loss_dict_reduced.items() if k in weight_dict}
+            losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
 
-                loss_value = losses_reduced_scaled.item()
-                metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
-                ####################################################                
+            loss_value = losses_reduced_scaled.item()
+            metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+            ####################################################
+
             # model output
             out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
 
@@ -428,18 +452,21 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
 
             # query index select
             best_score = torch.zeros(B).to(device)
-            # obj_idx = torch.zeros(B).to(device).to(torch.long)
-            # for i in range(1, cfg.hand_idx[0]):
-            #     score, idx = torch.max(prob[:,:,i], dim=-1)
-            #     obj_idx[best_score < score] = idx[best_score < score]
-            #     best_score[best_score < score] = score[best_score < score]
+            if dataset != 'AssemblyHands':
+                obj_idx = torch.zeros(B).to(device).to(torch.long)
+                for i in range(1, cfg.hand_idx[0]):
+                    score, idx = torch.max(prob[:,:,i], dim=-1)
+                    obj_idx[best_score < score] = idx[best_score < score]
+                    best_score[best_score < score] = score[best_score < score]
 
             hand_idx = []
             for i in cfg.hand_idx:
                 hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
             hand_idx = torch.stack(hand_idx, dim=-1)   
-            # keep = torch.cat([hand_idx, obj_idx[:,None]], dim=-1)
-            keep = hand_idx
+            if dataset != 'AssemblyHands':
+                keep = torch.cat([hand_idx, obj_idx[:,None]], dim=-1)
+            else:
+                keep = hand_idx
             hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
             # obj_kp = torch.gather(pred_obj_keypoints, 1, obj_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63)).reshape(B, 21, 3)
 
@@ -454,26 +481,32 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
             # key_points = torch.cat([hand_kp, obj_kp.unsqueeze(1)], dim=1)
             key_points = hand_kp
             
-            if vis:
-                batch, js, _, _ = key_points.shape
-                for b in range(batch):
-                    for j in range(js):
-                        pred_kp = key_points[b][j]
+            if args.debug:
+                if vis:
+                    batch, js, _, _ = key_points.shape
+                    for b in range(batch):
+                        for j in range(js):
+                            pred_kp = key_points[b][j]
 
-                        target_keys = targets[0]['keypoints']
-                        target_keys[...,:2] *=  target_sizes.unsqueeze(1)
-                        target_keys = target_keys[0]
-                        if j ==0:
-                            # gt = visualize(source_img, target_keys.detach().cpu().numpy().astype(np.int32), 'left')
-                            pred = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'left')
-                        elif j == 1:
-                            source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'right')
-                        else:
-                            source_img = visualize_obj(source_img, pred_kp.detach().cpu().numpy().astype(np.int32))
-                    
-            continue
+                            target_keys = targets[0]['keypoints']
+                            target_keys[...,:2] *=  target_sizes.unsqueeze(1)
+                            target_keys = target_keys[0]
+                            if j ==0:
+                                # gt = visualize(source_img, target_keys.detach().cpu().numpy().astype(np.int32), 'left')
+                                pred = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'left')
+                            elif j == 1:
+                                source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'right')
+                            else:
+                                source_img = visualize_obj(source_img, pred_kp.detach().cpu().numpy().astype(np.int32))
+                continue
 
             # measure
+            if dataset != 'AssemblyHands':
+                tmp = []
+                for gt_label in gt_labels:
+                    tmp.append([i for i in cfg.hand_idx if i in gt_label])
+                gt_labels = tmp
+
             for i, batch in enumerate(gt_labels):
                 cam_fx, cam_fy, cam_cx, cam_cy, _, _ = targets[i]['cam_param']
                 All_epe = []
@@ -515,13 +548,13 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
                             source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'right')
                         else:
                             source_img = visualize_obj(source_img, pred_kp.detach().cpu().numpy().astype(np.int32))
-                    if j==0:
+                    if j==1:
                         All_epe.append(epe)
                         metric_logger.update(**{'left': float(epe)})
                         metric_logger.update(**{'uv_error': float(xy_epe)})
                         metric_logger.update(**{'d_error': float(z_epe)})
                         metric_logger.update(**{'relative_d_error': float(relative_depth_error)})
-                    elif j==1:
+                    elif j==0:
                         All_epe.append(epe)
                         metric_logger.update(**{'right': float(epe)})
                         metric_logger.update(**{'uv_error': float(xy_epe)})
@@ -544,11 +577,11 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
         if vis or save_pickle:
             assert data_loader.batch_size == 1
             save_path = os.path.join(f'./pickle/{dataset}_aug45/{data_loader.dataset.mode}', filename)
-            obj_label = labels[:,-1,:cfg.hand_idx[0]].argmax(-1)
-            GT_3D_bbox = GT_3D_bbox_dict[obj_label.item()][None]
-            pred_obj_cam = pixel2cam(obj_kp,  (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item())).detach().cpu().numpy()
-            c, R, t = rigid_transform_3D_numpy(GT_3D_bbox*1000, pred_obj_cam)
-            c = torch.from_numpy(c).cuda(); R = torch.from_numpy(R).cuda(); t = torch.from_numpy(t).cuda()
+            # obj_label = labels[:,-1,:cfg.hand_idx[0]].argmax(-1)
+            # GT_3D_bbox = GT_3D_bbox_dict[obj_label.item()][None]
+            # pred_obj_cam = pixel2cam(obj_kp,  (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item())).detach().cpu().numpy()
+            # c, R, t = rigid_transform_3D_numpy(GT_3D_bbox*1000, pred_obj_cam)
+            # c = torch.from_numpy(c).cuda(); R = torch.from_numpy(R).cuda(); t = torch.from_numpy(t).cuda()
   
             T_keypoints_left, T_keypoints_right = AIK_config.T_keypoints_left.cuda(), AIK_config.T_keypoints_right.cuda()
             T_ = torch.stack([T_keypoints_left, T_keypoints_right]) if hand_kp.shape[1] == 2 else T_keypoints_right[None]
@@ -560,10 +593,11 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
             if save_pickle:
                 all_uvd = key_points.reshape(1, -1)
                 all_cam = pixel2cam(key_points, (cam_fx.item(),cam_fy.item()), (cam_cx.item(),cam_cy.item())).reshape(1, -1)
-                obj_6D = torch.cat([R.reshape(-1,9), t], dim=-1)
+                # obj_6D = torch.cat([R.reshape(-1,9), t], dim=-1)
                 label_prob = labels[:,-1]
 
-                data={'uvd':all_uvd.detach().cpu().numpy(), 'cam':all_cam.detach().cpu().numpy(), '6D':obj_6D.detach().cpu().numpy(), 'label':label_prob.detach().cpu().numpy(), 'mano':pose_params.detach().cpu().numpy()}
+                # data={'uvd':all_uvd.detach().cpu().numpy(), 'cam':all_cam.detach().cpu().numpy(), '6D':obj_6D.detach().cpu().numpy(), 'label':label_prob.detach().cpu().numpy(), 'mano':pose_params.detach().cpu().numpy()}
+                data={'uvd':all_uvd.detach().cpu().numpy(), 'cam':all_cam.detach().cpu().numpy(), 'label':label_prob.detach().cpu().numpy(), 'mano':pose_params.detach().cpu().numpy()}
                 
                 if not os.path.exists(os.path.dirname(save_path)):
                     os.makedirs(os.path.dirname(save_path))     
@@ -572,7 +606,7 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
         
         if vis:    
             ################# 2D vis #####################
-            img_path = os.path.join(f'./results/{dataset}', filename)
+            img_path = os.path.join(args.output_dir, filename)
             if not os.path.exists(os.path.dirname(img_path)):
                 os.makedirs(os.path.dirname(img_path))
             cv2.imwrite(img_path, source_img[...,::-1])
@@ -589,44 +623,54 @@ def test_pose(model, criterion, data_loader, device, cfg, vis=False, save_pickle
             hand_cam = pixel2cam(hand_kp, (cam_fx.item(),cam_fy.item()), (cam_cx.item(),cam_cy.item()))
             hand_verts = hand_verts - j3d_recon[:,:,:1] + hand_cam[:,:,:1]
 
-            obj_name = idx2obj[obj_label.item()]
-            if dataset=='H2O':
-                obj_mesh = trimesh.load(f'{cfg.object_model_path}/{obj_name}/{obj_name}.obj')
-            else:
-                obj_mesh = trimesh.load(f'{cfg.object_model_path}/{obj_name}_model/{obj_name}_model.ply')
-            obj_mesh.vertices = (torch.matmul(R[0].detach().cpu().to(torch.float32), torch.tensor(obj_mesh.vertices, dtype=torch.float32).permute(1,0)*1000).permute(1,0) + t[0,None].detach().cpu()).numpy()
-            obj_vertices = torch.tensor(obj_mesh.vertices)[None].repeat(labels.shape[0], 1, 1).to(torch.float32).cuda()
+            # obj_name = idx2obj[obj_label.item()]
+            # if dataset=='H2O':
+            #     obj_mesh = trimesh.load(f'{cfg.object_model_path}/{obj_name}/{obj_name}.obj')
+            # else:
+            #     obj_mesh = trimesh.load(f'{cfg.object_model_path}/{obj_name}_model/{obj_name}_model.ply')
+            # obj_mesh.vertices = (torch.matmul(R[0].detach().cpu().to(torch.float32), torch.tensor(obj_mesh.vertices, dtype=torch.float32).permute(1,0)*1000).permute(1,0) + t[0,None].detach().cpu()).numpy()
+            # obj_vertices = torch.tensor(obj_mesh.vertices)[None].repeat(labels.shape[0], 1, 1).to(torch.float32).cuda()
             
-            obj_nn_dist_affordance = get_NN(obj_vertices.to(torch.float32), hand_verts.reshape(1,-1,3).to(torch.float32))
-            hand_nn_dist_affordance = torch.stack([get_NN(hand_verts[:,idx].to(torch.float32), obj_vertices.to(torch.float32)) for idx in range(hand_verts.shape[1])], dim=1)
-            obj_cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)
-            hand_cmap_affordance = torch.stack([get_pseudo_cmap(hand_nn_dist_affordance[:,idx]) for idx in range(hand_verts.shape[1])], dim=1)
+            # obj_nn_dist_affordance = get_NN(obj_vertices.to(torch.float32), hand_verts.reshape(1,-1,3).to(torch.float32))
+            # hand_nn_dist_affordance = torch.stack([get_NN(hand_verts[:,idx].to(torch.float32), obj_vertices.to(torch.float32)) for idx in range(hand_verts.shape[1])], dim=1)
+            # hand_nn_dist_affordance = torch.stack([get_NN(hand_verts[:,idx].to(torch.float32)) for idx in range(hand_verts.shape[1])], dim=1)
+            # obj_cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)
+            # hand_cmap_affordance = torch.stack([get_pseudo_cmap(hand_nn_dist_affordance[:,idx]) for idx in range(hand_verts.shape[1])], dim=1)
 
+            # cmap = plt.cm.get_cmap('plasma')
+            # obj_v_color = (cmap(obj_cmap_affordance[0].detach().cpu().numpy())[:,0,:-1] * 255).astype(np.int64)
+            # hand_v_color = [(cmap(hand_cmap_affordance[0, idx].detach().cpu().numpy())[:,0,:-1] * 255).astype(np.int64) for idx in range(hand_verts.shape[1])]
 
-            cmap = plt.cm.get_cmap('plasma')
-            obj_v_color = (cmap(obj_cmap_affordance[0].detach().cpu().numpy())[:,0,:-1] * 255).astype(np.int64)
-            hand_v_color = [(cmap(hand_cmap_affordance[0, idx].detach().cpu().numpy())[:,0,:-1] * 255).astype(np.int64) for idx in range(hand_verts.shape[1])]
+            # obj_mesh = trimesh.Trimesh(vertices=obj_vertices[0].detach().cpu().numpy(), vertex_colors=obj_v_color, faces = obj_mesh.faces)
+            # hand_mesh = [trimesh.Trimesh(vertices=hand_verts[:,i].detach().cpu().numpy()[0], faces=(mano_layer.th_faces).detach().cpu().numpy(), vertex_colors=hand_v_color[i]) 
+            #              for i, mano_layer in enumerate(MANO_LAYER)]
 
-            obj_mesh = trimesh.Trimesh(vertices=obj_vertices[0].detach().cpu().numpy(), vertex_colors=obj_v_color, faces = obj_mesh.faces)
-            hand_mesh = [trimesh.Trimesh(vertices=hand_verts[:,i].detach().cpu().numpy()[0], faces=(mano_layer.th_faces).detach().cpu().numpy(), vertex_colors=hand_v_color[i]) 
-                         for i, mano_layer in enumerate(MANO_LAYER)]
+            # if not os.path.exists(os.path.dirname(save_contact_vis_path)):
+            #     os.makedirs(os.path.dirname(save_contact_vis_path))
 
-            if not os.path.exists(os.path.dirname(save_contact_vis_path)):
-                os.makedirs(os.path.dirname(save_contact_vis_path))
-
-            if len(hand_mesh) == 2:
-                trimesh.exchange.export.export_mesh(hand_mesh[0],f'{save_contact_vis_path[:-4]}_left.obj')
-                trimesh.exchange.export.export_mesh(hand_mesh[1],f'{save_contact_vis_path[:-4]}_right.obj')
-                trimesh.exchange.export.export_mesh(obj_mesh,f'{save_contact_vis_path[:-4]}_obj.obj')
-            else:
-                trimesh.exchange.export.export_mesh(hand_mesh[0],f'{save_contact_vis_path[:-4]}_right.obj')
-                trimesh.exchange.export.export_mesh(obj_mesh,f'{save_contact_vis_path[:-4]}_obj.obj')
+            # if len(hand_mesh) == 2:
+            #     trimesh.exchange.export.export_mesh(hand_mesh[0],f'{save_contact_vis_path[:-4]}_left.obj')
+            #     trimesh.exchange.export.export_mesh(hand_mesh[1],f'{save_contact_vis_path[:-4]}_right.obj')
+            #     # trimesh.exchange.export.export_mesh(obj_mesh,f'{save_contact_vis_path[:-4]}_obj.obj')
+            # else:
+            #     trimesh.exchange.export.export_mesh(hand_mesh[0],f'{save_contact_vis_path[:-4]}_right.obj')
+                # trimesh.exchange.export.export_mesh(obj_mesh,f'{save_contact_vis_path[:-4]}_obj.obj')
             ######################
 
         samples, targets = prefetcher.next()
 
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+    save_dir = os.path.join(args.output_dir, 'results.txt')
+    with open(save_dir, 'a') as f:
+        if args.test_viewpoint is not None:
+            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+        f.write(f"{'='*10} {args.resume} {'='*10}\n\n")
+        for key, val in stats.items():
+            f.write(f'{key:30} : {val}\n')
+        f.write('\n\n')
+
     return stats
 
 def train_contact(temporal_model, mano_left, mano_right, GT_3D_bbox_dict, GT_obj_vertices_dict, criterion: torch.nn.Module,

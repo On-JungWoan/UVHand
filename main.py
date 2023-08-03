@@ -25,6 +25,7 @@ from datasets import build_dataset, get_coco_api_from_dataset
 from engine import train_pose, test_pose
 from models import build_model
 import os
+import sys
 # import wandb
 import torch.backends.cudnn as cudnn
 from cfg import Config
@@ -132,6 +133,11 @@ def get_args_parser():
     # for train
     parser.add_argument('--use_h2o_pth', default=False, action='store_true', help='When you use h2o pretrained wegihts, use this argument.')
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
+
+    # for eval
+    parser.add_argument('--test_viewpoint', default=None, type=str, \
+                        help='If you want to evaluate a specific viewpoint, then you can simply put the viewpoint name.\n \
+                            e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
     return parser
 
 
@@ -164,17 +170,17 @@ def main(args):
     cudnn.deterministic = True
     random.seed(seed)
 
-    if args.visualization:
-        model, criterion = build_model(args, cfg)
-        model.to(device)
+    # if args.visualization:
+    #     model, criterion = build_model(args, cfg)
+    #     model.to(device)
 
-        if args.resume:
-            checkpoint = torch.load(args.resume, map_location='cpu')
-            missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
+    #     if args.resume:
+    #         checkpoint = torch.load(args.resume, map_location='cpu')
+    #         missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
 
-        from visualization import vis
-        while True:
-            vis(model, device, cfg)
+    #     from visualization import vis
+    #     while True:
+    #         vis(model, device, cfg)
 
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
@@ -320,33 +326,39 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
-        if not args.eval:
-            if args.distributed:
-                sampler_train.set_epoch(epoch)
 
-            train_stats = train_pose(
-                model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm, args)
-            lr_scheduler.step()
-
-            utils.save_on_master({
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
-                'epoch': epoch,
-                'args': args,
-            }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
-
-        val_stats = test_pose(model, criterion, data_loader_val, device, cfg, vis=True)
-        print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
-        
+    # for evaluation
+    if args.eval:
         if args.dataset_file == 'H2O':
-            test_stats = test_pose(model, criterion, data_loader_test, device, cfg)
-            print(f"Test ||left : {test_stats['left']} || right : {test_stats['right']} || obj : {test_stats['obj']} || class : {test_stats['class_error']}")
+            test_stats = test_pose(model, criterion, data_loader_test, device, cfg, args=args, vis=args.visualization)
+            print(f"Test ||left : {test_stats['left']} || right : {test_stats['right']} || obj : {test_stats['obj']} || class : {test_stats['class_error']}")        
+        else:
+            val_stats = test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+            print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
+        sys.exit(0)
         
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    # for training
+    else:
+        for epoch in range(args.start_epoch, args.epochs):
+            if not args.eval:
+                if args.distributed:
+                    sampler_train.set_epoch(epoch)
+
+                train_stats = train_pose(
+                    model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm, args)
+                lr_scheduler.step()
+
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
+            
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print('Training time {}'.format(total_time_str))
 
 
 if __name__ == '__main__':
