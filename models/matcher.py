@@ -15,7 +15,7 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 
 from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
-
+from copy import copy
 
 class HungarianMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
@@ -91,7 +91,23 @@ class HungarianMatcher(nn.Module):
 
             # Compute the L1 cost between boxes
             cost_keypoints = torch.zeros_like(cost_class)
-            cost_hand = torch.cdist(out_kp, tgt_kp.reshape(-1, 63)[hand_idx], p=1)
+
+            tgt_kp = tgt_kp.reshape(-1, 63)[hand_idx]
+            occlusion_mask = tgt_kp>0
+
+            cost = []
+            for idx, mask in enumerate(occlusion_mask):
+                tmp_tgt = tgt_kp[idx][mask]
+                tmp_out = None
+                for out in out_kp:
+                    if tmp_out is None:
+                        tmp_out = out[mask][None]
+                    else:
+                        tmp_out = torch.cat([tmp_out, out[mask][None]])
+                cost.append(torch.cdist(tmp_out, tmp_tgt.unsqueeze(0), p=1))
+            cost_hand = torch.cat(cost, dim=1)
+
+            # cost_hand = torch.cdist(out_kp, tgt_kp, p=1)
             # cost_obj = torch.cdist(out_objkp, tgt_kp.reshape(-1, 63)[obj_idx], p=1)
 
             cost_keypoints[:,hand_idx] = cost_hand

@@ -393,9 +393,6 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         if 'labels' in targets[0].keys():
             gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
 
-        if (gt_keypoints[0]<0).sum() > 0:
-            continue
-
         filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
         if args.test_viewpoint is not None:
             if args.test_viewpoint != '/'.join(filename.split('/')[:-1]):
@@ -413,6 +410,9 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         #     samples, targets = prefetcher.next()
         #     # continue
 
+        # if filename != 'ego_images_rectified/val/nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21176623_mono10bit/006667.jpg':
+        #     continue
+
         with torch.no_grad():
             outputs = model(samples)
 
@@ -426,6 +426,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             # for aux_output in outputs['aux_outputs']:
             #     aux_output['pred_keypoints'][occlusion_mask] = -1
             
+
             # reduce losses over all GPUs for logging purposes
             loss_dict = criterion(outputs, targets)
             loss_dict_reduced = utils.reduce_dict(loss_dict)
