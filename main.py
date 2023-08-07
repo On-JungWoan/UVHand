@@ -138,6 +138,8 @@ def get_args_parser():
     parser.add_argument('--test_viewpoint', default=None, type=str, \
                         help='If you want to evaluate a specific viewpoint, then you can simply put the viewpoint name.\n \
                             e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
+    parser.add_argument('--eval_method', default='MPJPE', choices=['MPJPE', 'EPE'], type=str, \
+                        help='Select evaluation method(MPJPE or EPE).')                            
     return parser
 
 

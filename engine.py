@@ -510,7 +510,6 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
 
             for i, batch in enumerate(gt_labels):
                 cam_fx, cam_fy, cam_cx, cam_cy, _, _ = targets[i]['cam_param']
-                All_epe = []
                 for k, label in enumerate(batch):
                     if dataset == 'H2O':
                         if label == cfg.hand_idx[0]: j=0
@@ -521,26 +520,45 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                         else: j=1
                             
                     is_correct_class = int(labels[i][j].argmax().item() == gt_labels[i][k])
-                    
                     pred_kp = key_points[i][j]
-                    pred_joint_cam = pixel2cam(pred_kp, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
 
+                    # uvd to xyz
+                    pred_joint_cam = pixel2cam(pred_kp, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
                     x, y = target_sizes[0].detach().cpu().numpy()
                     gt_scaled_keypoints = gt_keypoints[i][k] * torch.tensor([x, y, 1000]).cuda()
-                    xy_epe = torch.mean(torch.norm(gt_scaled_keypoints[:,:2] - pred_kp[:,:2], dim=-1))
-                    z_epe = torch.mean(torch.norm(gt_scaled_keypoints[:,2:] - pred_kp[:,2:], dim=-1))
-                    gt_relative = gt_scaled_keypoints[:,2:] - gt_scaled_keypoints[0,2:]
-                    pred_relative = pred_kp[:,2:] - pred_kp[0,2:]
-                    relative_depth_error = torch.mean(torch.norm(gt_relative - pred_relative, dim=-1))
-
                     gt_joint_cam = pixel2cam(gt_scaled_keypoints, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
-       
-                    ###################################################################################
-                    # if j==2:
-                    #     pred_joint_cam = rigid_align(world_objcoord[0,:,:3], pred_joint_cam/1000)*1000
-                    ###################################################################################
 
-                    epe = torch.mean(torch.norm(gt_joint_cam - pred_joint_cam, dim=-1))
+                    # for occlusion & post_process
+                    if dataset == 'AssemblyHands':
+                        occ_keypoint = (pred_joint_cam<-1000).sum(dim=1)>=1
+                        tgt = pred_kp[occ_keypoint].cpu().numpy()
+
+                        tgt[...,-1] = 1000
+                        tgt[...,:2] = -1
+                        tgt = pixel2cam(tgt, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
+                        
+                        pred_joint_cam[occ_keypoint] = torch.tensor(tgt, dtype=torch.float32).to(device)
+                        pred_joint_cam[:,-1] = 1000                        
+
+                    if args.eval_method=='EPE':
+                        gt_relative = gt_scaled_keypoints[:,2:] - gt_scaled_keypoints[0,2:]
+                        pred_relative = pred_kp[:,2:] - pred_kp[0,2:]
+                        
+                        xy_epe = torch.mean(torch.norm(gt_scaled_keypoints[:,:2] - pred_kp[:,:2], dim=-1))
+                        z_epe = torch.mean(torch.norm(gt_scaled_keypoints[:,2:] - pred_kp[:,2:], dim=-1))
+                        relative_depth_error = torch.mean(torch.norm(gt_relative - pred_relative, dim=-1))
+        
+                        ###################################################################################
+                        # if j==2:
+                        #     pred_joint_cam = rigid_align(world_objcoord[0,:,:3], pred_joint_cam/1000)*1000
+                        ###################################################################################
+
+                        error = torch.mean(torch.norm(gt_joint_cam - pred_joint_cam, dim=-1))
+
+                    elif args.eval_method=='MPJPE':
+                        error = torch.sqrt(((pred_joint_cam - gt_joint_cam) ** 2).sum(dim=-1)).mean(dim=-1).cpu().numpy()
+
+                    # for visualization
                     if dataset == 'FPHA': j+=1
                     if vis:
                         if j ==0:
@@ -550,22 +568,20 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                         else:
                             source_img = visualize_obj(source_img, pred_kp.detach().cpu().numpy().astype(np.int32))
                     if j==1:
-                        All_epe.append(epe)
-                        metric_logger.update(**{'left': float(epe)})
-                        metric_logger.update(**{'uv_error': float(xy_epe)})
-                        metric_logger.update(**{'d_error': float(z_epe)})
-                        metric_logger.update(**{'relative_d_error': float(relative_depth_error)})
+                        metric_logger.update(**{'left': float(error)})
+                        # metric_logger.update(**{'uv_error': float(xy_epe)})
+                        # metric_logger.update(**{'d_error': float(z_epe)})
+                        # metric_logger.update(**{'relative_d_error': float(relative_depth_error)})
                     elif j==0:
-                        All_epe.append(epe)
-                        metric_logger.update(**{'right': float(epe)})
-                        metric_logger.update(**{'uv_error': float(xy_epe)})
-                        metric_logger.update(**{'d_error': float(z_epe)})
-                        metric_logger.update(**{'relative_d_error': float(relative_depth_error)})
+                        metric_logger.update(**{'right': float(error)})
+                        # metric_logger.update(**{'uv_error': float(xy_epe)})
+                        # metric_logger.update(**{'d_error': float(z_epe)})
+                        # metric_logger.update(**{'relative_d_error': float(relative_depth_error)})
                     else:
-                        metric_logger.update(**{'obj': float(epe)})
-                        metric_logger.update(**{'obj_uv_error': float(xy_epe)})
-                        metric_logger.update(**{'obj_d_error': float(z_epe)})
-                        metric_logger.update(**{'obj_relative_d_error': float(relative_depth_error)})
+                        metric_logger.update(**{'obj': float(error)})
+                        # metric_logger.update(**{'obj_uv_error': float(xy_epe)})
+                        # metric_logger.update(**{'obj_d_error': float(z_epe)})
+                        # metric_logger.update(**{'obj_relative_d_error': float(relative_depth_error)})
                     metric_logger.update(**{'class_error':is_correct_class})
                 
             pbar.set_postfix({

@@ -123,7 +123,7 @@ class ConvertCocoPolysToMask(object):
                     target = key[..., i]
                     val = w if i == 0 else h
                     target[target > val] = val
-                    # target[target < -1] = -1
+                    target[target < -1] = -1
             uvd = keypoints
         else:
             uvd = torch.stack([
