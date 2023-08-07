@@ -324,15 +324,17 @@ class SetCriterion(nn.Module):
         for idx in self.cfg.hand_idx:
             hand_cal_idx |= (target_labels == idx)
 
-        target_keypoints = target_keypoints[hand_cal_idx].view(-1, 63)
-        src_keypoints = src_keypoints[hand_cal_idx]
+        # target_keypoints = target_keypoints[hand_cal_idx].view(-1, 63)
+        # src_keypoints = src_keypoints[hand_cal_idx]
 
-        occlusion_mask = target_keypoints<0
-        for idx, mask in enumerate(occlusion_mask):
-            target_keypoints[idx][mask] = 0
-            src_keypoints[idx][mask] = 0
+        # occlusion_mask = target_keypoints<0
+        # for idx, mask in enumerate(occlusion_mask):
+        #     target_keypoints[idx][mask] = 0
+        #     src_keypoints[idx][mask] = 0
 
-        loss_handkey = F.l1_loss(src_keypoints, target_keypoints, reduction='none')
+        # loss_handkey = F.l1_loss(src_keypoints, target_keypoints, reduction='none')
+
+        loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63), reduction='none')
 
         losses = {}
         losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
