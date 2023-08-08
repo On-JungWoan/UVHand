@@ -522,23 +522,15 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                     is_correct_class = int(labels[i][j].argmax().item() == gt_labels[i][k])
                     pred_kp = key_points[i][j]
 
-                    # uvd to xyz
-                    pred_joint_cam = pixel2cam(pred_kp, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
                     x, y = target_sizes[0].detach().cpu().numpy()
                     gt_scaled_keypoints = gt_keypoints[i][k] * torch.tensor([x, y, 1000]).cuda()
                     gt_joint_cam = pixel2cam(gt_scaled_keypoints, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
 
-                    # for occlusion & post_process
+                    # uvd to xyz
                     if dataset == 'AssemblyHands':
-                        occ_keypoint = (pred_joint_cam<-1000).sum(dim=1)>=1
-                        tgt = pred_kp[occ_keypoint].cpu().numpy()
-
-                        tgt[...,-1] = 1000
-                        tgt[...,:2] = -1
-                        tgt = pixel2cam(tgt, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
-                        
-                        pred_joint_cam[occ_keypoint] = torch.tensor(tgt, dtype=torch.float32).to(device)
-                        pred_joint_cam[:,-1] = 1000                        
+                        pred_kp[gt_scaled_keypoints==-1] = -1
+                        pred_kp[..., 2] = 1000
+                    pred_joint_cam = pixel2cam(pred_kp, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
 
                     if args.eval_method=='EPE':
                         gt_relative = gt_scaled_keypoints[:,2:] - gt_scaled_keypoints[0,2:]
