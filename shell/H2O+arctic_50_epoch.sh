@@ -1,8 +1,9 @@
-PUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./tools/run_h2otr.sh \
---num_workers 24 \
---batch_size 16 \
+python main.py \
+--num_workers 8 \
+--batch_size 14 \
 --epochs 50 \
---coco_path .. \
+--coco_path /home/unist/Desktop/hdd \
 --dataset_file arctic \
---resume paper_pose.pth \
---use_h2o_pth
+--resume old_weights/paper_pose.pth \
+--use_h2o_pth \
+--wandb

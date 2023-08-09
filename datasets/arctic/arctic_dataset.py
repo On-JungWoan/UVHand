@@ -45,9 +45,6 @@ class ArcticDataset(Dataset):
             data_2d, data_cam, vidx, view_idx, imgname
         )
 
-        if is_valid == 0:
-            return None, None
-
         if view_idx == 0:
             intrx = data_params["K_ego"][vidx].copy()
         else:
@@ -133,6 +130,9 @@ class ArcticDataset(Dataset):
             assert img_status==True, msg
         else:
             norm_img = None
+
+        if is_valid == 0:
+            cv_img = np.zeros_like(cv_img)
 
         center = [bbox[0], bbox[1]]
         scale = bbox[2]

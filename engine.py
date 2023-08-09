@@ -241,7 +241,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     pbar = tqdm(data_loader)
 
     # for _ in pbar:
+
     for samples, targets in pbar:
+        if len(samples.tensors[samples.tensors != 0]) == 0:
+            continue
 
         outputs = model(samples.to(device))
 
@@ -252,7 +255,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
         loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                      for k, v in loss_dict_reduced.items()}
+                                    for k, v in loss_dict_reduced.items()}
         loss_dict_reduced_scaled = {k: v * weight_dict[k]
                                     for k, v in loss_dict_reduced.items() if k in weight_dict}
         losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
