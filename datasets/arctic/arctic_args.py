@@ -30,5 +30,7 @@ def construct_arctic_args(args):
         args.valsplit = "minival"
         args.log_every = 5
         args.window_size = 3
+    else:
+        args.window_size = 11
 
     return args

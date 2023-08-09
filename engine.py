@@ -240,11 +240,6 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     # pbar = tqdm(range(len(data_loader)))
     pbar = tqdm(data_loader)
 
-    total_loss = 0
-    total_ce_loss = 0
-    total_hand_loss = 0
-    total_obj_loss = 0
-
     # for _ in pbar:
     for samples, targets in pbar:
 
@@ -267,6 +262,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             print(loss_dict_reduced)
+            criterion(outputs, targets)
             sys.exit(1)
 
         optimizer.zero_grad()
@@ -288,31 +284,29 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
             'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
             })
-        
-        total_loss += loss_value
-        total_ce_loss += loss_dict_reduced_scaled['loss_ce'].item()
-        total_hand_loss += loss_dict_reduced_scaled['loss_hand_keypoint'].item()
-        total_obj_loss += loss_dict_reduced_scaled['loss_obj_keypoint'].item()
     
         if args.debug:
             if args.num_debug == 100:
                 break
 
         # samples, targets = prefetcher.next()
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     
     if args is not None and args.wandb:
         wandb.log(
             {
-                "total_loss": total_loss / len(data_loader),
-                "total_ce_loss": total_ce_loss / len(data_loader),
-                "total_hand_loss": total_hand_loss / len(data_loader),
-                "total_obj_loss": total_obj_loss / len(data_loader)
+                "loss": train_stat['loss'],
+                "loss_ce": train_stat['loss_ce'],
+                "loss_hand_keypoint": train_stat['loss_hand_keypoint'],
+                "loss_obj_keypoint": train_stat['loss_obj_keypoint'],
+                "class_error": train_stat['class_error'],
             }, step=epoch
-        )
-
-    # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+        )    
+    
+    return train_stat
 
 
 def cam2pixel(cam_coord, f, c):

@@ -337,10 +337,13 @@ class SetCriterion(nn.Module):
 
         # loss_handkey = F.l1_loss(src_keypoints, target_keypoints, reduction='none')
 
-        loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63).cuda(), reduction='none')
-
         losses = {}
-        losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
+        
+        if len(src_keypoints[hand_cal_idx]) == 0:
+            losses['loss_hand_keypoint'] = torch.tensor(0)
+        else:
+            loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63).cuda(), reduction='none')
+            losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
 
         return losses
 
@@ -360,7 +363,10 @@ class SetCriterion(nn.Module):
         for idx in self.cfg.hand_idx:
             obj_cal_idx &= (target_labels != idx)
 
-        loss_objkey = F.l1_loss(src_objkeys[obj_cal_idx], target_keypoints[obj_cal_idx].view(-1, 63), reduction='none')
+        dt_obj_key = src_objkeys[obj_cal_idx][:, :48]
+        gt_obj_key = target_keypoints[obj_cal_idx][:, :16, :].cuda()
+        
+        loss_objkey = F.l1_loss(dt_obj_key, gt_obj_key.view(-1, 48), reduction='none')
 
         losses = {}
         if obj_cal_idx.sum().item() == 0:
@@ -386,7 +392,7 @@ class SetCriterion(nn.Module):
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
             'hand_keypoint': self.loss_hand_keypoints,
-#            'obj_keypoint': self.loss_obj_keypoints,
+           'obj_keypoint': self.loss_obj_keypoints,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -490,7 +496,7 @@ def build(args, cfg):
         weight_dict.update(aux_weight_dict)
 
     losses = ['labels', 'cardinality', 'hand_keypoint', 'obj_keypoint']
-    losses = ['labels', 'cardinality', 'hand_keypoint']
+    # losses = ['labels', 'cardinality', 'hand_keypoint']
 
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
     criterion = SetCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha, cfg=cfg)

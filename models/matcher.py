@@ -107,8 +107,11 @@ class HungarianMatcher(nn.Module):
             #     cost.append(torch.cdist(tmp_out, tmp_tgt.unsqueeze(0), p=1))
             # cost_hand = torch.cat(cost, dim=1)
 
-            cost_hand = torch.cdist(out_kp, tgt_kp.reshape(-1, 63)[hand_idx], p=1)
-            cost_obj = torch.cdist(out_objkp, tgt_kp.reshape(-1, 63)[obj_idx], p=1)
+            gt_hand_kp = tgt_kp[hand_idx]
+            gt_obj_kp = tgt_kp[obj_idx][:, :16, :]
+
+            cost_hand = torch.cdist(out_kp, gt_hand_kp.reshape(-1, 63), p=1)
+            cost_obj = torch.cdist(out_objkp[:, :48], gt_obj_kp.reshape(-1, 48), p=1)
 
             cost_keypoints[:,hand_idx] = cost_hand
             cost_keypoints[:,obj_idx] = cost_obj
