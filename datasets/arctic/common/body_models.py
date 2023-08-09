@@ -8,7 +8,7 @@ from common.mesh import Mesh
 from os import path as op
 
 # root directory
-from environments import DATASET_ROOT
+from .environments import DATASET_ROOT
 
 class MANODecimator:
     def __init__(self):
