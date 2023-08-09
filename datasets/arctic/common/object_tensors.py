@@ -16,7 +16,7 @@ from .torch_utils import pad_tensor_list
 from .xdict import xdict
 
 # root directory
-DATASET_ROOT = '/home/unist/Desktop/hdd/arctic'
+from environments import DATASET_ROOT
 
 # objects to consider for training so far
 OBJECTS = [
