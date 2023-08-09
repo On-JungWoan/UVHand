@@ -44,7 +44,8 @@ def create_windows(imgnames, window_size):
 class TempoInferenceDataset(ArcticDataset):
     def _load_data(self, args, split):
         # load image features
-        data_p = f"./data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
+        root = op.join(args.coco_path, args.dataset_file)
+        data_p = op.join(root, f"data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt")
         assert op.exists(
             data_p
         ), f"Not found {data_p}; NOTE: only use ArcticDataset for single-frame model to evaluate and extract."
@@ -68,6 +69,7 @@ class TempoInferenceDataset(ArcticDataset):
         self.imgnames = imgnames
         self.aug_data = False
         self.window_size = args.window_size
+        self.root_dir = root
 
     def _process_imgnames(self, seq, split):
         imgnames = self.imgnames

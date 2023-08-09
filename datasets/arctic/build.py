@@ -36,6 +36,8 @@ def fetch_dataset_devel(args, is_train, seq=None):
         else:
             DATASET = ArcticDataset
     elif args.method in ["field_lstm", "arctic_lstm"]:
+        import sys
+        sys.exit('collate_fn 확인해보기')
         if is_train:
             DATASET = TempoDataset
         else:
@@ -97,14 +99,16 @@ def fetch_dataloader(args, mode, seq=None):
             collate_fn = None
         else:
             collate_fn = collate_custom_fn
-        return DataLoader(
-            dataset=dataset,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            pin_memory=args.pin_memory,
-            shuffle=args.shuffle_train,
-            collate_fn=collate_fn,
-        )
+
+        return dataset
+        # return DataLoader(
+        #     dataset=dataset,
+        #     batch_size=args.batch_size,
+        #     num_workers=args.num_workers,
+        #     pin_memory=args.pin_memory,
+        #     shuffle=args.shuffle_train,
+        #     collate_fn=collate_fn,
+        # )
 
     elif mode == "val" or mode == "eval":
         if "submit_" in args.extraction_mode:

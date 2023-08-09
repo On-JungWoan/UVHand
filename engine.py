@@ -235,17 +235,20 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    samples, targets = prefetcher.next()
-    pbar = tqdm(range(len(data_loader)))
+    # prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    # samples, targets = prefetcher.next()
+    # pbar = tqdm(range(len(data_loader)))
+    pbar = tqdm(data_loader)
 
     total_loss = 0
     total_ce_loss = 0
     total_hand_loss = 0
+    total_obj_loss = 0
 
-    for _ in pbar:
+    # for _ in pbar:
+    for samples, targets in pbar:
 
-        outputs = model(samples)
+        outputs = model(samples.to(device))
 
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
@@ -283,25 +286,27 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
             'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
-            # 'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
+            'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
             })
         
         total_loss += loss_value
         total_ce_loss += loss_dict_reduced_scaled['loss_ce'].item()
         total_hand_loss += loss_dict_reduced_scaled['loss_hand_keypoint'].item()
+        total_obj_loss += loss_dict_reduced_scaled['loss_obj_keypoint'].item()
     
         if args.debug:
-            if args.num_debug == _:
+            if args.num_debug == 100:
                 break
 
-        samples, targets = prefetcher.next()
+        # samples, targets = prefetcher.next()
     
     if args is not None and args.wandb:
         wandb.log(
             {
                 "total_loss": total_loss / len(data_loader),
                 "total_ce_loss": total_ce_loss / len(data_loader),
-                "total_hand_loss": total_hand_loss / len(data_loader)
+                "total_hand_loss": total_hand_loss / len(data_loader),
+                "total_obj_loss": total_obj_loss / len(data_loader)
             }, step=epoch
         )
 

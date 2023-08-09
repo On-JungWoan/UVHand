@@ -15,6 +15,7 @@ from .common.object_tensors import ObjectTensors
 from . import dataset_utils as dataset_utils
 from .dataset_utils import get_valid, pad_jts2d
 
+from cfg import Config as cfg
 
 class ArcticDataset(Dataset):
     def __getitem__(self, index):
@@ -24,6 +25,8 @@ class ArcticDataset(Dataset):
 
     def getitem(self, imgname, load_rgb=True):
         args = self.args
+        root = op.join(args.coco_path, args.dataset_file)
+
         # LOADING START
         speedup = args.speedup
         sid, seq_name, view_idx, image_idx = imgname.split("/")[-4:]
@@ -41,6 +44,9 @@ class ArcticDataset(Dataset):
         vidx, is_valid, right_valid, left_valid = get_valid(
             data_2d, data_cam, vidx, view_idx, imgname
         )
+
+        if is_valid == 0:
+            return None, None
 
         if view_idx == 0:
             intrx = data_params["K_ego"][vidx].copy()
@@ -120,7 +126,11 @@ class ArcticDataset(Dataset):
                 "/arctic_data/", "/data/arctic_data/data/"
             ).replace("/data/data/", "/data/")
             # imgname = imgname.replace("/arctic_data/", "/data/arctic_data/")
-            cv_img, img_status = read_img(imgname, (2800, 2000, 3))
+            
+            cv_img, img_status = read_img(op.join(root, imgname[2:]), (2800, 2000, 3))
+
+            msg = 'Image not exist!!'
+            assert img_status==True, msg
         else:
             norm_img = None
 
@@ -177,10 +187,11 @@ class ArcticDataset(Dataset):
             norm_img = self.normalize_img(img)
 
         # exporting starts
-        inputs = {}
+        # inputs = {}
+        inputs = norm_img
         targets = {}
         meta_info = {}
-        inputs["img"] = norm_img
+        # inputs["img"] = norm_img
         meta_info["imgname"] = imgname
         rot_r = data_cam["rot_r_cam"][vidx, view_idx]
         rot_l = data_cam["rot_l_cam"][vidx, view_idx]
@@ -274,7 +285,28 @@ class ArcticDataset(Dataset):
         targets["joints_valid_r"] = np.ones(21) * targets["right_valid"]
         targets["joints_valid_l"] = np.ones(21) * targets["left_valid"]
 
-        return inputs, targets, meta_info
+        label = []
+        obj2idx = cfg(args).obj2idx
+        hand_idx = cfg(args).hand_idx
+
+        label.append(obj2idx[meta_info['query_names']])
+        for idx, valid in enumerate([left_valid, right_valid]):
+            if valid == 1:
+                label.append(hand_idx[idx])
+
+        targets["labels"] = torch.tensor(label)
+
+        obj_keypoint = torch.zeros(1,21,3)
+        obj_keypoint[0, :16, ...] = targets["object.kp3d.full.b"]
+
+        hand_keypoint = \
+            torch.cat([targets["mano.j3d.full.l"].unsqueeze(0), targets["mano.j3d.full.l"].unsqueeze(0)])
+        hand_valid = torch.tensor([left_valid, right_valid], dtype=torch.bool)
+        hand_keypoint = hand_keypoint[hand_valid]
+        
+        targets["keypoints"] = torch.cat([obj_keypoint, hand_keypoint])
+        # return inputs, targets, meta_info
+        return inputs, targets
 
     def _process_imgnames(self, seq, split):
         imgnames = self.imgnames
@@ -301,8 +333,9 @@ class ArcticDataset(Dataset):
             self.mode = "test"
 
         short_split = split.replace("mini", "").replace("tiny", "").replace("small", "")
+        root = op.join(args.coco_path, args.dataset_file)
         data_p = op.join(
-            f"./data/arctic_data/data/splits/{args.setup}_{short_split}.npy"
+            root, f"data/arctic_data/data/splits/{args.setup}_{short_split}.npy"
         )
         logger.info(f"Loading {data_p}")
         data = np.load(data_p, allow_pickle=True).item()
@@ -310,7 +343,7 @@ class ArcticDataset(Dataset):
         self.data = data["data_dict"]
         self.imgnames = data["imgnames"]
 
-        with open("./data/arctic_data/data/meta/misc.json", "r") as f:
+        with open(op.join(root, "data/arctic_data/data/meta/misc.json"), "r") as f:
             misc = json.load(f)
 
         # unpack

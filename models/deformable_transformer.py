@@ -417,13 +417,13 @@ class DeformableTransformerDecoder(nn.Module):
                 cls_out = self.cls_embed[lid](output)    
                 class_indices = cls_out.argmax(dim=-1)
                 
-                hand_idx = class_indices != 0 # 1과 2는 각각 left, right hand
-                # obj_idx = torch.ones_like(class_indices, dtype=torch.bool)
-                # hand_idx = torch.zeros_like(class_indices, dtype=torch.bool)
-                # for idx in [0] + self.cfg.hand_idx:
-                #     # obj_idx &= (class_indices != idx)
-                #     if idx != 0:
-                #         hand_idx |= (class_indices == idx)
+                # hand_idx = class_indices != 0 # 1과 2는 각각 left, right hand
+                obj_idx = torch.ones_like(class_indices, dtype=torch.bool)
+                hand_idx = torch.zeros_like(class_indices, dtype=torch.bool)
+                for idx in [0] + self.cfg.hand_idx:
+                    # obj_idx &= (class_indices != idx)
+                    if idx != 0:
+                        hand_idx |= (class_indices == idx)
                 
             ## modify ##
             if self.keypoint_embed is not None:
@@ -441,25 +441,17 @@ class DeformableTransformerDecoder(nn.Module):
                     new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
                 new_reference_points[hand_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[hand_idx][...,:2] 
                     
-            # if self.obj_keypoint_embed is not None:
-            #     tmp = self.obj_keypoint_embed[lid](output)
-            #     new_reference_points[obj_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[obj_idx][...,:2] 
-            #     new_reference_points = new_reference_points.reshape(tmp.shape[0], tmp.shape[1], -1)
-            #     if len(self.cfg.hand_idx) == 2:
-            #         new_reference_points = new_reference_points.sigmoid()
-            #     else:
-            #         new_reference_points = new_reference_points.sigmoid()*2 -0.5
-                    
-            #     reference_points = new_reference_points.detach()
-            # modify ##
-
+            if self.obj_keypoint_embed is not None:
+                tmp = self.obj_keypoint_embed[lid](output)
+                new_reference_points[obj_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[obj_idx][...,:2] 
                 new_reference_points = new_reference_points.reshape(tmp.shape[0], tmp.shape[1], -1)
-                # if len(self.cfg.hand_idx) == 2:
-                #     new_reference_points = new_reference_points.sigmoid()
-                # else:
-                new_reference_points = new_reference_points.sigmoid()*2 -0.5
+                if len(self.cfg.hand_idx) == 2:
+                    new_reference_points = new_reference_points.sigmoid()
+                else:
+                    new_reference_points = new_reference_points.sigmoid()*2 -0.5
                     
-                reference_points = new_reference_points.detach()            
+                reference_points = new_reference_points.detach()
+            ## modify ##
 
             if self.return_intermediate:
                 intermediate.append(output)

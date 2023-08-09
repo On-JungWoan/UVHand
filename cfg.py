@@ -6,9 +6,25 @@ class Config:
             self.num_obj_classes = 3
             self.hand_idx = [1, 2] # right 1, left 2
 
+        elif args.dataset_file == 'arctic':
+            self.num_obj_classes = 14
+            self.hand_idx = [12, 13]
+            self.obj2idx = {
+                "box" : 1,
+                "capsulemachine" : 2,
+                "espressomachine" : 3,
+                "ketchup" : 4,
+                "laptop" : 5,
+                "microwave" : 6,
+                "mixer" : 7,
+                "notebook" : 8,
+                "phone" : 9,
+                "scissors" : 10,
+                "waffleiron" : 11,
+            }
 
         elif args.dataset_file == 'H2O':
-            self.num_obj_classes = 3
+            self.num_obj_classes = 11
             self.IA_dim = 308
             self.num_action_classes = 37
             self.hand_idx = [9, 10]

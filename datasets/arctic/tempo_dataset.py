@@ -12,7 +12,8 @@ from .arctic_dataset import ArcticDataset
 
 class TempoDataset(ArcticDataset):
     def _load_data(self, args, split):
-        data_p = f"./data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
+        root = op.join(args.coco_path, args.dataset_file)
+        data_p = op.join(root, f"data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt")
         logger.info(f"Loading: {data_p}")
         data = torch.load(data_p)
         imgnames = data["imgnames"]
@@ -27,6 +28,7 @@ class TempoDataset(ArcticDataset):
         assert len(imgnames) == len(vec_dict.keys())
         self.aug_data = False
         self.window_size = args.window_size
+        self.root_dir = root
 
     def __init__(self, args, split, seq=None):
         Dataset.__init__(self)
@@ -61,7 +63,7 @@ class TempoDataset(ArcticDataset):
         inputs_list = []
         load_rgb = True if self.args.method in ["tempo_ft"] else False
         for imgname in imgnames:
-            img_folder = f"./data/arctic_data/data/images/"
+            img_folder = op.join(self.root_dir, f"data/arctic_data/data/images/")
             inputs, targets, meta_info = self.getitem(
                 op.join(img_folder, imgname), load_rgb=load_rgb
             )

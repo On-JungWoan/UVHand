@@ -4,6 +4,5 @@ cython
 scipy
 trimesh
 opencv-python
-pytorch3d
 chumpy
 numpy==1.22.3

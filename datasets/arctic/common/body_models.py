@@ -5,13 +5,17 @@ import torch
 from smplx import MANO
 
 from common.mesh import Mesh
+from os import path as op
 
+# root directory
+DATASET_ROOT = '/home/unist/Desktop/hdd/arctic'
 
 class MANODecimator:
     def __init__(self):
-        data = np.load(
-            "./data/arctic_data/data/meta/mano_decimator_195.npy", allow_pickle=True
-        ).item()
+        data = np.load(op.join(
+            DATASET_ROOT,
+            "data/arctic_data/data/meta/mano_decimator_195.npy", allow_pickle=True
+        )).item()
         mydata = {}
         for key, val in data.items():
             # only consider decimation matrix so far
@@ -31,7 +35,7 @@ class MANODecimator:
         return verts_sub
 
 
-MODEL_DIR = "./data/body_models/mano"
+MODEL_DIR = op.join(DATASET_ROOT, "data/body_models/mano")
 
 SEAL_FACES_R = [
     [120, 108, 778],
@@ -90,11 +94,11 @@ def build_layers(device=None):
     return layers
 
 
-MANO_MODEL_DIR = "./data/body_models/mano"
+MANO_MODEL_DIR = op.join(DATASET_ROOT, "data/body_models/mano")
 SMPLX_MODEL_P = {
-    "male": "./data/body_models/smplx/SMPLX_MALE.npz",
-    "female": "./data/body_models/smplx/SMPLX_FEMALE.npz",
-    "neutral": "./data/body_models/smplx/SMPLX_NEUTRAL.npz",
+    "male": op.join(DATASET_ROOT, "data/body_models/smplx/SMPLX_MALE.npz"),
+    "female": op.join(DATASET_ROOT, "data/body_models/smplx/SMPLX_FEMALE.npz"),
+    "neutral": op.join(DATASET_ROOT, "data/body_models/smplx/SMPLX_NEUTRAL.npz"),
 }
 
 
@@ -116,9 +120,9 @@ def build_smplx(batch_size, gender, vtemplate):
 
 
 def build_subject_smplx(batch_size, subject_id):
-    with open("./data/arctic_data/data/meta/misc.json", "r") as f:
+    with open(op.join(DATASET_ROOT, "data/arctic_data/data/meta/misc.json"), "r") as f:
         misc = json.load(f)
-    vtemplate_p = f"./data/arctic_data/data/meta/subject_vtemplates/{subject_id}.obj"
+    vtemplate_p = op.join(DATASET_ROOT, f"data/arctic_data/data/meta/subject_vtemplates/{subject_id}.obj")
     mesh = Mesh(filename=vtemplate_p)
     vtemplate = mesh.v
     gender = misc[subject_id]["gender"]

@@ -52,8 +52,11 @@ class DeformableDETR(nn.Module):
         self.transformer = transformer
         self.hidden_dim = transformer.d_model
         self.cls_embed = nn.Linear(self.hidden_dim, num_classes)
+
         self.keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3) 
-        self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3) 
+        self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3)
+        # self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 48, 3)
+
         self.num_feature_levels = num_feature_levels
         self.cfg = cfg
 
@@ -170,7 +173,7 @@ class DeformableDETR(nn.Module):
         dataset = 'AssemblyHands' if len(self.cfg.hand_idx) == 2 else 'FPHA'
         outputs_classes = []
         outputs_keypoints = [] 
-        # outputs_obj_keypoints = [] 
+        outputs_obj_keypoints = []
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
@@ -184,7 +187,7 @@ class DeformableDETR(nn.Module):
 
             outputs_class = self.cls_embed[lvl](hs[lvl])
             key = self.keypoint_embed[lvl](hs[lvl]) 
-            # obj_key = self.obj_keypoint_embed[lvl](hs[lvl]) 
+            obj_key = self.obj_keypoint_embed[lvl](hs[lvl]) 
                 
             if reference.shape[-1] == 42:
                 ref_x = reference[...,0::2].mean(-1).unsqueeze(-1)
@@ -194,9 +197,9 @@ class DeformableDETR(nn.Module):
                 key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
                 key = key.reshape(key.shape[0], key.shape[1], -1)
 
-                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
-                # obj_key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
-                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
+                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
+                obj_key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
+                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
 
             else:
                 assert reference.shape[-1] == 2
@@ -204,28 +207,28 @@ class DeformableDETR(nn.Module):
                 key[..., :2] += reference[:,:,None,:] 
                 key = key.reshape(key.shape[0], key.shape[1], -1)
                 
-                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
-                # obj_key[..., :2] += reference[:,:,None,:] 
-                # obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
+                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
+                obj_key[..., :2] += reference[:,:,None,:] 
+                obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], -1)
 
             # if dataset == 'H2O':
             #     outputs_keypoint = key.sigmoid() 
             #     outputs_obj_keypoint = obj_key.sigmoid() 
             # else:
             outputs_keypoint = key.sigmoid()*2 - 0.5
-            # outputs_obj_keypoint = obj_key.sigmoid()*2 - 0.5
+            outputs_obj_keypoint = obj_key.sigmoid()*2 - 0.5
             outputs_classes.append(outputs_class)
             outputs_keypoints.append(outputs_keypoint) 
-            # outputs_obj_keypoints.append(outputs_obj_keypoint) 
+            outputs_obj_keypoints.append(outputs_obj_keypoint) 
         outputs_class = torch.stack(outputs_classes)
         outputs_keypoints = torch.stack(outputs_keypoints) 
-        # outputs_obj_keypoints = torch.stack(outputs_obj_keypoints) 
+        outputs_obj_keypoints = torch.stack(outputs_obj_keypoints) 
 
-        # out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1], 'pred_obj_keypoints': outputs_obj_keypoints[-1]} 
-        out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1]} 
+        out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1], 'pred_obj_keypoints': outputs_obj_keypoints[-1]} 
+        # out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1]} 
         if self.aux_loss:
-            # out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints, outputs_obj_keypoints) 
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints) 
+            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints, outputs_obj_keypoints) 
+            # out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints) 
 
         if self.two_stage:
             enc_outputs_hand_coord = enc_outputs_hand_coord_unact.sigmoid()
@@ -235,15 +238,15 @@ class DeformableDETR(nn.Module):
         return out
 
     @torch.jit.unused
-    # def _set_aux_loss(self, outputs_class, outputs_keypoints, outputs_obj_keypoints) : 
-    def _set_aux_loss(self, outputs_class, outputs_keypoints) : 
+    def _set_aux_loss(self, outputs_class, outputs_keypoints, outputs_obj_keypoints) : 
+    # def _set_aux_loss(self, outputs_class, outputs_keypoints) : 
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_keypoints': b}
-                for a, b in zip(outputs_class[:-1], outputs_keypoints[:-1])]
-        # return [{'pred_logits': a, 'pred_keypoints': b,  'pred_obj_keypoints': c}
-        #         for a, b, c, in zip(outputs_class[:-1], outputs_keypoints[:-1], outputs_obj_keypoints[:-1])] 
+        # return [{'pred_logits': a, 'pred_keypoints': b}
+        #         for a, b in zip(outputs_class[:-1], outputs_keypoints[:-1])]
+        return [{'pred_logits': a, 'pred_keypoints': b,  'pred_obj_keypoints': c}
+                for a, b, c, in zip(outputs_class[:-1], outputs_keypoints[:-1], outputs_obj_keypoints[:-1])] 
 
 class SetCriterion(nn.Module):
     """ This class computes the loss for DETR.
@@ -276,7 +279,7 @@ class SetCriterion(nn.Module):
         src_logits = outputs['pred_logits']
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)]).cuda()
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -334,7 +337,7 @@ class SetCriterion(nn.Module):
 
         # loss_handkey = F.l1_loss(src_keypoints, target_keypoints, reduction='none')
 
-        loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63), reduction='none')
+        loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63).cuda(), reduction='none')
 
         losses = {}
         losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21

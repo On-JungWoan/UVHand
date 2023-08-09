@@ -15,6 +15,7 @@ import random
 import time
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -139,7 +140,15 @@ def get_args_parser():
                         help='If you want to evaluate a specific viewpoint, then you can simply put the viewpoint name.\n \
                             e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
     parser.add_argument('--eval_method', default='MPJPE', choices=['MPJPE', 'EPE'], type=str, \
-                        help='Select evaluation method(MPJPE or EPE).')                            
+                        help='Select evaluation method(MPJPE or EPE).')
+    
+    # for arctic
+    parser.add_argument('--setup', default='p1', type=str)
+    parser.add_argument('--method', default='arctic_sf', type=str)
+    parser.add_argument('--trainsplit', default='train', type=str)
+    parser.add_argument('--valsplit', default='minival', type=str)
+    parser.add_argument('--fast_dev_run', default=False, action='store_true')
+    
     return parser
 
 
@@ -184,10 +193,15 @@ def main(args):
     #     while True:
     #         vis(model, device, cfg)
 
+    if args.dataset_file == 'arctic':
+        from datasets.arctic.arctic_args import construct_arctic_args
+        args = construct_arctic_args(args)
+
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
-    dataset_val = build_dataset(image_set='val', args=args)
-    # dataset_val[0]
+    else:
+        dataset_val = build_dataset(image_set='val', args=args)
+    # dataset_train[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)
@@ -202,15 +216,18 @@ def main(args):
         if args.cache_mode:
             if not args.eval:
                 sampler_train = samplers.NodeDistributedSampler(dataset_train)
-            sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
+            else:
+                sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
         else:
             if not args.eval:
                 sampler_train = samplers.DistributedSampler(dataset_train)
-            sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
+            else:
+                sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
     else:
         if not args.eval:
             sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        else:
+            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     if not args.eval:
         batch_sampler_train = torch.utils.data.BatchSampler(
@@ -218,10 +235,11 @@ def main(args):
         data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                     collate_fn=utils.collate_fn, num_workers=args.num_workers,
                                     pin_memory=True)
-    # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-    data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
-                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
-                                 pin_memory=True)
+    else:
+        # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
+        data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
+                                    drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                    pin_memory=True)
 
     if args.dataset_file == 'H2O':
         dataset_test = build_dataset(image_set='test', args=args)
