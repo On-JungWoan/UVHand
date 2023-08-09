@@ -347,7 +347,7 @@ def main(args):
                     sampler_train.set_epoch(epoch)
 
                 train_stats = train_pose(
-                    model, criterion, data_loader_val, optimizer, device, epoch, args.clip_max_norm, args)
+                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args)
                 lr_scheduler.step()
 
                 utils.save_on_master({
