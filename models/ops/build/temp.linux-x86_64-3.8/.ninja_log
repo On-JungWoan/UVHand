@@ -1,7 +1,0 @@
-# ninja log v5
-0	19178	1688921961411525615	/home/user/hoseong/H2OTR/models/ops/build/temp.linux-x86_64-3.8/home/user/hoseong/H2OTR/models/ops/src/vision.o	a94752492c8b7062
-1	3064	1688963723836970746	/home/user/hoseong/H2OTR/models/ops/build/temp.linux-x86_64-3.8/home/user/hoseong/H2OTR/models/ops/src/cpu/ms_deform_attn_cpu.o	c141a0addc294327
-2	18433	1688963739197029014	/home/user/hoseong/H2OTR/models/ops/build/temp.linux-x86_64-3.8/home/user/hoseong/H2OTR/models/ops/src/vision.o	d4b6ea437bf1fea9
-2	3657	1688970716981032325	/home/user/hoseong/H2OTR/models/ops/build/temp.linux-x86_64-3.8/home/user/hoseong/H2OTR/models/ops/src/cpu/ms_deform_attn_cpu.o	bf604de4b7bb6569
-2	11108	1688970724425065763	/home/user/hoseong/H2OTR/models/ops/build/temp.linux-x86_64-3.8/home/user/hoseong/H2OTR/models/ops/src/cuda/ms_deform_attn_cuda.o	e50b46a939efaa4b
-2	19720	1688970733033104431	/home/user/hoseong/H2OTR/models/ops/build/temp.linux-x86_64-3.8/home/user/hoseong/H2OTR/models/ops/src/vision.o	5fb6734ea2b64db

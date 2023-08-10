@@ -1,8 +1,0 @@
-pycocotools
-tqdm
-cython
-scipy
-trimesh
-opencv-python
-chumpy
-numpy==1.22.4
