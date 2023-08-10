@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .tempo_dataset import TempoDataset
-from .arctic_dataset import ArcticDataset
+from .custom_arctic_dataset import ArcticDataset
 from .arctic_dataset_eval import ArcticDatasetEval
 from .tempo_inference_dataset import TempoInferenceDataset
 from .tempo_inference_dataset_eval import TempoInferenceDatasetEval

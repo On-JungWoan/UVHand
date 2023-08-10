@@ -1,9 +1,14 @@
 python main.py \
---num_workers 8 \
 --batch_size 14 \
 --epochs 50 \
 --coco_path /home/unist/Desktop/hdd \
 --dataset_file arctic \
---resume old_weights/paper_pose.pth \
---use_h2o_pth \
+--resume weights/arctic/1.pth \
+--start_epoch 2 \
 --wandb
+
+python main.py \
+--batch_size 1 \
+--coco_path /home/unist/Desktop/hdd \
+--dataset_file arctic \
+--resume weights/arctic/1.pth

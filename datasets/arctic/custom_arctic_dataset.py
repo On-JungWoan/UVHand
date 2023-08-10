@@ -16,8 +16,9 @@ from . import dataset_utils as dataset_utils
 from .dataset_utils import get_valid, pad_jts2d
 
 from cfg import Config as cfg
+from torchvision.datasets.vision import VisionDataset
 
-class ArcticDataset(Dataset):
+class ArcticDataset(VisionDataset):
     def __init__(self, args, split, seq=None):
         self._load_data(args, split, seq)
         self._process_imgnames(seq, split)

@@ -200,7 +200,7 @@ def main(args):
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     else:
-        dataset_val = build_dataset(image_set='val', args=args)
+        dataset_val = build_dataset(image_set='train', args=args)
     # dataset_train[0]
 
     model, criterion = build_model(args, cfg)

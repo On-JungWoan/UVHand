@@ -379,12 +379,13 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                     joint_rot_mode='axisang').to(device)
     
     
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    # prefetcher = data_prefetcher(data_loader, device, prefetch=True)
     metric_logger = utils.MetricLogger(delimiter="  ")
-    pbar = tqdm(range(len(data_loader)))
+    # pbar = tqdm(range(len(data_loader)))
+    pbar = tqdm(data_loader)
 
-    for _ in pbar:
-        samples, targets = prefetcher.next()
+    for samples, targets, meta in pbar:
+        # samples, targets = prefetcher.next()
         
         try:
             gt_keypoints = [t['keypoints'] for t in targets]
@@ -395,14 +396,20 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         if 'labels' in targets[0].keys():
             gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
 
-        filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
+        try:
+            filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
+        except:
+            filename = meta[0]['imgname']
+        
         if args.test_viewpoint is not None:
             if args.test_viewpoint != '/'.join(filename.split('/')[:-1]):
                 continue
 
         if vis:
             assert data_loader.batch_size == 1  
-            if dataset == 'H2O' or dataset == 'AssemblyHands':
+            if args.dataset_file=='arctic':
+                filepath = os.path.join(args.coco_path, args.dataset_file) + filename[1:]
+            elif dataset == 'H2O' or dataset == 'AssemblyHands':
                 filepath = data_loader.dataset.root / filename
             else:
                 filepath = data_loader.dataset.root / 'Video_files'/ filename
@@ -416,7 +423,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         #     continue
 
         with torch.no_grad():
-            outputs = model(samples)
+            outputs = model(samples.to(device))
 
             # # occlusion pre-process (fot gt)
             # occlusion_mask = targets[0]['keypoints']<0
@@ -448,19 +455,19 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             ####################################################
 
             # model output
-            out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
+            out_logits, pred_keypoints, pred_obj_keypoints = outputs['pred_logits'], outputs['pred_keypoints'], outputs['pred_obj_keypoints']
 
             prob = out_logits.sigmoid()
             B, num_queries, num_classes = prob.shape
 
             # query index select
             best_score = torch.zeros(B).to(device)
-            if dataset != 'AssemblyHands':
-                obj_idx = torch.zeros(B).to(device).to(torch.long)
-                for i in range(1, cfg.hand_idx[0]):
-                    score, idx = torch.max(prob[:,:,i], dim=-1)
-                    obj_idx[best_score < score] = idx[best_score < score]
-                    best_score[best_score < score] = score[best_score < score]
+            # if dataset != 'AssemblyHands':
+            obj_idx = torch.zeros(B).to(device).to(torch.long)
+            for i in range(1, cfg.hand_idx[0]):
+                score, idx = torch.max(prob[:,:,i], dim=-1)
+                obj_idx[best_score < score] = idx[best_score < score]
+                best_score[best_score < score] = score[best_score < score]
 
             hand_idx = []
             for i in cfg.hand_idx:
@@ -471,7 +478,13 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             else:
                 keep = hand_idx
             hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
-            # obj_kp = torch.gather(pred_obj_keypoints, 1, obj_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63)).reshape(B, 21, 3)
+            obj_kp = torch.gather(pred_obj_keypoints, 1, obj_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63)).reshape(B, 21, 3)
+
+            continue
+
+            im_h, im_w, _ = source_img.shape
+            hand_kp = targets[0]['keypoints'][1] * 1000
+            visualize(source_img, hand_kp.detach().cpu().numpy().astype(np.int32), 'left')
 
             orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
             im_h, im_w = orig_target_sizes[:,0], orig_target_sizes[:,1]
@@ -480,8 +493,8 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
 
             labels = torch.gather(out_logits, 1, keep.unsqueeze(2).repeat(1,1,num_classes)).softmax(dim=-1)
             hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
-            # obj_kp[...,:2] *=  target_sizes.unsqueeze(1); obj_kp[...,2] *= 1000
-            # key_points = torch.cat([hand_kp, obj_kp.unsqueeze(1)], dim=1)
+            obj_kp[...,:2] *=  target_sizes.unsqueeze(1); obj_kp[...,2] *= 1000
+            key_points = torch.cat([hand_kp, obj_kp.unsqueeze(1)], dim=1)
             key_points = hand_kp
             
             if args.debug:
@@ -668,7 +681,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                 # trimesh.exchange.export.export_mesh(obj_mesh,f'{save_contact_vis_path[:-4]}_obj.obj')
             ######################
 
-        samples, targets = prefetcher.next()
+        # samples, targets = prefetcher.next()
 
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
