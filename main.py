@@ -201,7 +201,7 @@ def main(args):
         dataset_train = build_dataset(image_set='train', args=args)
     else:
         dataset_val = build_dataset(image_set='train', args=args)
-    # dataset_train[0]
+    dataset_train[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)

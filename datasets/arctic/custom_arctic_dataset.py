@@ -34,7 +34,7 @@ class ArcticDataset(VisionDataset):
     def getitem(self, imgname, load_rgb=True):
         args = self.args
         root = op.join(args.coco_path, args.dataset_file)
-
+        device = args.device
         # LOADING START
         speedup = args.speedup
         sid, seq_name, view_idx, image_idx = imgname.split("/")[-4:]
@@ -138,9 +138,6 @@ class ArcticDataset(VisionDataset):
                 is_valid == 0
         else:
             norm_img = None
-
-        if is_valid == 0:
-            cv_img = np.zeros_like(cv_img)
 
         center = [bbox[0], bbox[1]]
         scale = bbox[2]
@@ -281,17 +278,17 @@ class ArcticDataset(VisionDataset):
         if not is_egocam:
             dist = dist * float("nan")
         meta_info["dist"] = torch.FloatTensor(dist)
-        meta_info["center"] = np.array(center, dtype=np.float32)
-        meta_info["is_flipped"] = augm_dict["flip"]
-        meta_info["rot_angle"] = np.float32(augm_dict["rot"])
+        meta_info["center"] = torch.tensor(center, dtype=torch.float32)
+        meta_info["is_flipped"] = torch.tensor(augm_dict["flip"], dtype=torch.float32)
+        meta_info["rot_angle"] = torch.tensor(augm_dict["rot"] , dtype=torch.float32)
         # meta_info["sample_index"] = index
 
         # root and at least 3 joints inside image
-        targets["is_valid"] = float(is_valid)
-        targets["left_valid"] = float(left_valid) * float(is_valid)
-        targets["right_valid"] = float(right_valid) * float(is_valid)
-        targets["joints_valid_r"] = np.ones(21) * targets["right_valid"]
-        targets["joints_valid_l"] = np.ones(21) * targets["left_valid"]
+        targets["is_valid"] = torch.tensor(float(is_valid), dtype=torch.float32)
+        targets["left_valid"] = torch.tensor(float(left_valid) * float(is_valid), dtype=torch.float32)
+        targets["right_valid"] = torch.tensor(float(right_valid) * float(is_valid), dtype=torch.float32)
+        targets["joints_valid_r"] = torch.ones(21) * targets["right_valid"]
+        targets["joints_valid_l"] = torch.ones(21) * targets["left_valid"]
 
         label = []
         obj2idx = cfg(args).obj2idx
@@ -313,8 +310,8 @@ class ArcticDataset(VisionDataset):
         hand_keypoint = hand_keypoint[hand_valid]
         
         targets["keypoints"] = torch.cat([obj_keypoint, hand_keypoint])
-        return inputs, targets, meta_info
-        # return inputs, targets
+        # return inputs, targets, meta_info
+        return inputs, targets
 
     def _process_imgnames(self, seq, split):
         imgnames = self.imgnames
