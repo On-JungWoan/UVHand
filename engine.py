@@ -235,15 +235,13 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
-    # prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    # samples, targets = prefetcher.next()
-    # pbar = tqdm(range(len(data_loader)))
-    pbar = tqdm(data_loader)
+    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    samples, targets = prefetcher.next()
+    pbar = tqdm(range(len(data_loader)))
+    # pbar = tqdm(data_loader)
 
-    # for _ in pbar:
-
-    for samples, targets in pbar:
-        if len(samples.tensors[samples.tensors != 0]) == 0:
+    for _ in pbar:
+        if targets[0]['is_valid'] == 0:
             continue
 
         outputs = model(samples.to(device))
@@ -292,7 +290,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             if args.num_debug == 100:
                 break
 
-        # samples, targets = prefetcher.next()
+        samples, targets = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -379,13 +377,12 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                     joint_rot_mode='axisang').to(device)
     
     
-    # prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
     metric_logger = utils.MetricLogger(delimiter="  ")
-    # pbar = tqdm(range(len(data_loader)))
-    pbar = tqdm(data_loader)
+    pbar = tqdm(range(len(data_loader)))
 
-    for samples, targets, meta in pbar:
-        # samples, targets = prefetcher.next()
+    for samples, targets in pbar:
+        samples, targets = prefetcher.next()
         
         try:
             gt_keypoints = [t['keypoints'] for t in targets]
@@ -681,7 +678,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                 # trimesh.exchange.export.export_mesh(obj_mesh,f'{save_contact_vis_path[:-4]}_obj.obj')
             ######################
 
-        # samples, targets = prefetcher.next()
+        samples, targets = prefetcher.next()
 
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}

@@ -5,4 +5,9 @@ scipy
 trimesh
 opencv-python
 chumpy
-numpy==1.22.4
+numpy==1.22.3
+loguru
+easydict
+pyrender
+smplx
+pytorch_lightning
