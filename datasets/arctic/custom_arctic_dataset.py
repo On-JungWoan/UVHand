@@ -310,7 +310,10 @@ class ArcticDataset(VisionDataset):
         hand_keypoint = hand_keypoint[hand_valid]
         
         targets["keypoints"] = torch.cat([obj_keypoint, hand_keypoint])
-        # return inputs, targets, meta_info
+
+        for key, val in meta_info.items():
+            targets[f'meta_{key}'] = val
+
         return inputs, targets
 
     def _process_imgnames(self, seq, split):

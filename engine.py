@@ -241,8 +241,6 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     # pbar = tqdm(data_loader)
 
     for _ in pbar:
-
-    # for samples, targets in pbar:
         if targets[0]['is_valid'] == 0:
             continue
 

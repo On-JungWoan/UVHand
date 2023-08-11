@@ -8,3 +8,6 @@ chumpy
 numpy==1.22.3
 loguru
 easydict
+pyrender
+smplx
+pytorch_lightning
