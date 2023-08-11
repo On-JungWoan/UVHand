@@ -235,16 +235,24 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    samples, targets = prefetcher.next()
-    pbar = tqdm(range(len(data_loader)))
-    # pbar = tqdm(data_loader)
+    if not args.debug:
+        prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+        samples, targets = prefetcher.next()
+        pbar = tqdm(range(len(data_loader)))
+    else:
+        pbar = tqdm(data_loader)
 
     for _ in pbar:
+        if args.debug:
+            samples, targets = _
+            samples = samples.to(device)
+            for key, val in targets[0].items():
+                targets[0][key] = val.to(device)
+
         if targets[0]['is_valid'] == 0:
             continue
 
-        outputs = model(samples.to(device))
+        outputs = model(samples)
 
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
@@ -289,8 +297,8 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.debug:
             if args.num_debug == 100:
                 break
-
-        samples, targets = prefetcher.next()
+        else:
+            samples, targets = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
