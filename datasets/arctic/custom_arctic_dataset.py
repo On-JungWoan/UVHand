@@ -311,8 +311,7 @@ class ArcticDataset(VisionDataset):
         
         targets["keypoints"] = torch.cat([obj_keypoint, hand_keypoint])
 
-        for key, val in meta_info.items():
-            targets[f'meta_{key}'] = val
+        self.meta_info = meta_info
 
         return inputs, targets
 
