@@ -6,6 +6,7 @@ PUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./tools/run_h2otr.sh \
 --dataset_file arctic \
 --resume old_weights/paper_pose.pth \
 --use_h2o_pth \
+--debug \
 --wandb
 
 

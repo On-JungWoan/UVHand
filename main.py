@@ -129,7 +129,7 @@ def get_args_parser():
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visualization', default=False, action='store_true')
     parser.add_argument('--debug', default=False, action='store_true')
-    parser.add_argument('--num_debug', default=10, type=int)
+    parser.add_argument('--num_debug', default=3, type=int)
 
     # for train
     parser.add_argument('--use_h2o_pth', default=False, action='store_true', help='When you use h2o pretrained wegihts, use this argument.')

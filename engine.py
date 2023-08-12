@@ -328,9 +328,8 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             {
                 "loss": train_stat['loss'],
                 "loss_ce": train_stat['loss_ce'],
-                "loss_hand_keypoint": train_stat['loss_hand_keypoint'],
-                "loss_obj_keypoint": train_stat['loss_obj_keypoint'],
-                "class_error": train_stat['class_error'],
+                "mano": train_stat['loss_mano_params'],
+                "obj": train_stat['loss_obj']
             }, step=epoch
         )
     return train_stat
