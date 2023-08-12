@@ -2,6 +2,8 @@ import os
 
 class Config:
     def __init__(self, args):
+        self.dataset_file = args.dataset_file
+        
         if args.dataset_file == 'AssemblyHands':
             self.num_obj_classes = 3
             self.hand_idx = [1, 2] # right 1, left 2

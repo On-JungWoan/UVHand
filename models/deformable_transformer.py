@@ -238,7 +238,8 @@ class DeformableTransformer(nn.Module):
             query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
  
-            reference_points = self.reference_points(query_embed).sigmoid()
+            # reference_points = self.reference_points(query_embed).sigmoid()
+            reference_points = self.reference_points(query_embed)
             init_reference_out = reference_points
 
         # decoder
@@ -391,8 +392,13 @@ class DeformableTransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.return_intermediate = return_intermediate
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
-        self.keypoint_embed = None # modify
+        # self.keypoint_embed = None # modify
+        # self.obj_keypoint_embed = None
+        self.mano_pose_embed = None
+        self.mano_beta_embed = None
         self.obj_keypoint_embed = None
+        self.obj_ref_embed = None
+        # self.obj_rad = None
         self.cls_embed = None
         self.cfg = cfg
 
@@ -412,24 +418,35 @@ class DeformableTransformerDecoder(nn.Module):
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
             output = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask)
 
-            # hack implementation for iterative bounding box refinement
+            ## hack implementation for iterative bounding box refinement ##
             if self.cls_embed is not None:
+                assert sum(
+                    [ebd is not None for ebd in [self.mano_pose_embed, self.mano_beta_embed, self.obj_keypoint_embed, self.obj_ref_embed]]
+                ) == 4
+
+                #################
+                ## class embed ##
+                #################
                 cls_out = self.cls_embed[lid](output)    
                 class_indices = cls_out.argmax(dim=-1)
-                
                 # hand_idx = class_indices != 0 # 1과 2는 각각 left, right hand
+                    
+                # obj_idx : class 예측결과 중 hand idx가 아닌 것만 추출
+                # hand_idx : class 예측결과 중 hand idx만 추출
                 obj_idx = torch.ones_like(class_indices, dtype=torch.bool)
                 hand_idx = torch.zeros_like(class_indices, dtype=torch.bool)
                 for idx in [0] + self.cfg.hand_idx:
-                    # obj_idx &= (class_indices != idx)
+                    obj_idx &= (class_indices != idx)
                     if idx != 0:
                         hand_idx |= (class_indices == idx)
-                
-            ## modify ##
-            if self.keypoint_embed is not None:
-                tmp = self.keypoint_embed[lid](output)
+
+
+                ######################
+                ## reference points ##
+                ######################
                 if reference_points.shape[-1] == 2:
-                    ref = inverse_sigmoid(reference_points).unsqueeze(2)
+                    # ref = inverse_sigmoid(reference_points).unsqueeze(2)
+                    ref = reference_points.unsqueeze(2)
                     new_reference_points = ref.repeat(1,1,21,1).clone()
         
                 elif reference_points.shape[-1] == 42:
@@ -438,17 +455,36 @@ class DeformableTransformerDecoder(nn.Module):
                     # if len(self.cfg.hand_idx) == 2:
                     #     new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
                     # else:
-                    new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
-                new_reference_points[hand_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[hand_idx][...,:2] 
-                    
-            if self.obj_keypoint_embed is not None:
+                    new_reference_points = torch.cat([ref_x, ref_y], dim=-1).unsqueeze(2).repeat(1,1,21,1).clone()
+                    # new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
+                    # new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
+
+
+                ################
+                ## mano embed ##
+                ################
+                bs = class_indices.shape[0]
+
+                out_mano_pose = self.mano_pose_embed[lid](output)
+                out_mano_beta = self.mano_beta_embed[lid](output)
+
+                tmp = self.get_reference_point(bs, [out_mano_pose,out_mano_beta], class_indices, new_reference_points)
+                new_reference_points[hand_idx] += tmp[hand_idx]
+                # new_reference_points[hand_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[hand_idx][...,:2] 
+
+
+                ########################
+                ## obj keypoint embed ##
+                ########################
                 tmp = self.obj_keypoint_embed[lid](output)
-                new_reference_points[obj_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[obj_idx][...,:2] 
+                tmp = self.obj_ref_embed[lid](tmp)
+
+                new_reference_points[obj_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[obj_idx][...,:2]
                 new_reference_points = new_reference_points.reshape(tmp.shape[0], tmp.shape[1], -1)
-                if len(self.cfg.hand_idx) == 2:
-                    new_reference_points = new_reference_points.sigmoid()
-                else:
-                    new_reference_points = new_reference_points.sigmoid()*2 -0.5
+                # if len(self.cfg.hand_idx) == 2:
+                # new_reference_points = new_reference_points.sigmoid()
+                # else:
+                #     new_reference_points = new_reference_points.sigmoid()*2 -0.5
                     
                 reference_points = new_reference_points.detach()
             ## modify ##

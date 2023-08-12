@@ -16,6 +16,7 @@ from torch import nn
 
 from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
 from copy import copy
+from manopth.manolayer import ManoLayer
 
 class HungarianMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
@@ -42,6 +43,20 @@ class HungarianMatcher(nn.Module):
         self.cfg = cfg
         assert cost_class != 0 or cost_keypoint != 0, "all costs cant be 0"
 
+        _mano_root = 'mano/models'
+        self.mano_left = ManoLayer(flat_hand_mean=True,
+                        side="left",
+                        mano_root=_mano_root,
+                        use_pca=False,
+                        root_rot_mode='axisang',
+                        joint_rot_mode='axisang')
+        self.mano_right = ManoLayer(flat_hand_mean=True,
+                        side="right",
+                        mano_root=_mano_root,
+                        use_pca=False,
+                        root_rot_mode='axisang',
+                        joint_rot_mode='axisang')        
+
     def forward(self, outputs, targets):
         """ Performs the matching
 
@@ -67,19 +82,25 @@ class HungarianMatcher(nn.Module):
 
             # We flatten to compute the cost matrices in a batch
             out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()
-            out_kp = outputs["pred_keypoints"].flatten(0,1)
-            out_objkp = outputs["pred_obj_keypoints"].flatten(0,1)
+            out_objkp, _ = outputs['pred_obj_params']
+            # out_kp = outputs["pred_keypoints"].flatten(0,1)
+            # out_objkp = outputs["pred_obj_keypoints"].flatten(0,1)
+            out_mano_pose, out_mano_beta = outputs['pred_manoparams']
+            out_left_kp = torch.cat([self.mano_left(out_mano_pose[b], out_mano_beta[b])[1].view(num_queries, -1).unsqueeze(0) for b in range(bs)])
+            out_right_kp = torch.cat([self.mano_right(out_mano_pose[b], out_mano_beta[b])[1].view(num_queries, -1).unsqueeze(0) for b in range(bs)])
 
             # Also concat the target labels and boxes
-            tgt_ids = torch.cat([v["labels"] for v in targets])
-            tgt_kp = torch.cat([v["keypoints"] for v in targets]).cuda()
+            tgt_ids = torch.cat([v["labels"] for idx, v in enumerate(targets)])
+            tgt_kp = torch.cat([v["keypoints"] for idx, v in enumerate(targets)])
 
-            hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
+            # hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
             obj_idx = torch.ones_like(tgt_ids, dtype=torch.bool)
             for idx in [0] + self.cfg.hand_idx:
                 obj_idx &= (tgt_ids != idx)
-                if idx != 0:
-                    hand_idx |= (tgt_ids == idx)
+                # if idx != 0:
+                #     hand_idx |= (tgt_ids == idx)
+            left_idx = tgt_ids == self.cfg.hand_idx[0]
+            right_idx = tgt_ids == self.cfg.hand_idx[1]
             # hand_idx = tgt_ids != 0
             
             # Compute the classification cost.
@@ -107,18 +128,21 @@ class HungarianMatcher(nn.Module):
             #     cost.append(torch.cdist(tmp_out, tmp_tgt.unsqueeze(0), p=1))
             # cost_hand = torch.cat(cost, dim=1)
 
-            gt_hand_kp = tgt_kp[hand_idx]
+            gt_left_kp = tgt_kp[left_idx]
+            gt_right_kp = tgt_kp[right_idx]
             gt_obj_kp = tgt_kp[obj_idx][:, :16, :]
 
-            cost_hand = torch.cdist(out_kp, gt_hand_kp.reshape(-1, 63), p=1)
-            cost_obj = torch.cdist(out_objkp[:, :48], gt_obj_kp.reshape(-1, 48), p=1)
+            cost_left = torch.cdist(out_left_kp, gt_left_kp.reshape(-1, 63), p=1)
+            cost_right = torch.cdist(out_right_kp, gt_right_kp.reshape(-1, 63), p=1)
+            cost_obj = torch.cdist(out_objkp, gt_obj_kp.reshape(-1, 48), p=1)
 
-            cost_keypoints[:,hand_idx] = cost_hand
-            cost_keypoints[:,obj_idx] = cost_obj
+            cost_keypoints[:,left_idx] = cost_left.view(bs*num_queries, -1)
+            cost_keypoints[:,right_idx] = cost_right.view(bs*num_queries, -1)
+            cost_keypoints[:,obj_idx] = cost_obj.view(bs*num_queries, -1)
 
             C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
             C = C.view(bs, num_queries, -1).cpu()
-            sizes = [len(v["keypoints"]) for v in targets]
+            sizes = [len(v["keypoints"]) for idx, v in enumerate(targets)]
             indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
 
             return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]

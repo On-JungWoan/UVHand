@@ -305,11 +305,25 @@ class ArcticDataset(VisionDataset):
         obj_keypoint[0, :16, ...] = targets["object.kp3d.full.b"]
 
         hand_keypoint = \
-            torch.cat([targets["mano.j3d.full.l"].unsqueeze(0), targets["mano.j3d.full.l"].unsqueeze(0)])
+            torch.cat([targets["mano.j3d.full.l"].unsqueeze(0), targets["mano.j3d.full.r"].unsqueeze(0)])
+        mano_pose = \
+            torch.cat([targets['mano.pose.l'].unsqueeze(0), targets['mano.pose.r'].unsqueeze(0)])
+        mano_beta = \
+            torch.cat([targets['mano.beta.l'].unsqueeze(0), targets['mano.beta.r'].unsqueeze(0)])
+        
+        tmp_pose = targets['mano.pose.l'].unsqueeze(0)
+        tmp_beta = targets['mano.beta.l'].unsqueeze(0)
+        tmp_pose = torch.zeros_like(tmp_pose)
+        tmp_beta = torch.zeros_like(tmp_beta)
+
         hand_valid = torch.tensor([left_valid, right_valid], dtype=torch.bool)
         hand_keypoint = hand_keypoint[hand_valid]
+        mano_pose = mano_pose[hand_valid]
+        mano_beta = mano_beta[hand_valid]
         
         targets["keypoints"] = torch.cat([obj_keypoint, hand_keypoint])
+        targets["mano_pose"] = torch.cat([tmp_pose, mano_pose])
+        targets["mano_beta"] = torch.cat([tmp_beta, mano_beta])
 
         self.meta_info = meta_info
 

@@ -11,3 +11,4 @@ easydict
 pyrender
 smplx
 pytorch_lightning
+wandb
