@@ -19,6 +19,7 @@ from cv2 import KeyPoint
 
 import torch
 import util.misc as utils
+from util.misc import NestedTensor
 from datasets.data_prefetcher import data_prefetcher
 from tqdm import tqdm
 import numpy as np
@@ -221,6 +222,20 @@ def vis(data_loader, targets, FPHA=False):
 
     return cv_img
 
+def keep_valid(outputs, is_valid):
+    outputs['pred_logits'] = outputs['pred_logits'][is_valid]
+    outputs['pred_manoparams'][0] = outputs['pred_manoparams'][0][is_valid]
+    outputs['pred_manoparams'][1] = outputs['pred_manoparams'][1][is_valid]
+    outputs['pred_obj_params'][0] = outputs['pred_obj_params'][0][is_valid]
+    outputs['pred_obj_params'][1] = outputs['pred_obj_params'][1][is_valid]
+    for idx, aux in enumerate(outputs['aux_outputs']):
+        outputs['aux_outputs'][idx]['pred_logits'] = aux['pred_logits'][is_valid]
+        outputs['aux_outputs'][idx]['pred_manoparams'][0] = aux['pred_manoparams'][0][is_valid]
+        outputs['aux_outputs'][idx]['pred_manoparams'][1] = aux['pred_manoparams'][1][is_valid]
+        outputs['aux_outputs'][idx]['pred_obj_params'][0] = aux['pred_obj_params'][0][is_valid]
+        outputs['aux_outputs'][idx]['pred_obj_params'][1] = aux['pred_obj_params'][1][is_valid]
+    return outputs
+
 
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -235,24 +250,25 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
-    if not args.debug:
-        prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-        samples, targets = prefetcher.next()
-        pbar = tqdm(range(len(data_loader)))
-    else:
-        pbar = tqdm(data_loader)
+    # if not args.debug:
+    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+    samples, targets = prefetcher.next()
+    pbar = tqdm(range(len(data_loader)))
+    # else:
+        # pbar = tqdm(data_loader)
 
     for _ in pbar:
-        if args.debug:
-            samples, targets = _
-            samples = samples.to(device)
-            for key, val in targets[0].items():
-                targets[0][key] = val.to(device)
-
-        if targets[0]['is_valid'] == 0:
-            continue
+        # if args.debug:
+        #     samples, targets = _
+        #     samples = samples.to(device)
+        #     for key, val in targets[0].items():
+        #         targets[0][key] = val.to(device)
 
         outputs = model(samples)
+
+        is_valid = torch.tensor([v['is_valid'].item() for v in targets], dtype=torch.bool)
+        targets = [v for idx, v in enumerate(targets) if is_valid[idx] == True]
+        outputs = keep_valid(outputs, is_valid)
 
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
@@ -290,21 +306,24 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         pbar.set_postfix({
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
-            'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
-            'obj': loss_dict_reduced_scaled['loss_obj_keypoint'].item(), 
+            'mano': loss_dict_reduced_scaled['loss_mano_params'].item(), 
+            'obj': loss_dict_reduced_scaled['loss_obj'].item(), 
             })
-    
+
+        # print(f'{_} : {utils.get_local_rank()} done')
         if args.debug:
-            if args.num_debug == 100:
+            if args.num_debug == _:
                 break
-        else:
-            samples, targets = prefetcher.next()
+        samples, targets = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     
     if args is not None and args.wandb:
+        if args.distributed:
+            if utils.get_local_rank() != 0:
+                return train_stat
         wandb.log(
             {
                 "loss": train_stat['loss'],
@@ -313,8 +332,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 "loss_obj_keypoint": train_stat['loss_obj_keypoint'],
                 "class_error": train_stat['class_error'],
             }, step=epoch
-        )    
-    
+        )
     return train_stat
 
 

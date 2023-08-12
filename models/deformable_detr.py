@@ -27,6 +27,7 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
 from .deformable_transformer import build_deforamble_transformer, _get_activation_fn
 import copy
 import numpy as np
+from manopth.manolayer import ManoLayer
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
@@ -53,9 +54,14 @@ class DeformableDETR(nn.Module):
         self.hidden_dim = transformer.d_model
         self.cls_embed = nn.Linear(self.hidden_dim, num_classes)
 
-        self.keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3) 
-        self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3)
-        # self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 48, 3)
+        # self.keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3) 
+        # self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 63, 3)
+        self.mano_pose_embed = MLP(self.hidden_dim, self.hidden_dim, 48, 3)
+        self.mano_beta_embed = MLP(self.hidden_dim, self.hidden_dim, 10, 3)
+        self.obj_keypoint_embed = MLP(self.hidden_dim, self.hidden_dim, 48, 3)
+        self.obj_ref_embed = nn.Linear(48, 63)
+        self.ref_obj_embed = nn.Linear(63, 48)
+        self.obj_rad = nn.Linear(self.hidden_dim, 1)
 
         self.num_feature_levels = num_feature_levels
         self.cfg = cfg
@@ -91,34 +97,90 @@ class DeformableDETR(nn.Module):
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         self.cls_embed.bias.data = torch.ones(num_classes) * bias_value
-        nn.init.constant_(self.keypoint_embed.layers[-1].weight.data, 0)      
-        nn.init.constant_(self.keypoint_embed.layers[-1].bias.data, 0)          
-        nn.init.constant_(self.obj_keypoint_embed.layers[-1].weight.data, 0)          
-        nn.init.constant_(self.obj_keypoint_embed.layers[-1].bias.data, 0)          
+
+        # nn.init.constant_(self.keypoint_embed.layers[-1].weight.data, 0)      
+        # nn.init.constant_(self.keypoint_embed.layers[-1].bias.data, 0)          
+        # nn.init.constant_(self.obj_keypoint_embed.layers[-1].weight.data, 0)          
+        # nn.init.constant_(self.obj_keypoint_embed.layers[-1].bias.data, 0)
+
+        # xavier & uniform initialization
+        nn.init.xavier_uniform_(self.mano_pose_embed.layers[-1].weight, gain=1)
+        nn.init.constant_(self.mano_pose_embed.layers[-1].bias.data, 0)
+        nn.init.xavier_uniform_(self.mano_beta_embed.layers[-1].weight, gain=1)
+        nn.init.constant_(self.mano_beta_embed.layers[-1].bias.data, 0)
+        nn.init.xavier_uniform_(self.obj_keypoint_embed.layers[-1].weight, gain=1)
+        nn.init.constant_(self.obj_keypoint_embed.layers[-1].bias.data, 0)
+        nn.init.xavier_uniform_(self.obj_ref_embed.weight, gain=1)
+        nn.init.constant_(self.obj_ref_embed.bias.data, 0)
+        nn.init.xavier_uniform_(self.ref_obj_embed.weight, gain=1)
+        nn.init.constant_(self.ref_obj_embed.bias.data, 0)        
+        nn.init.xavier_uniform_(self.obj_rad.weight, gain=1)
+        nn.init.constant_(self.obj_rad.bias.data, 0)
+
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
+
+        _mano_root = 'mano/models'
+        self.mano_left = ManoLayer(flat_hand_mean=True,
+                        side="left",
+                        mano_root=_mano_root,
+                        use_pca=False,
+                        root_rot_mode='axisang',
+                        joint_rot_mode='axisang')
+        self.mano_right = ManoLayer(flat_hand_mean=True,
+                        side="right",
+                        mano_root=_mano_root,
+                        use_pca=False,
+                        root_rot_mode='axisang',
+                        joint_rot_mode='axisang')
+        self.transformer.decoder.mano_left = self.mano_left
+        self.transformer.decoder.mano_right = self.mano_right
     
         num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
         if with_box_refine:
             self.cls_embed = _get_clones(self.cls_embed, num_pred)
-            self.keypoint_embed = _get_clones(self.keypoint_embed, num_pred)          
-            self.obj_keypoint_embed = _get_clones(self.obj_keypoint_embed, num_pred)          
+            # self.keypoint_embed = _get_clones(self.keypoint_embed, num_pred)
+            # self.obj_keypoint_embed = _get_clones(self.obj_keypoint_embed, num_pred)
+            self.mano_pose_embed = _get_clones(self.mano_pose_embed, num_pred)
+            self.mano_beta_embed = _get_clones(self.mano_beta_embed, num_pred)
+            self.obj_keypoint_embed = _get_clones(self.obj_keypoint_embed, num_pred)
+            self.obj_ref_embed = _get_clones(self.obj_ref_embed, num_pred)
+            self.ref_obj_embed = _get_clones(self.ref_obj_embed, num_pred)
+            self.obj_rad = _get_clones(self.obj_rad, num_pred)
 
             # hack implementation for iterative bounding box refinement
-            self.transformer.decoder.cls_embed = self.cls_embed           
-            self.transformer.decoder.keypoint_embed = self.keypoint_embed           
-            self.transformer.decoder.obj_keypoint_embed = self.obj_keypoint_embed           
+            # self.transformer.decoder.keypoint_embed = self.keypoint_embed           
+            # self.transformer.decoder.obj_keypoint_embed = self.obj_keypoint_embed
+            self.transformer.decoder.cls_embed = self.cls_embed
+            self.transformer.decoder.mano_pose_embed = self.mano_pose_embed
+            self.transformer.decoder.mano_beta_embed = self.mano_beta_embed
+            self.transformer.decoder.obj_keypoint_embed = self.obj_keypoint_embed
+            self.transformer.decoder.obj_ref_embed = self.obj_ref_embed
+            # self.transformer.decoder.obj_rad = self.obj_rad
+
         else:
             self.cls_embed = nn.ModuleList([self.cls_embed for _ in range(num_pred)])
-            self.keypoint_embed = nn.ModuleList([self.keypoint_embed for _ in range(num_pred)]) 
-            self.obj_keypoint_embed = nn.ModuleList([self.obj_keypoint_embed for _ in range(num_pred)]) 
+            # self.keypoint_embed = nn.ModuleList([self.keypoint_embed for _ in range(num_pred)]) 
+            # self.obj_keypoint_embed = nn.ModuleList([self.obj_keypoint_embed for _ in range(num_pred)]) 
+            self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
+            self.mano_beta_embed = nn.ModuleList([self.mano_beta_embed for _ in range(num_pred)])
+            self.obj_keypoint_embed = nn.ModuleList([self.obj_keypoint_embed for _ in range(num_pred)])
+            self.obj_ref_embed = nn.ModuleList([self.obj_ref_embed for _ in range(num_pred)])
+            self.ref_obj_embed = nn.ModuleList([self.ref_obj_embed for _ in range(num_pred)])
+            self.obj_rad = nn.ModuleList([self.obj_rad for _ in range(num_pred)])
 
-            self.transformer.decoder.keypoint_embed = None      
-            self.transformer.decoder.obj_keypoint_embed = None      
+            # self.transformer.decoder.keypoint_embed = None      
+            # self.transformer.decoder.obj_keypoint_embed = None
+            self.transformer.decoder.mano_pose_embed = None
+            self.transformer.decoder.mano_beta_embed = None
+            self.transformer.decoder.obj_keypoint_embed = None
+            self.transformer.decoder.obj_ref_embed = None
+            # self.transformer.decoder.obj_rad = None
         if two_stage:
             # hack implementation for two-stage
             self.transformer.decoder.cls_embed = self.cls_embed
+        self.transformer.decoder.get_reference_point = self.get_reference_point 
 
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
@@ -170,32 +232,38 @@ class DeformableDETR(nn.Module):
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_hand_coord_unact, enc_outputs_obj_coord_unact = self.transformer(srcs, masks, pos, query_embeds)
         # hs : result include intermeditate feature (num_decoder_layer, B, num_queries, hidden_dim)
         # dataset = 'H2O' if len(self.cfg.hand_idx) == 2 else 'FPHA'
-        dataset = 'AssemblyHands' if len(self.cfg.hand_idx) == 2 else 'FPHA'
+        dataset = self.cfg.dataset_file
         outputs_classes = []
-        outputs_keypoints = [] 
+        outputs_manopose = []
+        outputs_manobeta = []
+        outputs_obj_radians = []
         outputs_obj_keypoints = []
+
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
-                reference = inverse_sigmoid(reference)
+                # reference = inverse_sigmoid(reference)
             else:
                 reference = inter_references[lvl - 1]
                 # if dataset == 'H2O':
-                #     reference = inverse_sigmoid(reference)
+                # reference = inverse_sigmoid(reference)
                 # else:
-                reference = inverse_sigmoid((reference+ 0.5)/2)
+                # reference = inverse_sigmoid((reference+ 0.5)/2)
 
             outputs_class = self.cls_embed[lvl](hs[lvl])
-            key = self.keypoint_embed[lvl](hs[lvl]) 
-            obj_key = self.obj_keypoint_embed[lvl](hs[lvl]) 
+            mano_pose = self.mano_pose_embed[lvl](hs[lvl])
+            mano_beta = self.mano_beta_embed[lvl](hs[lvl])
+            obj_key = self.obj_keypoint_embed[lvl](hs[lvl])
+            obj_key = self.obj_ref_embed[lvl](obj_key)
+            obj_rad = self.obj_rad[lvl](hs[lvl])
                 
             if reference.shape[-1] == 42:
                 ref_x = reference[...,0::2].mean(-1).unsqueeze(-1)
                 ref_y = reference[...,1::2].mean(-1).unsqueeze(-1)
 
-                key = key.reshape(key.shape[0], key.shape[1], 21, 3)
-                key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
-                key = key.reshape(key.shape[0], key.shape[1], -1)
+                # key = key.reshape(key.shape[0], key.shape[1], 21, 3)
+                # key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
+                # key = key.reshape(key.shape[0], key.shape[1], -1)
 
                 obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
                 obj_key[..., :2] += torch.cat([ref_x, ref_y], dim=-1)[:,:,None,:] 
@@ -203,9 +271,9 @@ class DeformableDETR(nn.Module):
 
             else:
                 assert reference.shape[-1] == 2
-                key = key.reshape(key.shape[0], key.shape[1], 21, 3)
-                key[..., :2] += reference[:,:,None,:] 
-                key = key.reshape(key.shape[0], key.shape[1], -1)
+                # key = key.reshape(key.shape[0], key.shape[1], 21, 3)
+                # key[..., :2] += reference[:,:,None,:] 
+                # key = key.reshape(key.shape[0], key.shape[1], -1)
                 
                 obj_key = obj_key.reshape(obj_key.shape[0], obj_key.shape[1], 21, 3)
                 obj_key[..., :2] += reference[:,:,None,:] 
@@ -215,38 +283,67 @@ class DeformableDETR(nn.Module):
             #     outputs_keypoint = key.sigmoid() 
             #     outputs_obj_keypoint = obj_key.sigmoid() 
             # else:
-            outputs_keypoint = key.sigmoid()*2 - 0.5
-            outputs_obj_keypoint = obj_key.sigmoid()*2 - 0.5
+            # outputs_obj_keypoint = obj_key.sigmoid()*2 - 0.5
+            outputs_obj_keypoint = self.ref_obj_embed[lvl](obj_key)
+
             outputs_classes.append(outputs_class)
-            outputs_keypoints.append(outputs_keypoint) 
-            outputs_obj_keypoints.append(outputs_obj_keypoint) 
+            outputs_manopose.append(mano_pose)
+            outputs_manobeta.append(mano_beta)
+            outputs_obj_radians.append(obj_rad)
+            outputs_obj_keypoints.append(outputs_obj_keypoint)
+            # outputs_keypoints.append(outputs_keypoint) 
+            # outputs_obj_keypoints.append(outputs_obj_keypoint) 
         outputs_class = torch.stack(outputs_classes)
-        outputs_keypoints = torch.stack(outputs_keypoints) 
+        outputs_manopose = torch.stack(outputs_manopose)
+        outputs_manobeta = torch.stack(outputs_manobeta)
+        outputs_obj_radians = torch.stack(outputs_obj_radians)
+        # outputs_keypoints = torch.stack(outputs_keypoints) 
         outputs_obj_keypoints = torch.stack(outputs_obj_keypoints) 
 
-        out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1], 'pred_obj_keypoints': outputs_obj_keypoints[-1]} 
+        out = {
+            'pred_logits': outputs_class[-1], 'pred_manoparams': [outputs_manopose[-1], outputs_manobeta[-1]],
+            'pred_obj_params': [outputs_obj_keypoints[-1], outputs_obj_radians[-1]]
+        }
         # out = {'pred_logits': outputs_class[-1], 'pred_keypoints': outputs_keypoints[-1]} 
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints, outputs_obj_keypoints) 
+            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_manopose, outputs_manobeta, outputs_obj_keypoints, outputs_obj_radians)
             # out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_keypoints) 
 
         if self.two_stage:
             enc_outputs_hand_coord = enc_outputs_hand_coord_unact.sigmoid()
+            raise Exception('Not implemeted.')
             # enc_outputs_obj_coord = enc_outputs_obj_coord_unact.sigmoid()
             # out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_keypoints': enc_outputs_hand_coord, 'pred_obj_keypoints': enc_outputs_obj_coord}
-            out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_keypoints': enc_outputs_hand_coord}
+            # out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_keypoints': enc_outputs_hand_coord}
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_keypoints, outputs_obj_keypoints) : 
+    def _set_aux_loss(self, outputs_class, outputs_manopose, outputs_manobeta, outputs_obj_keypoints, outputs_obj_radians) : 
     # def _set_aux_loss(self, outputs_class, outputs_keypoints) : 
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         # return [{'pred_logits': a, 'pred_keypoints': b}
         #         for a, b in zip(outputs_class[:-1], outputs_keypoints[:-1])]
-        return [{'pred_logits': a, 'pred_keypoints': b,  'pred_obj_keypoints': c}
-                for a, b, c, in zip(outputs_class[:-1], outputs_keypoints[:-1], outputs_obj_keypoints[:-1])] 
+        return [
+                {'pred_logits': c, 'pred_manoparams': [p, b], 'pred_obj_params': [k, r]} \
+                for c, p, b, k, r in \
+                    zip(outputs_class[:-1], outputs_manopose[:-1], outputs_manobeta[:-1], outputs_obj_keypoints[:-1], outputs_obj_radians[:-1])
+            ] 
+
+    def get_reference_point(self, bs:int, mano_params:list, class_indices:torch.Tensor, reference_points:torch.Tensor):
+        out_mano_pose, out_mano_beta = mano_params
+
+        hand_lr_idx = [class_indices == self.cfg.hand_idx[0], class_indices == self.cfg.hand_idx[1]]
+        MANO_LAYER = [self.mano_left,self.mano_right]
+        tmp = torch.zeros_like(reference_points)
+        
+        for b in range(bs):
+            for mano, idx in zip(MANO_LAYER, hand_lr_idx):
+                _, out_key = mano(out_mano_pose[b][idx[b]], out_mano_beta[b][idx[b]])
+                tmp[b][idx[b]] = out_key[...,:2]
+
+        return tmp
 
 class SetCriterion(nn.Module):
     """ This class computes the loss for DETR.
@@ -352,9 +449,11 @@ class SetCriterion(nn.Module):
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
         """
-        assert 'pred_obj_keypoints' in outputs
+        assert 'pred_obj_params' in outputs
+        pred_obj_keypoints, pred_obj_radian = outputs['pred_obj_params']
         idx = self._get_src_permutation_idx(indices)
-        src_objkeys = outputs['pred_obj_keypoints'][idx]
+        src_objkeys = pred_obj_keypoints[idx]
+        src_objrad = pred_obj_radian[idx]
 
         target_keypoints = torch.cat([t['keypoints'][i] for t, (_, i) in zip(targets, indices)], dim=0)
         
@@ -363,16 +462,67 @@ class SetCriterion(nn.Module):
         for idx in self.cfg.hand_idx:
             obj_cal_idx &= (target_labels != idx)
 
-        dt_obj_key = src_objkeys[obj_cal_idx][:, :48]
-        gt_obj_key = target_keypoints[obj_cal_idx][:, :16, :].cuda()
+        dt_obj_key = src_objkeys[obj_cal_idx]
+        gt_obj_key = target_keypoints[obj_cal_idx][:, :16, :]
         
         loss_objkey = F.l1_loss(dt_obj_key, gt_obj_key.view(-1, 48), reduction='none')
+        if obj_cal_idx.sum().item() == 0:
+            loss_objkey = loss_objkey.sum()
+        else:
+            loss_objkey = (loss_objkey.sum()/ obj_cal_idx.sum().item()) / 21
+
+        dt_obj_rad = src_objrad[obj_cal_idx]
+        gt_obj_rad = torch.stack([t['object.radian'] for t in targets]).unsqueeze(1)
+        loss_obj_rad = F.l1_loss(dt_obj_rad, gt_obj_rad, reduction='none')
+        loss_obj_rad = loss_obj_rad.sum() / gt_obj_rad.shape[0]
+
+        obj_loss = loss_objkey + loss_obj_rad
 
         losses = {}
-        if obj_cal_idx.sum().item() == 0:
-            losses['loss_obj_keypoint'] = loss_objkey.sum()
-        else:
-            losses['loss_obj_keypoint'] = (loss_objkey.sum()/ obj_cal_idx.sum().item()) / 21
+        losses['loss_obj'] = obj_loss
+        return losses
+
+    def loss_mano_params(self, outputs, targets, indices, num_boxes):
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
+           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+        """
+        assert 'pred_manoparams' in outputs
+        assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
+
+        pred_mano_pose, pred_mano_beta = outputs['pred_manoparams']
+        idx = self._get_src_permutation_idx(indices)
+        src_pose = pred_mano_pose[idx]
+        src_beta = pred_mano_beta[idx]
+
+        target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        left_idx = target_labels == self.cfg.hand_idx[0]
+        right_idx = target_labels == self.cfg.hand_idx[1]
+
+        src_left_pose = src_pose[left_idx]
+        src_left_beta = src_beta[left_idx]
+        src_right_pose = src_pose[right_idx]
+        src_right_beta = src_beta[right_idx]
+
+        target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_left_mano_pose = target_mano_pose[left_idx]
+        target_right_mano_pose = target_mano_pose[right_idx]
+        target_mano_beta = torch.cat([t['mano_beta'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_left_mano_beta = target_mano_beta[left_idx]
+        target_right_mano_beta = target_mano_beta[right_idx]
+        
+        loss_left_pose = F.l1_loss(src_left_pose, target_left_mano_pose, reduction='none')
+        loss_right_pose = F.l1_loss(src_right_pose, target_right_mano_pose, reduction='none')
+        loss_left_beta = F.l1_loss(src_left_beta, target_left_mano_beta, reduction='none')
+        loss_right_beta = F.l1_loss(src_right_beta, target_right_mano_beta, reduction='none')
+
+        loss_pose = torch.cat([loss_left_pose, loss_right_pose])
+        loss_beta = torch.cat([loss_left_beta, loss_right_beta])
+        loss_pose = loss_pose.sum()/len(loss_pose)
+        loss_beta = loss_beta.sum()/len(loss_beta)
+
+        losses = {}
+        losses['loss_mano_params'] = loss_pose + loss_beta
         return losses
 
     def _get_src_permutation_idx(self, indices):
@@ -391,8 +541,9 @@ class SetCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
+            'mano_params': self.loss_mano_params,
+            'obj_keypoint': self.loss_obj_keypoints,
             'hand_keypoint': self.loss_hand_keypoints,
-           'obj_keypoint': self.loss_obj_keypoints,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -485,7 +636,8 @@ def build(args, cfg):
         cfg = cfg
     )
     matcher = build_matcher(args, cfg)
-    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_hand_keypoint': args.keypoint_loss_coef, 'loss_obj_keypoint': args.keypoint_loss_coef}
+    # weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_hand_keypoint': args.keypoint_loss_coef, 'loss_obj_keypoint': args.keypoint_loss_coef}
+    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_mano_params': args.keypoint_loss_coef, 'loss_obj': args.keypoint_loss_coef}
 
     # TODO this is a hack
     if args.aux_loss:
@@ -495,7 +647,7 @@ def build(args, cfg):
         aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
-    losses = ['labels', 'cardinality', 'hand_keypoint', 'obj_keypoint']
+    losses = ['labels', 'cardinality', 'mano_params', 'obj_keypoint']
     # losses = ['labels', 'cardinality', 'hand_keypoint']
 
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25

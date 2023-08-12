@@ -143,7 +143,7 @@ def get_args_parser():
                         help='Select evaluation method(MPJPE or EPE).')
     
     # for arctic
-    parser.add_argument('--setup', default='p1', type=str)
+    parser.add_argument('--setup', default='p2', type=str)
     parser.add_argument('--method', default='arctic_sf', type=str)
     parser.add_argument('--trainsplit', default='train', type=str)
     parser.add_argument('--valsplit', default='minival', type=str)
@@ -157,10 +157,13 @@ def main(args):
     print("git:\n  {}\n".format(utils.get_sha()))
 
     if args.wandb:
-        wandb.init(
-            project='2023_ICCV_hand'
-        )
-        wandb.config.update(args)
+        if args.distributed and utils.get_local_rank() != 0:
+            pass
+        else:
+            wandb.init(
+                project='2023_ICCV_hand'
+            )
+            wandb.config.update(args)
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
@@ -205,10 +208,15 @@ def main(args):
 
     model, criterion = build_model(args, cfg)
     model.to(device)
-    if args.wandb:
-        wandb.watch(model)
-
     model_without_ddp = model
+
+    if args.wandb:
+        if args.distributed:
+            if utils.get_local_rank() == 0:
+                wandb.watch(model_without_ddp)
+        else:
+            wandb.watch(model_without_ddp)
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
 
@@ -288,6 +296,7 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
     if args.distributed:
+        print(utils.get_local_rank())
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
@@ -309,8 +318,8 @@ def main(args):
             name_list = [name for name in new_model_dict.keys() if name in pretraind_model.keys()]
 
             if args.use_h2o_pth:
-                name_list = list(filter(lambda x : "cls" not in x, name_list))
-                name_list = list(filter(lambda x : "obj" not in x, name_list))
+                name_list = list(filter(lambda x : "cls_embed" not in x, name_list))
+                name_list = list(filter(lambda x : "obj_keypoint_embed" not in x, name_list))
             pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list }
             
             new_model_dict.update(pretraind_model_dict)
@@ -364,7 +373,7 @@ def main(args):
                 if args.distributed:
                     sampler_train.set_epoch(epoch)
 
-                train_stats = train_pose(
+                _ = train_pose(
                     model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args)
                 lr_scheduler.step()
 
