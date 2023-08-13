@@ -526,15 +526,13 @@ class SetCriterion(nn.Module):
         target_left_mano_beta = target_mano_beta[left_idx]
         target_right_mano_beta = target_mano_beta[right_idx]
         
-        loss_left_pose = F.l1_loss(src_left_pose, target_left_mano_pose, reduction='none')
-        loss_right_pose = F.l1_loss(src_right_pose, target_right_mano_pose, reduction='none')
-        loss_left_beta = F.l1_loss(src_left_beta, target_left_mano_beta, reduction='none')
-        loss_right_beta = F.l1_loss(src_right_beta, target_right_mano_beta, reduction='none')
+        loss_left_pose = F.l1_loss(src_left_pose, target_left_mano_pose, reduction='mean')
+        loss_right_pose = F.l1_loss(src_right_pose, target_right_mano_pose, reduction='mean')
+        loss_left_beta = F.l1_loss(src_left_beta, target_left_mano_beta, reduction='mean')
+        loss_right_beta = F.l1_loss(src_right_beta, target_right_mano_beta, reduction='mean')
 
-        loss_pose = torch.cat([loss_left_pose, loss_right_pose])
-        loss_beta = torch.cat([loss_left_beta, loss_right_beta])
-        loss_pose = loss_pose.sum()/len(loss_pose)
-        loss_beta = loss_beta.sum()/len(loss_beta)
+        loss_pose = (loss_left_pose + loss_right_pose) / 2
+        loss_beta = (loss_left_beta + loss_right_beta) / 2
 
         losses = {}
         losses['loss_mano_params'] = loss_pose + loss_beta
