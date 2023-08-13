@@ -443,17 +443,16 @@ class SetCriterion(nn.Module):
             losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
 
         return losses
-
+    
     def loss_obj_keypoints(self, outputs, targets, indices, num_boxes):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
         """
         assert 'pred_obj_params' in outputs
-        pred_obj_keypoints, pred_obj_radian = outputs['pred_obj_params']
+        pred_obj_keypoints, _ = outputs['pred_obj_params']
         idx = self._get_src_permutation_idx(indices)
         src_objkeys = pred_obj_keypoints[idx]
-        src_objrad = pred_obj_radian[idx]
 
         target_keypoints = torch.cat([t['keypoints'][i] for t, (_, i) in zip(targets, indices)], dim=0)
         
@@ -466,20 +465,36 @@ class SetCriterion(nn.Module):
         gt_obj_key = target_keypoints[obj_cal_idx][:, :16, :]
         
         loss_objkey = F.l1_loss(dt_obj_key, gt_obj_key.view(-1, 48), reduction='none')
+        
+        losses = {}
         if obj_cal_idx.sum().item() == 0:
-            loss_objkey = loss_objkey.sum()
+            losses['loss_obj_key'] = loss_objkey.sum()
         else:
-            loss_objkey = (loss_objkey.sum()/ obj_cal_idx.sum().item()) / 21
+            losses['loss_obj_key'] = (loss_objkey.sum()/ obj_cal_idx.sum().item()) / 21
+
+        return losses    
+
+    def loss_obj_radians(self, outputs, targets, indices, num_boxes):
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
+           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+        """
+        assert 'pred_obj_params' in outputs
+        _, pred_obj_radian = outputs['pred_obj_params']
+        idx = self._get_src_permutation_idx(indices)
+        src_objrad = pred_obj_radian[idx]
+    
+        target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        obj_cal_idx = torch.ones_like(target_labels, dtype=torch.bool)
+        for idx in self.cfg.hand_idx:
+            obj_cal_idx &= (target_labels != idx)
 
         dt_obj_rad = src_objrad[obj_cal_idx]
         gt_obj_rad = torch.stack([t['object.radian'] for t in targets]).unsqueeze(1)
-        loss_obj_rad = F.l1_loss(dt_obj_rad, gt_obj_rad, reduction='none')
-        loss_obj_rad = loss_obj_rad.sum() / gt_obj_rad.shape[0]
-
-        obj_loss = loss_objkey + loss_obj_rad
+        loss_obj_rad = F.l1_loss(dt_obj_rad, gt_obj_rad, reduction='mean')
 
         losses = {}
-        losses['loss_obj'] = obj_loss
+        losses['loss_obj_rad'] = loss_obj_rad
         return losses
 
     def loss_mano_params(self, outputs, targets, indices, num_boxes):
@@ -543,6 +558,7 @@ class SetCriterion(nn.Module):
             'cardinality': self.loss_cardinality,
             'mano_params': self.loss_mano_params,
             'obj_keypoint': self.loss_obj_keypoints,
+            'obj_radian': self.loss_obj_radians,
             'hand_keypoint': self.loss_hand_keypoints,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
@@ -637,7 +653,10 @@ def build(args, cfg):
     )
     matcher = build_matcher(args, cfg)
     # weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_hand_keypoint': args.keypoint_loss_coef, 'loss_obj_keypoint': args.keypoint_loss_coef}
-    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_mano_params': args.keypoint_loss_coef, 'loss_obj': args.keypoint_loss_coef}
+    weight_dict = {
+        'loss_ce': args.cls_loss_coef, 'loss_obj_rad': args.cls_loss_coef,
+        'loss_mano_params': args.keypoint_loss_coef, 'loss_obj_key': args.keypoint_loss_coef
+    }
 
     # TODO this is a hack
     if args.aux_loss:
@@ -647,7 +666,7 @@ def build(args, cfg):
         aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
-    losses = ['labels', 'cardinality', 'mano_params', 'obj_keypoint']
+    losses = ['labels', 'cardinality', 'mano_params', 'obj_keypoint', 'obj_radian']
     # losses = ['labels', 'cardinality', 'hand_keypoint']
 
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
