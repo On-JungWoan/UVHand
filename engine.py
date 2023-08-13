@@ -307,7 +307,8 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
             'mano': loss_dict_reduced_scaled['loss_mano_params'].item(), 
-            'obj': loss_dict_reduced_scaled['loss_obj'].item(), 
+            'obj_key': loss_dict_reduced_scaled['loss_obj_key'].item(), 
+            'obj_rad': loss_dict_reduced_scaled['loss_obj_rad'].item(), 
             })
 
         # print(f'{_} : {utils.get_local_rank()} done')
@@ -329,7 +330,8 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 "loss": train_stat['loss'],
                 "loss_ce": train_stat['loss_ce'],
                 "mano": train_stat['loss_mano_params'],
-                "obj": train_stat['loss_obj']
+                "obj_key": train_stat['loss_obj_key'],
+                "obj_rad": train_stat['loss_obj_rad']
             }, step=epoch
         )
     return train_stat
