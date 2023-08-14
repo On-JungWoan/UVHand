@@ -7,26 +7,16 @@ from loguru import logger
 from torch.utils.data import Dataset
 from torchvision.transforms import Normalize
 
-from .common import data_utils as data_utils
-from .common import rot as rot
-from .common import transforms as tf
-from .common.data_utils import read_img
-from .common.object_tensors import ObjectTensors
-from . import dataset_utils as dataset_utils
-from .dataset_utils import get_valid, pad_jts2d
+import common.data_utils as data_utils
+import common.rot as rot
+import common.transforms as tf
+import src.datasets.dataset_utils as dataset_utils
+from common.data_utils import read_img
+from common.object_tensors import ObjectTensors
+from src.datasets.dataset_utils import get_valid, pad_jts2d
 
-from cfg import Config as cfg
-from torchvision.datasets.vision import VisionDataset
 
-class ArcticDataset(VisionDataset):
-    def __init__(self, args, split, seq=None):
-        self._load_data(args, split, seq)
-        self._process_imgnames(seq, split)
-        logger.info(
-            f"ImageDataset Loaded {self.split} split, num samples {len(self.imgnames)}"
-        )
-        self.meta_info = []
-
+class ArcticDataset(Dataset):
     def __getitem__(self, index):
         imgname = self.imgnames[index]
         data = self.getitem(imgname)
@@ -35,7 +25,7 @@ class ArcticDataset(VisionDataset):
     def getitem(self, imgname, load_rgb=True):
         args = self.args
         root = op.join(args.coco_path, args.dataset_file)
-        device = args.device
+
         # LOADING START
         speedup = args.speedup
         sid, seq_name, view_idx, image_idx = imgname.split("/")[-4:]
@@ -132,11 +122,7 @@ class ArcticDataset(VisionDataset):
                 "/arctic_data/", "/data/arctic_data/data/"
             ).replace("/data/data/", "/data/")
             # imgname = imgname.replace("/arctic_data/", "/data/arctic_data/")
-            
             cv_img, img_status = read_img(op.join(root, imgname[2:]), (2800, 2000, 3))
-
-            if img_status==False:
-                is_valid == 0
         else:
             norm_img = None
 
@@ -193,11 +179,10 @@ class ArcticDataset(VisionDataset):
             norm_img = self.normalize_img(img)
 
         # exporting starts
-        # inputs = {}
-        inputs = norm_img
+        inputs = {}
         targets = {}
         meta_info = {}
-        # inputs["img"] = norm_img
+        inputs["img"] = norm_img
         meta_info["imgname"] = imgname
         rot_r = data_cam["rot_r_cam"][vidx, view_idx]
         rot_l = data_cam["rot_l_cam"][vidx, view_idx]
@@ -279,56 +264,19 @@ class ArcticDataset(VisionDataset):
         if not is_egocam:
             dist = dist * float("nan")
         meta_info["dist"] = torch.FloatTensor(dist)
-        meta_info["center"] = torch.tensor(center, dtype=torch.float32)
-        meta_info["is_flipped"] = torch.tensor(augm_dict["flip"], dtype=torch.float32)
-        meta_info["rot_angle"] = torch.tensor(augm_dict["rot"] , dtype=torch.float32)
+        meta_info["center"] = np.array(center, dtype=np.float32)
+        meta_info["is_flipped"] = augm_dict["flip"]
+        meta_info["rot_angle"] = np.float32(augm_dict["rot"])
         # meta_info["sample_index"] = index
 
         # root and at least 3 joints inside image
-        targets["is_valid"] = torch.tensor(float(is_valid), dtype=torch.float32)
-        targets["left_valid"] = torch.tensor(float(left_valid) * float(is_valid), dtype=torch.float32)
-        targets["right_valid"] = torch.tensor(float(right_valid) * float(is_valid), dtype=torch.float32)
-        targets["joints_valid_r"] = torch.ones(21) * targets["right_valid"]
-        targets["joints_valid_l"] = torch.ones(21) * targets["left_valid"]
+        targets["is_valid"] = float(is_valid)
+        targets["left_valid"] = float(left_valid) * float(is_valid)
+        targets["right_valid"] = float(right_valid) * float(is_valid)
+        targets["joints_valid_r"] = np.ones(21) * targets["right_valid"]
+        targets["joints_valid_l"] = np.ones(21) * targets["left_valid"]
 
-        label = []
-        obj2idx = cfg(args).obj2idx
-        hand_idx = cfg(args).hand_idx
-
-        label.append(obj2idx[meta_info['query_names']])
-        for idx, valid in enumerate([left_valid, right_valid]):
-            if valid == 1:
-                label.append(hand_idx[idx])
-
-        targets["labels"] = torch.tensor(label)
-
-        obj_keypoint = torch.zeros(1,21,3)
-        obj_keypoint[0, :16, ...] = targets["object.kp3d.full.b"]
-
-        hand_keypoint = \
-            torch.cat([targets["mano.j3d.full.l"].unsqueeze(0), targets["mano.j3d.full.r"].unsqueeze(0)])
-        mano_pose = \
-            torch.cat([targets['mano.pose.l'].unsqueeze(0), targets['mano.pose.r'].unsqueeze(0)])
-        mano_beta = \
-            torch.cat([targets['mano.beta.l'].unsqueeze(0), targets['mano.beta.r'].unsqueeze(0)])
-        
-        tmp_pose = targets['mano.pose.l'].unsqueeze(0)
-        tmp_beta = targets['mano.beta.l'].unsqueeze(0)
-        tmp_pose = torch.zeros_like(tmp_pose)
-        tmp_beta = torch.zeros_like(tmp_beta)
-
-        hand_valid = torch.tensor([left_valid, right_valid], dtype=torch.bool)
-        hand_keypoint = hand_keypoint[hand_valid]
-        mano_pose = mano_pose[hand_valid]
-        mano_beta = mano_beta[hand_valid]
-        
-        targets["keypoints"] = torch.cat([obj_keypoint, hand_keypoint])
-        targets["mano_pose"] = torch.cat([tmp_pose, mano_pose])
-        targets["mano_beta"] = torch.cat([tmp_beta, mano_beta])
-
-        self.meta_info.append(meta_info)
-
-        return inputs, targets
+        return inputs, targets, meta_info
 
     def _process_imgnames(self, seq, split):
         imgnames = self.imgnames
@@ -389,6 +337,13 @@ class ArcticDataset(VisionDataset):
         self.kp3d_cano = object_tensors.obj_tensors["kp_bottom"]
         self.obj_names = object_tensors.obj_tensors["names"]
         self.egocam_k = None
+
+    def __init__(self, args, split, seq=None):
+        self._load_data(args, split, seq)
+        self._process_imgnames(seq, split)
+        logger.info(
+            f"ImageDataset Loaded {self.split} split, num samples {len(self.imgnames)}"
+        )
 
     def __len__(self):
         return len(self.imgnames)

@@ -33,6 +33,7 @@ from cfg import Config
 import wandb
 
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
+sys.path = ["./arctic_tools"] + sys.path
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
@@ -143,12 +144,20 @@ def get_args_parser():
                         help='Select evaluation method(MPJPE or EPE).')
     
     # for arctic
-    parser.add_argument('--setup', default='p2', type=str)
-    parser.add_argument('--method', default='arctic_sf', type=str)
-    parser.add_argument('--trainsplit', default='train', type=str)
-    parser.add_argument('--valsplit', default='minival', type=str)
-    parser.add_argument('--fast_dev_run', default=False, action='store_true')
+    # parser.add_argument('--setup', default='p2', type=str)
+    # parser.add_argument('--method', default='arctic_sf', type=str)
+    # parser.add_argument('--trainsplit', default='train', type=str)
+    # parser.add_argument('--valsplit', default='minival', type=str)
+    # parser.add_argument('--fast_dev_run', default=False, action='store_true')
     
+    # for visualization
+    # parser.add_argument("--exp_folder", default='logs/3558f1342', type=str)
+    # parser.add_argument("--seq_name", default='s05_waffleiron_grab_01_5', type=str)
+    # parser.add_argument("--mode", default='pred_mesh', type=str)
+    # parser.add_argument("--headless", action="store_true")
+    # parser.add_argument("--angle", type=float, default=None)
+    # parser.add_argument("--zoom_out", type=float, default=0.5)    
+
     return parser
 
 
@@ -203,8 +212,8 @@ def main(args):
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     else:
-        dataset_val = build_dataset(image_set='train', args=args)
-    dataset_train[0]
+        dataset_val = build_dataset(image_set='val', args=args)
+    # dataset_val[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)
@@ -392,7 +401,12 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
-    args = parser.parse_args()
+    parent_args = parser.parse_known_args()[0]
+
+    if parent_args.dataset_file == 'arctic':
+        from arctic_tools.src.parsers.parser import construct_args
+        args = construct_args(parser)
+
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
