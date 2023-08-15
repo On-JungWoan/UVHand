@@ -7,6 +7,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
+import sys
+sys.path = ["./arctic_tools"] + sys.path
 
 import argparse
 import datetime
@@ -19,14 +21,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-import datasets
 import util.misc as utils
 import datasets.samplers as samplers
 from datasets import build_dataset, get_coco_api_from_dataset
 from engine import train_pose, test_pose
 from models import build_model
 import os
-import sys
 # import wandb
 import torch.backends.cudnn as cudnn
 from cfg import Config
@@ -53,7 +53,7 @@ def get_args_parser():
     parser.add_argument('--sgd', action='store_true')
 
     # Variants of Deformable DETR
-    parser.add_argument('--with_box_refine', default=True, action='store_true')
+    parser.add_argument('--with_box_refine', default=False, action='store_true')
     parser.add_argument('--two_stage', default=False, action='store_true')
 
     # Model parameters
@@ -94,9 +94,13 @@ def get_args_parser():
                         help="Disables auxiliary decoding losses (loss at each layer)")
 
     # * Matcher
-    parser.add_argument('--set_cost_class', default=2, type=float,            
+    # parser.add_argument('--set_cost_class', default=2, type=float,            
+    #                     help="Class coefficient in the matching cost")
+    # parser.add_argument('--set_cost_keypoint', default=5, type=float,
+    #                     help="L1 box coefficient in the matching cost") 
+    parser.add_argument('--set_cost_class', default=1.5, type=float,            
                         help="Class coefficient in the matching cost")
-    parser.add_argument('--set_cost_keypoint', default=5, type=float,
+    parser.add_argument('--set_cost_keypoint', default=4, type=float,
                         help="L1 box coefficient in the matching cost") 
 
     # * Loss coefficients
@@ -142,13 +146,9 @@ def get_args_parser():
     parser.add_argument('--eval_method', default='MPJPE', choices=['MPJPE', 'EPE'], type=str, \
                         help='Select evaluation method(MPJPE or EPE).')
     
-    # for arctic
-    parser.add_argument('--setup', default='p2', type=str)
-    parser.add_argument('--method', default='arctic_sf', type=str)
-    parser.add_argument('--trainsplit', default='train', type=str)
-    parser.add_argument('--valsplit', default='minival', type=str)
-    parser.add_argument('--fast_dev_run', default=False, action='store_true')
-    
+    # for custom arctic
+    parser.add_argument('--seq', default=None, type=str) 
+
     return parser
 
 
@@ -184,27 +184,11 @@ def main(args):
     cudnn.deterministic = True
     random.seed(seed)
 
-    # if args.visualization:
-    #     model, criterion = build_model(args, cfg)
-    #     model.to(device)
-
-    #     if args.resume:
-    #         checkpoint = torch.load(args.resume, map_location='cpu')
-    #         missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
-
-    #     from visualization import vis
-    #     while True:
-    #         vis(model, device, cfg)
-
-    if args.dataset_file == 'arctic':
-        from datasets.arctic.arctic_args import construct_arctic_args
-        args = construct_arctic_args(args)
-
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     else:
-        dataset_val = build_dataset(image_set='train', args=args)
-    dataset_train[0]
+        dataset_val = build_dataset(image_set='val', args=args)
+    # dataset_val[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)
@@ -219,6 +203,11 @@ def main(args):
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
+
+    if args.dataset_file == 'arctic':
+        collate_fn=utils.collate_custom_fn
+    else:
+        collate_fn=utils.collate_fn
 
     if args.distributed:
         if args.cache_mode:
@@ -241,12 +230,12 @@ def main(args):
         batch_sampler_train = torch.utils.data.BatchSampler(
             sampler_train, args.batch_size, drop_last=True)
         data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                    collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                    collate_fn=collate_fn, num_workers=args.num_workers,
                                     pin_memory=True)
     else:
         # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
-                                    drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                    drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
                                     pin_memory=True)
 
     if args.dataset_file == 'H2O':
@@ -259,7 +248,7 @@ def main(args):
         else:
             sampler_test = torch.utils.data.SequentialSampler(dataset_test)
         data_loader_test = DataLoader(dataset_test, args.batch_size, sampler=sampler_test,
-                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
                                 pin_memory=True)
 
     # lr_backbone_names = ["backbone.0", "backbone.neck", "input_proj", "transformer.encoder"]
@@ -373,6 +362,10 @@ def main(args):
                 if args.distributed:
                     sampler_train.set_epoch(epoch)
 
+                # collate_fn(
+                #     data_loader_train.dataset[0] + data_loader_train.dataset[1] + data_loader_train.dataset[2] + data_loader_train.dataset[3]
+                # )
+                data_loader_train.dataset[0]
                 _ = train_pose(
                     model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args)
                 lr_scheduler.step()
@@ -392,7 +385,12 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
-    args = parser.parse_args()
+    parent_args = parser.parse_known_args()[0]
+
+    if parent_args.dataset_file == 'arctic':
+        from arctic_tools.src.parsers.parser import construct_args
+        args = construct_args(parser)
+
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 

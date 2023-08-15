@@ -20,6 +20,7 @@ from util.misc import get_local_rank, get_local_size
 import datasets.transforms as T
 import json
 
+from arctic_tools.src.factory import fetch_dataloader
 from datasets.arctic.build import fetch_dataloader as build_arctic
 
 class CocoDetection(TvCocoDetection):
@@ -202,7 +203,7 @@ def build(image_set, args):
             "val": (root , root / 'annotations/val.json'),
         }
     elif args.dataset_file == 'arctic':
-        return build_arctic(args, image_set)
+        return fetch_dataloader(args, image_set, seq=args.seq)
 
     img_folder, ann_file = PATHS[image_set]
     dataset = CocoDetection(img_folder, ann_file, args.dataset_file, transforms=make_coco_transforms(image_set, args.img_size, args.make_pickle),

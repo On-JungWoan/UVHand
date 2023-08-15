@@ -25,6 +25,7 @@ class ArcticDataset(VisionDataset):
         logger.info(
             f"ImageDataset Loaded {self.split} split, num samples {len(self.imgnames)}"
         )
+        self.meta_info = []
 
     def __getitem__(self, index):
         imgname = self.imgnames[index]
@@ -35,6 +36,7 @@ class ArcticDataset(VisionDataset):
         args = self.args
         root = op.join(args.coco_path, args.dataset_file)
         device = args.device
+        
         # LOADING START
         speedup = args.speedup
         sid, seq_name, view_idx, image_idx = imgname.split("/")[-4:]
@@ -325,7 +327,7 @@ class ArcticDataset(VisionDataset):
         targets["mano_pose"] = torch.cat([tmp_pose, mano_pose])
         targets["mano_beta"] = torch.cat([tmp_beta, mano_beta])
 
-        self.meta_info = meta_info
+        self.meta_info.append(meta_info)
 
         return inputs, targets
 

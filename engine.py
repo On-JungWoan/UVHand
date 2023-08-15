@@ -21,6 +21,7 @@ import torch
 import util.misc as utils
 from util.misc import NestedTensor
 from datasets.data_prefetcher import data_prefetcher
+from datasets.arctic_prefetcher import data_prefetcher as arctic_prefetcher
 from tqdm import tqdm
 import numpy as np
 import copy
@@ -38,6 +39,8 @@ from manopth.manolayer import ManoLayer
 import trimesh
 import json
 import wandb
+
+from arctic_tools.process import arctic_pre_process
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -224,16 +227,20 @@ def vis(data_loader, targets, FPHA=False):
 
 def keep_valid(outputs, is_valid):
     outputs['pred_logits'] = outputs['pred_logits'][is_valid]
-    outputs['pred_manoparams'][0] = outputs['pred_manoparams'][0][is_valid]
-    outputs['pred_manoparams'][1] = outputs['pred_manoparams'][1][is_valid]
+    outputs['pred_mano_params'][0] = outputs['pred_mano_params'][0][is_valid]
+    outputs['pred_mano_params'][1] = outputs['pred_mano_params'][1][is_valid]
     outputs['pred_obj_params'][0] = outputs['pred_obj_params'][0][is_valid]
     outputs['pred_obj_params'][1] = outputs['pred_obj_params'][1][is_valid]
+    outputs['pred_cams'][0] = outputs['pred_cams'][0][is_valid]
+    outputs['pred_cams'][1] = outputs['pred_cams'][1][is_valid]    
     for idx, aux in enumerate(outputs['aux_outputs']):
         outputs['aux_outputs'][idx]['pred_logits'] = aux['pred_logits'][is_valid]
-        outputs['aux_outputs'][idx]['pred_manoparams'][0] = aux['pred_manoparams'][0][is_valid]
-        outputs['aux_outputs'][idx]['pred_manoparams'][1] = aux['pred_manoparams'][1][is_valid]
+        outputs['aux_outputs'][idx]['pred_mano_params'][0] = aux['pred_mano_params'][0][is_valid]
+        outputs['aux_outputs'][idx]['pred_mano_params'][1] = aux['pred_mano_params'][1][is_valid]
         outputs['aux_outputs'][idx]['pred_obj_params'][0] = aux['pred_obj_params'][0][is_valid]
         outputs['aux_outputs'][idx]['pred_obj_params'][1] = aux['pred_obj_params'][1][is_valid]
+        outputs['aux_outputs'][idx]['pred_cams'][0] = aux['pred_cams'][0][is_valid]
+        outputs['aux_outputs'][idx]['pred_cams'][1] = aux['pred_cams'][1][is_valid]      
     return outputs
 
 
@@ -250,24 +257,27 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
-    # if not args.debug:
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    samples, targets = prefetcher.next()
+    if args.dataset_file == 'arctic':
+        prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
+        samples, targets, meta_info = prefetcher.next()
+    else:
+        prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+        samples, targets = prefetcher.next()
+
     pbar = tqdm(range(len(data_loader)))
-    # else:
-        # pbar = tqdm(data_loader)
 
     for _ in pbar:
-        # if args.debug:
-        #     samples, targets = _
-        #     samples = samples.to(device)
-        #     for key, val in targets[0].items():
-        #         targets[0][key] = val.to(device)
+        if args.dataset_file == 'arctic':
+            targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         outputs = model(samples)
 
-        is_valid = torch.tensor([v['is_valid'].item() for v in targets], dtype=torch.bool)
-        targets = [v for idx, v in enumerate(targets) if is_valid[idx] == True]
+        is_valid = targets['is_valid'].type(torch.bool)
+        for k,v in targets.items():
+            if k == 'labels':
+                targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
+            else:
+                targets[k] = v[is_valid]
         outputs = keep_valid(outputs, is_valid)
 
         loss_dict = criterion(outputs, targets)
@@ -307,15 +317,15 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
             'mano': loss_dict_reduced_scaled['loss_mano_params'].item(), 
-            'obj_key': loss_dict_reduced_scaled['loss_obj_key'].item(), 
-            'obj_rad': loss_dict_reduced_scaled['loss_obj_rad'].item(), 
+            'cam': loss_dict_reduced_scaled['loss_cam'].item(), 
+            'rad_rot': loss_dict_reduced_scaled['loss_rad_rot'].item(), 
             })
 
         # print(f'{_} : {utils.get_local_rank()} done')
         if args.debug:
             if args.num_debug == _:
                 break
-        samples, targets = prefetcher.next()
+        samples, targets, meta_info = prefetcher.next()       
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -327,11 +337,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 return train_stat
         wandb.log(
             {
-                "loss": train_stat['loss'],
-                "loss_ce": train_stat['loss_ce'],
-                "mano": train_stat['loss_mano_params'],
-                "obj_key": train_stat['loss_obj_key'],
-                "obj_rad": train_stat['loss_obj_rad']
+            'loss' : train_stat['loss'],
+            'ce_loss' : train_stat['loss_ce'],
+            'mano': train_stat['loss_mano_params'], 
+            'cam': train_stat['loss_cam'], 
+            'rad_rot': train_stat['loss_rad_rot'], 
             }, step=epoch
         )
     return train_stat
@@ -372,7 +382,16 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     model.eval()
     criterion.eval()
     
-    dataset = 'H2O' if len(cfg.hand_idx) ==2 else 'FPHA'
+    dataset = args.dataset_file
+
+    # if dataset == 'arctic' and args.visualization == True:
+    #     from tool.visualizer import main
+    #     main(args, model, data_loader)
+
+    if dataset == 'arctic' and args.visualization == True:
+        from arctic_tools.extract_predicts import main
+        main(args, model, data_loader)    
+
     try:
         idx2obj = {v:k for k, v in cfg.obj2idx.items()}
         GT_obj_vertices_dict = {}
@@ -408,36 +427,36 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     metric_logger = utils.MetricLogger(delimiter="  ")
     pbar = tqdm(range(len(data_loader)))
 
-    for samples, targets in pbar:
+    for _ in pbar:
         samples, targets = prefetcher.next()
         
-        try:
-            gt_keypoints = [t['keypoints'] for t in targets]
-        except:
-            print('no gts')
-            continue
+        # try:
+        #     gt_keypoints = [t['keypoints'] for t in targets]
+        # except:
+        #     print('no gts')
+        #     continue
 
-        if 'labels' in targets[0].keys():
-            gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
+        # if 'labels' in targets[0].keys():
+        #     gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
 
-        try:
-            filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
-        except:
-            filename = meta[0]['imgname']
+        # try:
+        #     filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
+        # except:
+        #     filename = meta[0]['imgname']
         
-        if args.test_viewpoint is not None:
-            if args.test_viewpoint != '/'.join(filename.split('/')[:-1]):
-                continue
+        # if args.test_viewpoint is not None:
+        #     if args.test_viewpoint != '/'.join(filename.split('/')[:-1]):
+        #         continue
 
-        if vis:
-            assert data_loader.batch_size == 1  
-            if args.dataset_file=='arctic':
-                filepath = os.path.join(args.coco_path, args.dataset_file) + filename[1:]
-            elif dataset == 'H2O' or dataset == 'AssemblyHands':
-                filepath = data_loader.dataset.root / filename
-            else:
-                filepath = data_loader.dataset.root / 'Video_files'/ filename
-            source_img = np.array(Image.open(filepath))
+        # if vis:
+        #     assert data_loader.batch_size == 1  
+        #     if args.dataset_file=='arctic':
+        #         filepath = os.path.join(args.coco_path, args.dataset_file) + filename[1:]
+        #     elif dataset == 'H2O' or dataset == 'AssemblyHands':
+        #         filepath = data_loader.dataset.root / filename
+        #     else:
+        #         filepath = data_loader.dataset.root / 'Video_files'/ filename
+        #     source_img = np.array(Image.open(filepath))
 
         # if os.path.exists(os.path.join(f'./pickle/{dataset}_aug45/{data_loader.dataset.mode}', f'{filename[:-4]}_data.pkl')):
         #     samples, targets = prefetcher.next()
@@ -479,7 +498,8 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             ####################################################
 
             # model output
-            out_logits, pred_keypoints, pred_obj_keypoints = outputs['pred_logits'], outputs['pred_keypoints'], outputs['pred_obj_keypoints']
+            # out_logits, pred_keypoints, pred_obj_keypoints = outputs['pred_logits'], outputs['pred_keypoints'], outputs['pred_obj_keypoints']
+            out_logits, out_mano_pose, out_mano_beta = outputs['pred_logits'], outputs['pred_manoparams'][0], outputs['pred_manoparams'][1]
 
             prob = out_logits.sigmoid()
             B, num_queries, num_classes = prob.shape
@@ -493,7 +513,8 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                 obj_idx[best_score < score] = idx[best_score < score]
                 best_score[best_score < score] = score[best_score < score]
 
-            hand_idx = []
+            left_hand_idx = []
+            right_hand_idx = []
             for i in cfg.hand_idx:
                 hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
             hand_idx = torch.stack(hand_idx, dim=-1)   
@@ -720,6 +741,45 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         f.write('\n\n')
 
     return stats
+
+def eval_mpjpe_ra(pred, targets, meta_info):
+    joints3d_cam_r_gt = targets["mano.j3d.cam.r"]
+    joints3d_cam_l_gt = targets["mano.j3d.cam.l"]
+    joints3d_cam_r_pred = pred["mano.j3d.cam.r"]
+    joints3d_cam_l_pred = pred["mano.j3d.cam.l"]
+    is_valid = targets["is_valid"]
+    left_valid = targets["left_valid"] * is_valid
+    right_valid = targets["right_valid"] * is_valid
+    num_examples = len(joints3d_cam_r_gt)
+
+    joints3d_cam_r_gt_ra = joints3d_cam_r_gt - joints3d_cam_r_gt[:, :1, :]
+    joints3d_cam_l_gt_ra = joints3d_cam_l_gt - joints3d_cam_l_gt[:, :1, :]
+    joints3d_cam_r_pred_ra = joints3d_cam_r_pred - joints3d_cam_r_pred[:, :1, :]
+    joints3d_cam_l_pred_ra = joints3d_cam_l_pred - joints3d_cam_l_pred[:, :1, :]
+    mpjpe_ra_r = metrics.compute_joint3d_error(
+        joints3d_cam_r_gt_ra, joints3d_cam_r_pred_ra, right_valid
+    )
+    mpjpe_ra_l = metrics.compute_joint3d_error(
+        joints3d_cam_l_gt_ra, joints3d_cam_l_pred_ra, left_valid
+    )
+
+    mpjpe_ra_r = mpjpe_ra_r.mean(axis=1)
+    mpjpe_ra_l = mpjpe_ra_l.mean(axis=1)
+
+    # average over hand direction
+    mpjpe_ra_h = torch.FloatTensor(np.stack((mpjpe_ra_r, mpjpe_ra_l), axis=1))
+    mpjpe_ra_h = torch_utils.nanmean(mpjpe_ra_h, dim=1)
+
+    metric_dict = xdict()
+    # metric_dict["mpjpe/ra/r"] = mpjpe_ra_r
+    # metric_dict["mpjpe/ra/l"] = mpjpe_ra_l
+    metric_dict["mpjpe/ra/h"] = mpjpe_ra_h
+    metric_dict = metric_dict.mul(1000.0).to_np()
+
+    # assert len(metric_dict["mpjpe/ra/r"]) == num_examples
+    # assert len(metric_dict["mpjpe/ra/l"]) == num_examples
+    assert len(metric_dict["mpjpe/ra/h"]) == num_examples
+    return metric_dict
 
 def train_contact(temporal_model, mano_left, mano_right, GT_3D_bbox_dict, GT_obj_vertices_dict, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,

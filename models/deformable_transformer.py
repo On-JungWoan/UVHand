@@ -238,8 +238,8 @@ class DeformableTransformer(nn.Module):
             query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
  
-            # reference_points = self.reference_points(query_embed).sigmoid()
-            reference_points = self.reference_points(query_embed)
+            reference_points = self.reference_points(query_embed).sigmoid()
+            # reference_points = self.reference_points(query_embed)
             init_reference_out = reference_points
 
         # decoder
@@ -445,8 +445,8 @@ class DeformableTransformerDecoder(nn.Module):
                 ## reference points ##
                 ######################
                 if reference_points.shape[-1] == 2:
-                    # ref = inverse_sigmoid(reference_points).unsqueeze(2)
-                    ref = reference_points.unsqueeze(2)
+                    ref = inverse_sigmoid(reference_points).unsqueeze(2)
+                    # ref = reference_points.unsqueeze(2)
                     new_reference_points = ref.repeat(1,1,21,1).clone()
         
                 elif reference_points.shape[-1] == 42:
@@ -455,8 +455,8 @@ class DeformableTransformerDecoder(nn.Module):
                     # if len(self.cfg.hand_idx) == 2:
                     #     new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
                     # else:
-                    new_reference_points = torch.cat([ref_x, ref_y], dim=-1).unsqueeze(2).repeat(1,1,21,1).clone()
-                    # new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
+                    # new_reference_points = torch.cat([ref_x, ref_y], dim=-1).unsqueeze(2).repeat(1,1,21,1).clone()
+                    new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
                     # new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
 
 
@@ -482,7 +482,7 @@ class DeformableTransformerDecoder(nn.Module):
                 new_reference_points[obj_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[obj_idx][...,:2]
                 new_reference_points = new_reference_points.reshape(tmp.shape[0], tmp.shape[1], -1)
                 # if len(self.cfg.hand_idx) == 2:
-                # new_reference_points = new_reference_points.sigmoid()
+                new_reference_points = new_reference_points.sigmoid()
                 # else:
                 #     new_reference_points = new_reference_points.sigmoid()*2 -0.5
                     

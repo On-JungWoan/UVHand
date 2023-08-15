@@ -316,6 +316,37 @@ def collate_fn(batch):
     return tuple(batch)
 
 
+def collate_custom_fn(data_list):
+    # data_list = [
+    #     [data_list[0], data_list[1], data_list[2]],
+    #     [data_list[3], data_list[4], data_list[5]],
+    #     [data_list[6], data_list[7], data_list[8]],
+    #     [data_list[9], data_list[10], data_list[11]]
+    # ]
+    bs = len(data_list)
+    _inputs, _targets, _meta_info = data_list[0]
+
+    batch = list(zip(*data_list))
+    if len(batch[0]) != 0:
+        batch[0] = nested_tensor_from_tensor_list(batch[0])
+
+    out_targets = {}
+    for key in _targets.keys():
+        if key == 'labels':
+            out_targets[key] = [batch[1][i][key].unsqueeze(0) for i in range(bs)]
+        else:
+            out_targets[key] = torch.cat([batch[1][i][key].unsqueeze(0) for i in range(bs)])
+
+    out_meta_info = {}
+    for key in _meta_info.keys():
+        if key in ['imgname', 'query_names']:
+            out_meta_info[key] = [batch[2][i][key] for i in range(bs)]
+            continue
+        out_meta_info[key] = torch.cat([batch[2][i][key].unsqueeze(0) for i in range(bs)])
+
+    return tuple([batch[0], out_targets, out_meta_info])
+
+
 def _max_by_axis(the_list):
     # type: (List[List[int]]) -> List[int]
     maxes = the_list[0]
