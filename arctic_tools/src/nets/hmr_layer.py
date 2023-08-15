@@ -14,14 +14,15 @@ class HMRLayer(nn.Module):
         hmr_dim = feat_dim + vector_dim
 
         # construct refine
-        self.refine = nn.Sequential(
-            nn.Linear(hmr_dim, mid_dim),
-            nn.ReLU(),
-            nn.Dropout(),
-            nn.Linear(mid_dim, mid_dim),
-            nn.ReLU(),
-            nn.Dropout(),
-        )
+        # self.refine = nn.Sequential(
+        #     nn.Linear(hmr_dim, mid_dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(),
+        #     nn.Linear(mid_dim, mid_dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(),
+        # )
+        self.refine = nn.Linear(hmr_dim, mid_dim)
 
         # construct decoders
         decoders = {}

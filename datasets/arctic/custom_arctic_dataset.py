@@ -36,6 +36,7 @@ class ArcticDataset(VisionDataset):
         args = self.args
         root = op.join(args.coco_path, args.dataset_file)
         device = args.device
+        
         # LOADING START
         speedup = args.speedup
         sid, seq_name, view_idx, image_idx = imgname.split("/")[-4:]

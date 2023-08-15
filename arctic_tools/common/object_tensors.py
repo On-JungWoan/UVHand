@@ -70,7 +70,7 @@ class ObjectTensors(nn.Module):
             return out
 
         # articulation + global rotation
-        quat_arti = axis_angle_to_quaternion(self.obj_tensors["z_axis"] * angles)
+        quat_arti = axis_angle_to_quaternion(self.obj_tensors["z_axis"] * angles.cpu())
         quat_global = axis_angle_to_quaternion(global_orient.view(-1, 3))
 
         # mm
@@ -88,12 +88,12 @@ class ObjectTensors(nn.Module):
         # articulate top parts
         for key, val in tf_dict.items():
             if "top" in key:
-                val_rot = quaternion_apply(quat_arti[:, None, :], val)
+                val_rot = quaternion_apply(quat_arti[:, None, :].cpu(), val)
                 tf_dict.overwrite(key, val_rot)
 
         # global rotation for all
         for key, val in tf_dict.items():
-            val_rot = quaternion_apply(quat_global[:, None, :], val)
+            val_rot = quaternion_apply(quat_global[:, None, :].cpu(), val)
             if transl is not None:
                 val_rot = val_rot + transl[:, None, :]
             tf_dict.overwrite(key, val_rot)

@@ -15,6 +15,7 @@ from common.data_utils import read_img
 from common.object_tensors import ObjectTensors
 from src.datasets.dataset_utils import get_valid, pad_jts2d
 
+from cfg import Config as cfg
 
 class ArcticDataset(Dataset):
     def __getitem__(self, index):
@@ -123,6 +124,9 @@ class ArcticDataset(Dataset):
             ).replace("/data/data/", "/data/")
             # imgname = imgname.replace("/arctic_data/", "/data/arctic_data/")
             cv_img, img_status = read_img(op.join(root, imgname[2:]), (2800, 2000, 3))
+
+            if img_status==False:
+                is_valid == 0            
         else:
             norm_img = None
 
@@ -179,10 +183,11 @@ class ArcticDataset(Dataset):
             norm_img = self.normalize_img(img)
 
         # exporting starts
-        inputs = {}
+        # inputs = {}
+        inputs = norm_img
         targets = {}
         meta_info = {}
-        inputs["img"] = norm_img
+        # inputs["img"] = norm_img
         meta_info["imgname"] = imgname
         rot_r = data_cam["rot_r_cam"][vidx, view_idx]
         rot_l = data_cam["rot_l_cam"][vidx, view_idx]
@@ -264,17 +269,29 @@ class ArcticDataset(Dataset):
         if not is_egocam:
             dist = dist * float("nan")
         meta_info["dist"] = torch.FloatTensor(dist)
-        meta_info["center"] = np.array(center, dtype=np.float32)
-        meta_info["is_flipped"] = augm_dict["flip"]
-        meta_info["rot_angle"] = np.float32(augm_dict["rot"])
+        meta_info["center"] = torch.tensor(center, dtype=torch.float32)
+        meta_info["is_flipped"] = torch.tensor(augm_dict["flip"])
+        meta_info["rot_angle"] = torch.tensor(augm_dict["rot"], dtype=torch.float32)
         # meta_info["sample_index"] = index
 
         # root and at least 3 joints inside image
-        targets["is_valid"] = float(is_valid)
-        targets["left_valid"] = float(left_valid) * float(is_valid)
-        targets["right_valid"] = float(right_valid) * float(is_valid)
-        targets["joints_valid_r"] = np.ones(21) * targets["right_valid"]
-        targets["joints_valid_l"] = np.ones(21) * targets["left_valid"]
+        targets["is_valid"] = torch.tensor(is_valid, dtype=torch.float32)
+        targets["left_valid"] = float(left_valid) * targets["is_valid"]
+        targets["right_valid"] = float(right_valid) * targets["is_valid"]
+        targets["joints_valid_r"] = torch.ones(21) * targets["right_valid"]
+        targets["joints_valid_l"] = torch.ones(21) * targets["left_valid"]
+
+        label = []
+        obj2idx = cfg(args).obj2idx
+        hand_idx = cfg(args).hand_idx
+
+        label.append(obj2idx[meta_info['query_names']])
+        for idx, valid in enumerate([left_valid, right_valid]):
+            if valid == 1:
+                label.append(hand_idx[idx])
+
+        targets["labels"] = torch.tensor(label)
+        # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])
 
         return inputs, targets, meta_info
 

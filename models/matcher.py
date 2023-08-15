@@ -43,19 +43,19 @@ class HungarianMatcher(nn.Module):
         self.cfg = cfg
         assert cost_class != 0 or cost_keypoint != 0, "all costs cant be 0"
 
-        _mano_root = 'mano/models'
-        self.mano_left = ManoLayer(flat_hand_mean=True,
-                        side="left",
-                        mano_root=_mano_root,
-                        use_pca=False,
-                        root_rot_mode='axisang',
-                        joint_rot_mode='axisang')
-        self.mano_right = ManoLayer(flat_hand_mean=True,
-                        side="right",
-                        mano_root=_mano_root,
-                        use_pca=False,
-                        root_rot_mode='axisang',
-                        joint_rot_mode='axisang')        
+        # _mano_root = 'mano/models'
+        # self.mano_left = ManoLayer(flat_hand_mean=True,
+        #                 side="left",
+        #                 mano_root=_mano_root,
+        #                 use_pca=False,
+        #                 root_rot_mode='axisang',
+        #                 joint_rot_mode='axisang')
+        # self.mano_right = ManoLayer(flat_hand_mean=True,
+        #                 side="right",
+        #                 mano_root=_mano_root,
+        #                 use_pca=False,
+        #                 root_rot_mode='axisang',
+        #                 joint_rot_mode='axisang')        
 
     def forward(self, outputs, targets):
         """ Performs the matching
@@ -82,17 +82,34 @@ class HungarianMatcher(nn.Module):
 
             # We flatten to compute the cost matrices in a batch
             out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()
-            out_objkp, _ = outputs['pred_obj_params']
+            out_mano_pose, out_mano_beta = outputs['pred_mano_params']
+            out_obj_rad, out_obj_rot = outputs['pred_obj_params']
+            out_hand_cam, out_obj_cam = outputs['pred_cams']
+            
             # out_kp = outputs["pred_keypoints"].flatten(0,1)
             # out_objkp = outputs["pred_obj_keypoints"].flatten(0,1)
-            out_mano_pose, out_mano_beta = outputs['pred_manoparams']
-            out_left_kp = torch.cat([self.mano_left(out_mano_pose[b], out_mano_beta[b])[1].view(num_queries, -1).unsqueeze(0) for b in range(bs)])
-            out_right_kp = torch.cat([self.mano_right(out_mano_pose[b], out_mano_beta[b])[1].view(num_queries, -1).unsqueeze(0) for b in range(bs)])
+            # out_left_kp = torch.cat([self.mano_left(out_mano_pose[b], out_mano_beta[b])[1].view(num_queries, -1).unsqueeze(0) for b in range(bs)])
+            # out_right_kp = torch.cat([self.mano_right(out_mano_pose[b], out_mano_beta[b])[1].view(num_queries, -1).unsqueeze(0) for b in range(bs)])
 
             # Also concat the target labels and boxes
-            tgt_ids = torch.cat([v["labels"] for idx, v in enumerate(targets)])
-            tgt_kp = torch.cat([v["keypoints"] for idx, v in enumerate(targets)])
+            # tgt_ids = torch.cat([v["labels"] for idx, v in enumerate(targets)])
+            # tgt_kp = torch.cat([v["keypoints"] for idx, v in enumerate(targets)])
 
+            tgt_ids = torch.cat(targets['labels'], dim=1)[0]
+            left_valid = targets['left_valid'].type(torch.bool)
+            right_valid = targets['right_valid'].type(torch.bool)
+
+            tgt_mano_pose_l = targets['mano.pose.l'][left_valid]
+            tgt_mano_pose_r = targets['mano.pose.r'][right_valid]
+            tgt_mano_beta_l = targets['mano.beta.l'][left_valid]
+            tgt_mano_beta_r = targets['mano.beta.r'][right_valid]
+            tgt_obj_rad = targets['object.radian']
+            tgt_obj_rot = targets['object.rot']
+            tgt_hand_cam_l = targets['mano.cam_t.wp.l'][left_valid]
+            tgt_hand_cam_r = targets['mano.cam_t.wp.r'][right_valid]
+            tgt_obj_cam = targets['object.cam_t.wp']
+
+            
             # hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
             obj_idx = torch.ones_like(tgt_ids, dtype=torch.bool)
             for idx in [0] + self.cfg.hand_idx:
@@ -111,7 +128,7 @@ class HungarianMatcher(nn.Module):
             cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
             # Compute the L1 cost between boxes
-            cost_keypoints = torch.zeros_like(cost_class)
+            # cost_keypoints = torch.zeros_like(cost_class)
 
             # tgt_kp = tgt_kp.reshape(-1, 63)[hand_idx]
             # occlusion_mask = tgt_kp>0
@@ -128,21 +145,49 @@ class HungarianMatcher(nn.Module):
             #     cost.append(torch.cdist(tmp_out, tmp_tgt.unsqueeze(0), p=1))
             # cost_hand = torch.cat(cost, dim=1)
 
-            gt_left_kp = tgt_kp[left_idx]
-            gt_right_kp = tgt_kp[right_idx]
-            gt_obj_kp = tgt_kp[obj_idx][:, :16, :]
+            cost_cam = torch.zeros_like(cost_class)
+            cost_rad_pose = torch.zeros_like(cost_class)
+            cost_rot_shape = torch.zeros_like(cost_class)
 
-            cost_left = torch.cdist(out_left_kp, gt_left_kp.reshape(-1, 63), p=1)
-            cost_right = torch.cdist(out_right_kp, gt_right_kp.reshape(-1, 63), p=1)
-            cost_obj = torch.cdist(out_objkp, gt_obj_kp.reshape(-1, 48), p=1)
+            cost_cam_left = torch.cdist(out_hand_cam, tgt_hand_cam_l.reshape(-1, 3), p=1).view(bs*num_queries, -1)
+            cost_cam_right = torch.cdist(out_hand_cam, tgt_hand_cam_r.reshape(-1, 3), p=1).view(bs*num_queries, -1)
+            cost_cam_obj = torch.cdist(out_obj_cam, tgt_obj_cam.reshape(-1, 3), p=1).view(bs*num_queries, -1)
+            cost_cam[:, left_idx] = cost_cam_left
+            cost_cam[:, right_idx] = cost_cam_right
+            cost_cam[:, obj_idx] = cost_cam_obj
 
-            cost_keypoints[:,left_idx] = cost_left.view(bs*num_queries, -1)
-            cost_keypoints[:,right_idx] = cost_right.view(bs*num_queries, -1)
-            cost_keypoints[:,obj_idx] = cost_obj.view(bs*num_queries, -1)
+            cost_pose_left = torch.cdist(out_mano_pose, tgt_mano_pose_l.reshape(-1, 48), p=1).view(bs*num_queries, -1)
+            cost_pose_right = torch.cdist(out_mano_pose, tgt_mano_pose_r.reshape(-1, 48), p=1).view(bs*num_queries, -1)
+            cost_rad = torch.cdist(out_obj_rad, tgt_obj_rad.unsqueeze(-1), p=1).view(bs*num_queries, -1)
+            cost_rad_pose[:, left_idx] = cost_pose_left
+            cost_rad_pose[:, right_idx] = cost_pose_right
+            cost_rad_pose[:, obj_idx] = cost_rad
 
-            C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
+            cost_beta_left = torch.cdist(out_mano_beta, tgt_mano_beta_l.reshape(-1, 10), p=1).view(bs*num_queries, -1)
+            cost_beta_right = torch.cdist(out_mano_beta, tgt_mano_beta_r.reshape(-1, 10), p=1).view(bs*num_queries, -1)
+            cost_rot = torch.cdist(out_obj_rot, tgt_obj_rot.reshape(-1, 3), p=1).view(bs*num_queries, -1)
+            cost_rot_shape[:, left_idx] = cost_beta_left
+            cost_rot_shape[:, right_idx] = cost_beta_right
+            cost_rot_shape[:, obj_idx] = cost_rot            
+
+
+            # gt_left_kp = tgt_kp[left_idx]
+            # gt_right_kp = tgt_kp[right_idx]
+            # gt_obj_kp = tgt_kp[obj_idx][:, :16, :]
+
+            # cost_left = torch.cdist(out_left_kp, gt_left_kp.reshape(-1, 63), p=1)
+            # cost_right = torch.cdist(out_right_kp, gt_right_kp.reshape(-1, 63), p=1)
+            # cost_obj = torch.cdist(out_objkp, gt_obj_kp.reshape(-1, 48), p=1)
+
+            # cost_keypoints[:,left_idx] = cost_left.view(bs*num_queries, -1)
+            # cost_keypoints[:,right_idx] = cost_right.view(bs*num_queries, -1)
+            # cost_keypoints[:,obj_idx] = cost_obj.view(bs*num_queries, -1)
+
+            C = self.cost_keypoint * (cost_rot_shape + cost_cam) + self.cost_class * (cost_class + cost_rad_pose)
+            # C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
             C = C.view(bs, num_queries, -1).cpu()
-            sizes = [len(v["keypoints"]) for idx, v in enumerate(targets)]
+            # sizes = [len(v["keypoints"]) for idx, v in enumerate(targets)]
+            sizes = [v.shape[-1] for v in targets['labels']]
             indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
 
             return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]

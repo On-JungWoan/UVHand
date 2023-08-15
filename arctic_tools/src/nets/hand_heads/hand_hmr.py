@@ -12,15 +12,18 @@ class HandHMR(nn.Module):
         self.is_rhand = is_rhand
 
         hand_specs = {"pose_6d": 6 * 16, "cam_t/wp": 3, "shape": 10}
-        self.hmr_layer = HMRLayer(feat_dim, 1024, hand_specs)
+        # self.hmr_layer = HMRLayer(feat_dim, 1024, hand_specs)
+        self.hmr_layer = HMRLayer(feat_dim, 126, hand_specs)
 
-        self.cam_init = nn.Sequential(
-            nn.Linear(feat_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 3),
-        )
+        # self.cam_init = nn.Sequential(
+        #     nn.Linear(feat_dim, 512),
+        #     nn.ReLU(),
+        #     nn.Linear(512, 512),
+        #     nn.ReLU(),
+        #     nn.Linear(512, 3),
+        # )
+
+        self.cam_init = nn.Linear(feat_dim, 3)
 
         self.hand_specs = hand_specs
         self.n_iter = n_iter
@@ -46,13 +49,14 @@ class HandHMR(nn.Module):
         out = xdict(out).to(dev)
         return out
 
-    def forward(self, features, use_pool=True):
-        batch_size = features.shape[0]
-        if use_pool:
-            feat = self.avgpool(features)
-            feat = feat.view(feat.size(0), -1)
-        else:
-            feat = features
+    def forward(self, feat, use_pool=False):
+        batch_size = feat.shape[0]
+        # batch_size = features.shape[0]
+        # if use_pool:
+        #     feat = self.avgpool(features)
+        #     feat = feat.view(feat.size(0), -1)
+        # else:
+            # feat = features
 
         init_vdict = self.init_vector_dict(feat)
         init_cam_t = init_vdict["cam_t/wp"].clone()

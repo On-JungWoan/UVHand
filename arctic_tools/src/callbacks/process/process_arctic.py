@@ -24,7 +24,8 @@ def process_data(
         global_orient=gt_object_rot,
         transl=None,
         query_names=meta_info["query_names"],
-    )
+    ).to(args['device'])
+
     diameters = out["diameter"]
     parts_idx = out["parts_ids"]
     meta_info["part_ids"] = parts_idx
@@ -82,7 +83,7 @@ def process_data(
         meta_info["intrinsics"].cpu().numpy(),
         use_all_joints=True,
         pad_2d=True,
-    )
+    ).to(args['device'])
 
     # move to camera coord
     gt_vertices_r = gt_vertices_r + gt_transl[:, None, :]
@@ -137,7 +138,7 @@ def process_data(
         global_orient=gt_object_rot,
         transl=None,
         query_names=meta_info["query_names"],
-    )
+    ).to(args['device'])
 
     # GT vertices relative to right hand root
     targets["object.v.cam"] = out["v"] + gt_transl[:, None, :]

@@ -10,15 +10,16 @@ class ObjectHMR(nn.Module):
         super().__init__()
 
         obj_specs = {"rot": 3, "cam_t/wp": 3, "radian": 1}
-        self.hmr_layer = HMRLayer(feat_dim, 1024, obj_specs)
+        self.hmr_layer = HMRLayer(feat_dim, 126, obj_specs)
 
-        self.cam_init = nn.Sequential(
-            nn.Linear(feat_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 3),
-        )
+        # self.cam_init = nn.Sequential(
+        #     nn.Linear(feat_dim, 512),
+        #     nn.ReLU(),
+        #     nn.Linear(512, 512),
+        #     nn.ReLU(),
+        #     nn.Linear(512, 3),
+        # )
+        self.cam_init = nn.Linear(feat_dim, 3)        
 
         self.obj_specs = obj_specs
         self.n_iter = n_iter
@@ -39,11 +40,12 @@ class ObjectHMR(nn.Module):
         return out
 
     def forward(self, features, use_pool=True):
-        if use_pool:
-            feat = self.avgpool(features)
-            feat = feat.view(feat.size(0), -1)
-        else:
-            feat = features
+        # if use_pool:
+        #     feat = self.avgpool(features)
+        #     feat = feat.view(feat.size(0), -1)
+        # else:
+        #     feat = features
+        feat = features
 
         init_vdict = self.init_vector_dict(feat)
         init_cam_t = init_vdict["cam_t/wp"].clone()

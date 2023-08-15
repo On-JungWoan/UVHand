@@ -21,6 +21,7 @@ import torch
 import util.misc as utils
 from util.misc import NestedTensor
 from datasets.data_prefetcher import data_prefetcher
+from datasets.arctic_prefetcher import data_prefetcher as arctic_prefetcher
 from tqdm import tqdm
 import numpy as np
 import copy
@@ -38,6 +39,8 @@ from manopth.manolayer import ManoLayer
 import trimesh
 import json
 import wandb
+
+from arctic_tools.process import arctic_pre_process
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -224,16 +227,20 @@ def vis(data_loader, targets, FPHA=False):
 
 def keep_valid(outputs, is_valid):
     outputs['pred_logits'] = outputs['pred_logits'][is_valid]
-    outputs['pred_manoparams'][0] = outputs['pred_manoparams'][0][is_valid]
-    outputs['pred_manoparams'][1] = outputs['pred_manoparams'][1][is_valid]
+    outputs['pred_mano_params'][0] = outputs['pred_mano_params'][0][is_valid]
+    outputs['pred_mano_params'][1] = outputs['pred_mano_params'][1][is_valid]
     outputs['pred_obj_params'][0] = outputs['pred_obj_params'][0][is_valid]
     outputs['pred_obj_params'][1] = outputs['pred_obj_params'][1][is_valid]
+    outputs['pred_cams'][0] = outputs['pred_cams'][0][is_valid]
+    outputs['pred_cams'][1] = outputs['pred_cams'][1][is_valid]    
     for idx, aux in enumerate(outputs['aux_outputs']):
         outputs['aux_outputs'][idx]['pred_logits'] = aux['pred_logits'][is_valid]
-        outputs['aux_outputs'][idx]['pred_manoparams'][0] = aux['pred_manoparams'][0][is_valid]
-        outputs['aux_outputs'][idx]['pred_manoparams'][1] = aux['pred_manoparams'][1][is_valid]
+        outputs['aux_outputs'][idx]['pred_mano_params'][0] = aux['pred_mano_params'][0][is_valid]
+        outputs['aux_outputs'][idx]['pred_mano_params'][1] = aux['pred_mano_params'][1][is_valid]
         outputs['aux_outputs'][idx]['pred_obj_params'][0] = aux['pred_obj_params'][0][is_valid]
         outputs['aux_outputs'][idx]['pred_obj_params'][1] = aux['pred_obj_params'][1][is_valid]
+        outputs['aux_outputs'][idx]['pred_cams'][0] = aux['pred_cams'][0][is_valid]
+        outputs['aux_outputs'][idx]['pred_cams'][1] = aux['pred_cams'][1][is_valid]      
     return outputs
 
 
@@ -250,24 +257,27 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
-    # if not args.debug:
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    samples, targets = prefetcher.next()
+    if args.dataset_file == 'arctic':
+        prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
+        samples, targets, meta_info = prefetcher.next()
+    else:
+        prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+        samples, targets = prefetcher.next()
+
     pbar = tqdm(range(len(data_loader)))
-    # else:
-        # pbar = tqdm(data_loader)
 
     for _ in pbar:
-        # if args.debug:
-        #     samples, targets = _
-        #     samples = samples.to(device)
-        #     for key, val in targets[0].items():
-        #         targets[0][key] = val.to(device)
+        if args.dataset_file == 'arctic':
+            targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         outputs = model(samples)
 
-        is_valid = torch.tensor([v['is_valid'].item() for v in targets], dtype=torch.bool)
-        targets = [v for idx, v in enumerate(targets) if is_valid[idx] == True]
+        is_valid = targets['is_valid'].type(torch.bool)
+        for k,v in targets.items():
+            if k == 'labels':
+                targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
+            else:
+                targets[k] = v[is_valid]
         outputs = keep_valid(outputs, is_valid)
 
         loss_dict = criterion(outputs, targets)
@@ -307,15 +317,15 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
             'mano': loss_dict_reduced_scaled['loss_mano_params'].item(), 
-            'obj_key': loss_dict_reduced_scaled['loss_obj_key'].item(), 
-            'obj_rad': loss_dict_reduced_scaled['loss_obj_rad'].item(), 
+            'cam': loss_dict_reduced_scaled['loss_cam'].item(), 
+            'rad_rot': loss_dict_reduced_scaled['loss_rad_rot'].item(), 
             })
 
         # print(f'{_} : {utils.get_local_rank()} done')
         if args.debug:
             if args.num_debug == _:
                 break
-        samples, targets = prefetcher.next()
+        samples, targets, meta_info = prefetcher.next()       
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -327,11 +337,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 return train_stat
         wandb.log(
             {
-                "loss": train_stat['loss'],
-                "loss_ce": train_stat['loss_ce'],
-                "mano": train_stat['loss_mano_params'],
-                "obj_key": train_stat['loss_obj_key'],
-                "obj_rad": train_stat['loss_obj_rad']
+            'loss' : train_stat['loss'],
+            'ce_loss' : train_stat['loss_ce'],
+            'mano': train_stat['loss_mano_params'], 
+            'cam': train_stat['loss_cam'], 
+            'rad_rot': train_stat['loss_rad_rot'], 
             }, step=epoch
         )
     return train_stat
