@@ -142,8 +142,8 @@ def get_args_parser():
     parser.add_argument('--test_viewpoint', default=None, type=str, \
                         help='If you want to evaluate a specific viewpoint, then you can simply put the viewpoint name.\n \
                             e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
-    parser.add_argument('--eval_method', default='MPJPE', choices=['MPJPE', 'EPE'], type=str, \
-                        help='Select evaluation method(MPJPE or EPE).')
+    parser.add_argument('--eval_metrics', default=["aae","mpjpe.ra","mrrpe","success_rate","cdev","mdev","acc_err_pose"], nargs='+', \
+                        help='Choose evaluation metrics.')
     
     # for custom arctic
     parser.add_argument('--seq', default=None, type=str) 
@@ -311,7 +311,7 @@ def main(args):
             pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list }
             
             new_model_dict.update(pretraind_model_dict)
-        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(new_model_dict, strict=False)
+        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(new_model_dict)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
             print('Missing Keys: {}'.format(missing_keys))
@@ -351,7 +351,7 @@ def main(args):
             print(f"Test ||left : {test_stats['left']} || right : {test_stats['right']} || obj : {test_stats['obj']} || class : {test_stats['class_error']}")        
         else:
             val_stats = test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
-            print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
+            # print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
         sys.exit(0)
         
     # for training
@@ -376,6 +376,8 @@ def main(args):
                     'epoch': epoch,
                     'args': args,
                 }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
+
+                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
