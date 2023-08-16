@@ -121,7 +121,6 @@ def get_args_parser():
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     # parser.add_argument('--resume', default='./weights/paper_pose.pth', help='resume from checkpoint')
-    # parser.add_argument('--resume', default='./weights/FPHA_pose.pth', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=8, type=int)
