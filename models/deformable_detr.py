@@ -777,7 +777,8 @@ def build(args, cfg):
     # weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_hand_keypoint': args.keypoint_loss_coef, 'loss_obj_keypoint': args.keypoint_loss_coef}
     weight_dict = {
         'loss_ce': args.cls_loss_coef, 'loss_cam': args.cls_loss_coef,
-        'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
+        # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
+        'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
     }
 
     # TODO this is a hack
