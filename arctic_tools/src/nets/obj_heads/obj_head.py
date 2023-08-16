@@ -8,11 +8,13 @@ from common.xdict import xdict
 
 
 class ArtiHead(nn.Module):
-    def __init__(self, focal_length, img_res):
+    def __init__(self, focal_length, img_res, device='cuda'):
         super().__init__()
         self.object_tensors = ObjectTensors()
+        self.object_tensors.to(device)
         self.focal_length = focal_length
         self.img_res = img_res
+        self.device = device
 
     def forward(
         self,
