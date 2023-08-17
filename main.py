@@ -139,6 +139,7 @@ def get_args_parser():
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
 
     # for eval
+    parser.add_argument('--val_batch_size', default=4, type=int)
     parser.add_argument('--test_viewpoint', default=None, type=str, \
                         help='If you want to evaluate a specific viewpoint, then you can simply put the viewpoint name.\n \
                             e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
@@ -228,7 +229,7 @@ def main(args):
                                     collate_fn=collate_fn, num_workers=args.num_workers,
                                     pin_memory=True)
     # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-    data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
+    data_loader_val = DataLoader(dataset_val, args.val_batch_size, sampler=sampler_val,
                                 drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
                                 pin_memory=True)
 
@@ -241,7 +242,7 @@ def main(args):
                 sampler_test = samplers.DistributedSampler(dataset_test, shuffle=False)
         else:
             sampler_test = torch.utils.data.SequentialSampler(dataset_test)
-        data_loader_test = DataLoader(dataset_test, args.batch_size, sampler=sampler_test,
+        data_loader_test = DataLoader(dataset_test, args.val_batch_size, sampler=sampler_test,
                                 drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
                                 pin_memory=True)
 

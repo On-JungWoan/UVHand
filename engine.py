@@ -295,6 +295,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
+        for k, v in loss_dict.items():
+            if len(v.shape) == 1:
+                loss_dict[k] = v[0]
+
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
         loss_dict_reduced_unscaled = {f'{k}_unscaled': v
@@ -373,7 +377,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         wandb.log({
             'loss' : loss_value,
             'ce_loss' : train_stat['loss_ce'],
-            'CDev' : train_stat['loss/cd'],
+            'loss_CDev' : train_stat['loss/cd'],
             'loss_mano' : (
                 train_stat["loss/mano/pose/r"] + \
                 train_stat["loss/mano/beta/r"] + \
@@ -497,13 +501,14 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
     save_dir = os.path.join(f'exps/{args.dataset_file}/results.txt')
-    with open(save_dir, 'a') as f:
-        if args.test_viewpoint is not None:
-            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-        for key, val in stats.items():
-            f.write(f'{key:30} : {val}\n')
-        f.write('\n\n')
+    if utils.get_local_rank() == 0:
+        with open(save_dir, 'a') as f:
+            if args.test_viewpoint is not None:
+                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+            for key, val in stats.items():
+                f.write(f'{key:30} : {val}\n')
+            f.write('\n\n')
 
     if args is not None and args.wandb:
         if args.distributed:
@@ -511,12 +516,12 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                 return stats
         wandb.log(
             {
-                'CDev' : stats['cdev/ho'],
-                'MRRPE_rl': stats['mrrpe/r/l'],
-                'MRRPE_ro' : stats['mrrpe/r/o'],
-                'MPJPE' : stats['mpjpe/ra/h'],
-                'AAE' : stats['aae'],
-                'S_R_0.05' : stats['success_rate/0.05'],
+                'score_CDev' : stats['cdev/ho'],
+                'score_MRRPE_rl': stats['mrrpe/r/l'],
+                'score_MRRPE_ro' : stats['mrrpe/r/o'],
+                'score_MPJPE' : stats['mpjpe/ra/h'],
+                'score_AAE' : stats['aae'],
+                'score_S_R_0.05' : stats['success_rate/0.05'],
             }, step=epoch
         )
     return stats
