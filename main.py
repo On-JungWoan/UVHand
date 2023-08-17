@@ -185,8 +185,7 @@ def main(args):
 
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
-    else:
-        dataset_val = build_dataset(image_set='val', args=args)
+    dataset_val = build_dataset(image_set='val', args=args)
     # dataset_val[0]
 
     model, criterion = build_model(args, cfg)
@@ -212,18 +211,15 @@ def main(args):
         if args.cache_mode:
             if not args.eval:
                 sampler_train = samplers.NodeDistributedSampler(dataset_train)
-            else:
-                sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
+            sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
         else:
             if not args.eval:
                 sampler_train = samplers.DistributedSampler(dataset_train)
-            else:
-                sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
+            sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
     else:
         if not args.eval:
             sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        else:
-            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     if not args.eval:
         batch_sampler_train = torch.utils.data.BatchSampler(
@@ -231,11 +227,10 @@ def main(args):
         data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                     collate_fn=collate_fn, num_workers=args.num_workers,
                                     pin_memory=True)
-    else:
-        # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-        data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
-                                    drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
-                                    pin_memory=True)
+    # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
+    data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
+                                drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
+                                pin_memory=True)
 
     if args.dataset_file == 'H2O':
         dataset_test = build_dataset(image_set='test', args=args)
@@ -366,7 +361,7 @@ def main(args):
                 # )
                 data_loader_train.dataset[0]
                 train_pose(
-                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args
+                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
                 )
                 lr_scheduler.step()
 

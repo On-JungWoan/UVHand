@@ -15,7 +15,7 @@ l1_loss = nn.L1Loss(reduction="none")
 mse_loss = nn.MSELoss(reduction="none")
 
 
-def compute_loss(pred, gt, meta_info, args):
+def compute_loss(pred, gt, meta_info, args, device='cuda'):
     # unpacking pred and gt
     pred_betas_r = pred["mano.beta.r"]
     pred_rotmat_r = pred["mano.pose.r"]
@@ -52,6 +52,8 @@ def compute_loss(pred, gt, meta_info, args):
     # reshape
     gt_pose_r = axis_angle_to_matrix(gt_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
     gt_pose_l = axis_angle_to_matrix(gt_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+    pred_rotmat_r = axis_angle_to_matrix(pred_rotmat_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+    pred_rotmat_l = axis_angle_to_matrix(pred_rotmat_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
 
     # Compute loss on MANO parameters
     loss_regr_pose_r, loss_regr_betas_r = mano_loss(
@@ -129,44 +131,64 @@ def compute_loss(pred, gt, meta_info, args):
         pred["object.cam_t.wp"], gt["object.cam_t.wp"], mse_loss, is_valid
     )
 
-    loss_cam_t_r += vector_loss(
-        pred["mano.cam_t.wp.init.r"],
-        gt["mano.cam_t.wp.r"],
-        mse_loss,
-        right_valid,
-    )
-    loss_cam_t_l += vector_loss(
-        pred["mano.cam_t.wp.init.l"],
-        gt["mano.cam_t.wp.l"],
-        mse_loss,
-        left_valid,
-    )
-    loss_cam_t_o += vector_loss(
-        pred["object.cam_t.wp.init"],
-        gt["object.cam_t.wp"],
-        mse_loss,
-        is_valid,
-    )
+    # loss_cam_t_r += vector_loss(
+    #     pred["mano.cam_t.wp.init.r"],
+    #     gt["mano.cam_t.wp.r"],
+    #     mse_loss,
+    #     right_valid,
+    # )
+    # loss_cam_t_l += vector_loss(
+    #     pred["mano.cam_t.wp.init.l"],
+    #     gt["mano.cam_t.wp.l"],
+    #     mse_loss,
+    #     left_valid,
+    # )
+    # loss_cam_t_o += vector_loss(
+    #     pred["object.cam_t.wp.init"],
+    #     gt["object.cam_t.wp"],
+    #     mse_loss,
+    #     is_valid,
+    # )
 
     cd_ro, cd_lo = compute_contact_devi_loss(pred, gt)
+    # loss_dict = {
+    #     "loss/mano/cam_t/r": (loss_cam_t_r, 1.0),
+    #     "loss/mano/cam_t/l": (loss_cam_t_l, 1.0),
+    #     "loss/object/cam_t": (loss_cam_t_o, 1.0),
+    #     "loss/mano/kp2d/r": (loss_keypoints_r, 5.0),
+    #     "loss/mano/kp3d/r": (loss_keypoints_3d_r, 5.0),
+    #     "loss/mano/pose/r": (loss_regr_pose_r, 10.0),
+    #     "loss/mano/beta/r": (loss_regr_betas_r, 0.001),
+    #     "loss/mano/kp2d/l": (loss_keypoints_l, 5.0),
+    #     "loss/mano/kp3d/l": (loss_keypoints_3d_l, 5.0),
+    #     "loss/mano/pose/l": (loss_regr_pose_l, 10.0),
+    #     "loss/cd": (cd_ro + cd_lo, 1.0),
+    #     "loss/mano/transl/l": (loss_transl_l, 1.0),
+    #     "loss/mano/beta/l": (loss_regr_betas_l, 0.001),
+    #     "loss/object/kp2d": (loss_keypoints_o, 1.0),
+    #     "loss/object/kp3d": (loss_keypoints_3d_o, 5.0),
+    #     "loss/object/radian": (loss_radian, 1.0),
+    #     "loss/object/rot": (loss_rot, 1.0),
+    #     "loss/object/transl": (loss_transl_o, 1.0),
+    # }
     loss_dict = {
-        "loss/mano/cam_t/r": (loss_cam_t_r, 1.0),
-        "loss/mano/cam_t/l": (loss_cam_t_l, 1.0),
-        "loss/object/cam_t": (loss_cam_t_o, 1.0),
-        "loss/mano/kp2d/r": (loss_keypoints_r, 5.0),
-        "loss/mano/kp3d/r": (loss_keypoints_3d_r, 5.0),
-        "loss/mano/pose/r": (loss_regr_pose_r, 10.0),
-        "loss/mano/beta/r": (loss_regr_betas_r, 0.001),
-        "loss/mano/kp2d/l": (loss_keypoints_l, 5.0),
-        "loss/mano/kp3d/l": (loss_keypoints_3d_l, 5.0),
-        "loss/mano/pose/l": (loss_regr_pose_l, 10.0),
-        "loss/cd": (cd_ro + cd_lo, 1.0),
-        "loss/mano/transl/l": (loss_transl_l, 1.0),
-        "loss/mano/beta/l": (loss_regr_betas_l, 0.001),
-        "loss/object/kp2d": (loss_keypoints_o, 1.0),
-        "loss/object/kp3d": (loss_keypoints_3d_o, 5.0),
-        "loss/object/radian": (loss_radian, 1.0),
-        "loss/object/rot": (loss_rot, 1.0),
-        "loss/object/transl": (loss_transl_o, 1.0),
-    }
+        "loss/mano/cam_t/r": loss_cam_t_r.to(device),
+        "loss/mano/cam_t/l": loss_cam_t_l.to(device),
+        "loss/object/cam_t": loss_cam_t_o.to(device),
+        "loss/mano/kp2d/r": loss_keypoints_r.to(device),
+        "loss/mano/kp3d/r": loss_keypoints_3d_r.to(device),
+        "loss/mano/pose/r": loss_regr_pose_r.to(device),
+        "loss/mano/beta/r": loss_regr_betas_r.to(device),
+        "loss/mano/kp2d/l": loss_keypoints_l.to(device),
+        "loss/mano/kp3d/l": loss_keypoints_3d_l.to(device),
+        "loss/mano/pose/l": loss_regr_pose_l.to(device),
+        "loss/cd": cd_ro + cd_lo.to(device),
+        "loss/mano/transl/l": loss_transl_l.to(device),
+        "loss/mano/beta/l": loss_regr_betas_l.to(device),
+        "loss/object/kp2d": loss_keypoints_o.to(device),
+        "loss/object/kp3d": loss_keypoints_3d_o.to(device),
+        "loss/object/radian": loss_radian.to(device),
+        "loss/object/rot": loss_rot.to(device),
+        "loss/object/transl": loss_transl_o.to(device),
+    }    
     return loss_dict
