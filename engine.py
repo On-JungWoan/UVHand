@@ -248,7 +248,7 @@ def keep_valid(outputs, is_valid):
 
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0, args=None):
+                    device: torch.device, epoch: int, max_norm: float = 0, args=None, cfg=None):
     model.train()
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -271,7 +271,6 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     for _ in pbar:
         if args.dataset_file == 'arctic':
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
-
         outputs = model(samples)
 
         # check validation
@@ -281,10 +280,18 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
             else:
                 targets[k] = v[is_valid]
+        for k,v in meta_info.items():
+            if k in ['imgname', 'query_names']:
+                meta_info[k] = [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True]
+            elif 'mano.faces' in k:
+                continue
+            else:
+                meta_info[k] = v[is_valid]                
         outputs = keep_valid(outputs, is_valid)
+        data = prepare_data(args, outputs, targets, meta_info, cfg)
 
         # calc loss
-        loss_dict = criterion(outputs, targets)
+        loss_dict = criterion(args, outputs, targets, meta_info, data)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
@@ -301,7 +308,6 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             print(loss_dict_reduced)
-            criterion(outputs, targets)
             sys.exit(1)
 
         optimizer.zero_grad()
@@ -320,9 +326,34 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         pbar.set_postfix({
             'loss' : loss_value,
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
-            'mano': loss_dict_reduced_scaled['loss_mano_params'].item(), 
-            'cam': loss_dict_reduced_scaled['loss_cam'].item(), 
-            'rad_rot': loss_dict_reduced_scaled['loss_rad_rot'].item(), 
+            'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
+            'loss_mano' : round(
+                loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/pose/l"].item() + \
+                loss_dict_reduced_scaled["loss/mano/beta/l"].item(), 2
+            ),
+            'loss_rot' : round(
+                loss_dict_reduced_scaled["loss/object/radian"].item() + \
+                loss_dict_reduced_scaled["loss/object/rot"].item(), 2
+            ),
+            'loss_transl' : round(
+                loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
+                loss_dict_reduced_scaled["loss/object/transl"].item(), 2
+            ),
+            'loss_kp' : round(
+                loss_dict_reduced_scaled["loss/mano/kp2d/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/kp3d/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/kp2d/l"].item() + \
+                loss_dict_reduced_scaled["loss/mano/kp3d/l"].item() + \
+                loss_dict_reduced_scaled["loss/object/kp2d"].item() + \
+                loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
+            ),
+            'loss_cam' : round(
+                loss_dict_reduced_scaled["loss/mano/cam_t/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/cam_t/l"].item() + \
+                loss_dict_reduced_scaled["loss/object/cam_t"].item(), 2
+            ),            
             })
 
         # print(f'{_} : {utils.get_local_rank()} done')
@@ -339,15 +370,38 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.distributed:
             if utils.get_local_rank() != 0:
                 return train_stat
-        wandb.log(
-            {
-            'loss' : train_stat['loss'],
+        wandb.log({
+            'loss' : loss_value,
             'ce_loss' : train_stat['loss_ce'],
-            'mano': train_stat['loss_mano_params'], 
-            'cam': train_stat['loss_cam'], 
-            'rad_rot': train_stat['loss_rad_rot'], 
-            }, step=epoch
-        )
+            'CDev' : train_stat['loss/cd'],
+            'loss_mano' : (
+                train_stat["loss/mano/pose/r"] + \
+                train_stat["loss/mano/beta/r"] + \
+                train_stat["loss/mano/pose/l"] + \
+                train_stat["loss/mano/beta/l"]
+            ),
+            'loss_rot' : (
+                train_stat["loss/object/radian"] + \
+                train_stat["loss/object/rot"]
+            ),
+            'loss_transl' : (
+                train_stat["loss/mano/transl/l"] + \
+                train_stat["loss/object/transl"]
+            ),
+            'loss_kp' : (
+                train_stat["loss/mano/kp2d/r"] + \
+                train_stat["loss/mano/kp3d/r"] + \
+                train_stat["loss/mano/kp2d/l"] + \
+                train_stat["loss/mano/kp3d/l"] + \
+                train_stat["loss/object/kp2d"] + \
+                train_stat["loss/object/kp3d"]
+            ),
+            'loss_cam' : (
+                train_stat["loss/mano/cam_t/r"] + \
+                train_stat["loss/mano/cam_t/l"] + \
+                train_stat["loss/object/cam_t"]
+            )
+        }, step=epoch)
     return train_stat
 
 
@@ -446,7 +500,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     with open(save_dir, 'a') as f:
         if args.test_viewpoint is not None:
             f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-        f.write(f"{'='*10} {args.resume} {'='*10}\n\n")
+        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
         for key, val in stats.items():
             f.write(f'{key:30} : {val}\n')
         f.write('\n\n')
