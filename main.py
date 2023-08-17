@@ -350,7 +350,7 @@ def main(args):
             test_stats = test_pose(model, criterion, data_loader_test, device, cfg, args=args, vis=args.visualization)
             print(f"Test ||left : {test_stats['left']} || right : {test_stats['right']} || obj : {test_stats['obj']} || class : {test_stats['class_error']}")        
         else:
-            val_stats = test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+            test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
             # print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
         sys.exit(0)
         
@@ -365,8 +365,9 @@ def main(args):
                 #     data_loader_train.dataset[0] + data_loader_train.dataset[1] + data_loader_train.dataset[2] + data_loader_train.dataset[3]
                 # )
                 data_loader_train.dataset[0]
-                _ = train_pose(
-                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args)
+                train_pose(
+                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args
+                )
                 lr_scheduler.step()
 
                 utils.save_on_master({
@@ -377,7 +378,7 @@ def main(args):
                     'args': args,
                 }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
 
-                # test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))

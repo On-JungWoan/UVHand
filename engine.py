@@ -42,6 +42,7 @@ import wandb
 
 from arctic_tools.common.xdict import xdict
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
+from arctic_tools.visualizer import visualize_arctic_result
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -412,22 +413,26 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
 
             # prepare data
             data = prepare_data(args, outputs, targets, meta_info, cfg)
-            stats = measure_error(data, args.eval_metrics)
-            pbar.set_postfix({
-                'CDev':stats['cdev/ho'].mean(),
-                'MRRPE_rl/ro':f"{stats['mrrpe/r/l'].mean()} / {stats['mrrpe/r/o'].mean()}",
-                'MPJPE': stats['mpjpe/ra/h'].mean(),
-                'AAE': stats['aae'].mean(),
-                'S_R_0.05': stats['success_rate/0.05'].mean(),
-                })
 
-            for k,v in stats.items():
-                if stats[k] != stats[k]:
-                    stats = stats.rm(k)
-                    continue
-                stats.overwrite(k, float(v.mean()))
+            if args.visualization:
+                assert samples.tensors.shape[0] == 1
+                visualize_arctic_result(args, data, 'pred')
+            else:
+                # measure error
+                assert samples.tensors.shape[0] != 1
+                stats = measure_error(data, args.eval_metrics)
+                for k,v in stats.items():
+                    not_non_idx = ~np.isnan(stats[k])
+                    stats.overwrite(k, float(stats[k][not_non_idx].mean()))
 
-            metric_logger.update(**stats)
+                pbar.set_postfix({
+                    'CDev':round(stats['cdev/ho'],2),
+                    'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
+                    'MPJPE': round(stats['mpjpe/ra/h'],2),
+                    'AAE': round(stats['aae'],2),
+                    'S_R_0.05': round(stats['success_rate/0.05'],2),
+                    })
+                metric_logger.update(**stats)
 
             if args.debug == True:
                 if args.num_debug == _:
@@ -462,44 +467,6 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         )
     return stats
 
-def eval_mpjpe_ra(pred, targets, meta_info):
-    joints3d_cam_r_gt = targets["mano.j3d.cam.r"]
-    joints3d_cam_l_gt = targets["mano.j3d.cam.l"]
-    joints3d_cam_r_pred = pred["mano.j3d.cam.r"]
-    joints3d_cam_l_pred = pred["mano.j3d.cam.l"]
-    is_valid = targets["is_valid"]
-    left_valid = targets["left_valid"] * is_valid
-    right_valid = targets["right_valid"] * is_valid
-    num_examples = len(joints3d_cam_r_gt)
-
-    joints3d_cam_r_gt_ra = joints3d_cam_r_gt - joints3d_cam_r_gt[:, :1, :]
-    joints3d_cam_l_gt_ra = joints3d_cam_l_gt - joints3d_cam_l_gt[:, :1, :]
-    joints3d_cam_r_pred_ra = joints3d_cam_r_pred - joints3d_cam_r_pred[:, :1, :]
-    joints3d_cam_l_pred_ra = joints3d_cam_l_pred - joints3d_cam_l_pred[:, :1, :]
-    mpjpe_ra_r = metrics.compute_joint3d_error(
-        joints3d_cam_r_gt_ra, joints3d_cam_r_pred_ra, right_valid
-    )
-    mpjpe_ra_l = metrics.compute_joint3d_error(
-        joints3d_cam_l_gt_ra, joints3d_cam_l_pred_ra, left_valid
-    )
-
-    mpjpe_ra_r = mpjpe_ra_r.mean(axis=1)
-    mpjpe_ra_l = mpjpe_ra_l.mean(axis=1)
-
-    # average over hand direction
-    mpjpe_ra_h = torch.FloatTensor(np.stack((mpjpe_ra_r, mpjpe_ra_l), axis=1))
-    mpjpe_ra_h = torch_utils.nanmean(mpjpe_ra_h, dim=1)
-
-    metric_dict = xdict()
-    # metric_dict["mpjpe/ra/r"] = mpjpe_ra_r
-    # metric_dict["mpjpe/ra/l"] = mpjpe_ra_l
-    metric_dict["mpjpe/ra/h"] = mpjpe_ra_h
-    metric_dict = metric_dict.mul(1000.0).to_np()
-
-    # assert len(metric_dict["mpjpe/ra/r"]) == num_examples
-    # assert len(metric_dict["mpjpe/ra/l"]) == num_examples
-    assert len(metric_dict["mpjpe/ra/h"]) == num_examples
-    return metric_dict
 
 def train_contact(temporal_model, mano_left, mano_right, GT_3D_bbox_dict, GT_obj_vertices_dict, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,

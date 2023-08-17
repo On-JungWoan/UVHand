@@ -1,121 +1,111 @@
-import argparse
-import sys
-
-from easydict import EasyDict
-
-
-
+import os
 import os.path as op
-from glob import glob
 
 import numpy as np
-from loguru import logger
+import torch
+import trimesh
 
-from .viewer import ARCTICViewer, ViewerData
-from .xdict import xdict
+import common.viewer as viewer_utils
+from common.body_models import build_layers, seal_mano_mesh
+from common.xdict import xdict
+from src.extraction.interface import prepare_data
+from src.extraction.keys.vis_pose import KEYS as keys
+from arctic_tools.common.viewer import ARCTICViewer, ViewerData
 
+def construct_meshes(data, flag, device):
+    # load object faces
+    obj_name = data['meta_info.query_names'][0]
+    f3d_o = trimesh.load(
+        f"./data/arctic_data/data/meta/object_vtemplates/{obj_name}/mesh.obj",
+        process=False,
+    ).faces
+    layers = build_layers(device)
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    # parser.add_argument("--exp_folder", type=str, default="")
-    parser.add_argument("--angle", type=float, default=None)
-    parser.add_argument("--zoom_out", type=float, default=0.5)
-    # parser.add_argument("--seq_name", type=str, default="")
-    # parser.add_argument(
-    #     "--mode",
-    #     type=str,
-    #     default="",
-    #     choices=[
-    #         "gt_mesh",
-    #         "pred_mesh",
-    #         "gt_field_r",
-    #         "gt_field_l",
-    #         "pred_field_r",
-    #         "pred_field_l",
-    #     ],
-    # )
-    parser.add_argument("--headless", action="store_true")
-    config = parser.parse_args()
-    args = EasyDict(vars(config))
-    return args
+    # center verts
+    v3d_r = data[f"{flag}.mano.v3d.cam.r"] 
+    v3d_l = data[f"{flag}.mano.v3d.cam.l"] 
+    v3d_o = data[f"{flag}.object.v.cam"] 
+    cam_t = data[f"{flag}.object.cam_t"] 
+    v3d_r -= cam_t[:, None, :] 
+    v3d_l -= cam_t[:, None, :] 
+    v3d_o -= cam_t[:, None, :] 
 
+    # seal MANO mesh
+    f3d_r = torch.LongTensor(layers["right"].faces.astype(np.int64))
+    f3d_l = torch.LongTensor(layers["left"].faces.astype(np.int64))
+    v3d_r, f3d_r = seal_mano_mesh(v3d_r, f3d_r, True)
+    v3d_l, f3d_l = seal_mano_mesh(v3d_l, f3d_l, False)
 
-class MethodViewer(ARCTICViewer):
-    def load_data(self, exp_folder, seq_name, mode, data_loader=None, model=None):
-        logger.info("Creating meshes")
+    # AIT meshes
+    hand_color = "white"
+    object_color = "light-blue"
+    right = {
+        "v3d": v3d_r.numpy(),
+        "f3d": f3d_r.numpy(),
+        "vc": None,
+        "name": "right",
+        "color": hand_color,
+    }
+    left = {
+        "v3d": v3d_l.numpy(),
+        "f3d": f3d_l.numpy(),
+        "vc": None,
+        "name": "left",
+        "color": hand_color,
+    }
+    obj = {
+        "v3d": v3d_o.numpy(),
+        "f3d": f3d_o,
+        "vc": None,
+        "name": "object",
+        "color": object_color,
+    }
 
-        # check if we are loading gt or pred
-        if "pred_mesh" in mode or "pred_field" in mode:
-            flag = "pred"
-        elif "gt_mesh" in mode or "gt_field" in mode:
-            flag = "targets"
-        else:
-            assert False, f"Unknown mode {mode}"
+    meshes = viewer_utils.construct_viewer_meshes(
+        {
+            "right": right,
+            "left": left,
+            "object": obj,
+        },
+        draw_edges=False,
+        flat_shading=True,
+    )
+    return meshes, data
 
-        exp_key = exp_folder.split("/")[1]
-        images_path = op.join(exp_folder, "eval", seq_name, "images")
-
-        # load mesh
-        meshes_all = xdict()
-        print(f"Specs: {exp_key} {seq_name} {flag}")
-        if "_mesh" in mode:
-            from .mesh_loader.pose import construct_meshes
-
-            meshes, data = construct_meshes(
-                exp_folder, seq_name, flag, None, zoom_out=None, data_loader=data_loader, model=model
-            )
-            meshes_all.merge(meshes)
-        elif "_field" in mode:
-            # from mesh_loader.field import construct_meshes
-            sys.exit(0)
-            meshes, data = construct_meshes(
-                exp_folder, seq_name, flag, mode, None, zoom_out=None
-            )
-            meshes_all.merge(meshes)
-            if "_r" in mode:
-                meshes_all.pop("left", None)
-            if "_l" in mode:
-                meshes_all.pop("right", None)
-        else:
-            assert False, f"Unknown mode {mode}"
-
-        imgnames = sorted(glob(images_path + "/*"))
-        num_frames = min(len(imgnames), data[f"{flag}.object.cam_t"].shape[0])
-
-        # setup camera
-        focal = 1000.0
-        rows = 224
-        cols = 224
-        K = np.array([[focal, 0, rows / 2.0], [0, focal, cols / 2.0], [0, 0, 1]])
-        cam_t = data[f"{flag}.object.cam_t"]
-        cam_t = cam_t[:num_frames]
-        Rt = np.zeros((num_frames, 3, 4))
-        Rt[:, :, 3] = cam_t
-        Rt[:, :3, :3] = np.eye(3)
-        Rt[:, 1:3, :3] *= -1.0
-
-        # pack data
-        data = ViewerData(Rt=Rt, K=K, cols=cols, rows=rows, imgnames=imgnames)
-        batch = meshes_all, data
-        self.check_format(batch)
-        logger.info("Done")
-        return batch
-
-
-def main(args=None, model=None, data_loader=None):
-    # args = parse_args()
-    exp_folder = args.exp_folder
-    seq_name = args.seq_name
-    mode = args.mode
-    viewer = MethodViewer(
+def visualize_arctic_result(args, data, flag):
+    args.headless = False
+    viewer = ARCTICViewer(
         interactive=not args.headless,
         size=(2048, 2048),
         render_types=["rgb", "video"],
     )
-    logger.info(f"Rendering {seq_name} {mode}")
-    batch = viewer.load_data(exp_folder, seq_name, mode, data_loader, model)
-    viewer.render_seq(batch, out_folder=op.join(exp_folder, "render", seq_name, mode))
 
+    meshes_all = xdict()
+    meshes, data = construct_meshes(data, flag, args.device)
+    meshes_all.merge(meshes)
 
-if __name__ == "__main__":
-    main()
+    root = op.join(args.coco_path, args.dataset_file)
+    imgnames = [op.join(root, data['meta_info.imgname'][0][2:])]
+    num_frames = min(len(imgnames), data[f"{flag}.object.cam_t"].shape[0])
+
+    # setup camera
+    focal = 1000.0
+    rows = 224
+    cols = 224
+    K = np.array([[focal, 0, rows / 2.0], [0, focal, cols / 2.0], [0, 0, 1]])
+    cam_t = data[f"{flag}.object.cam_t"]
+    cam_t = cam_t[:num_frames]
+    Rt = np.zeros((num_frames, 3, 4))
+    Rt[:, :, 3] = cam_t
+    Rt[:, :3, :3] = np.eye(3)
+    Rt[:, 1:3, :3] *= -1.0
+
+    data = ViewerData(Rt=Rt, K=K, cols=cols, rows=rows, imgnames=imgnames)
+    batch = meshes_all, data
+
+    save_foler = op.join(f'results/{args.dataset_file}/{args.setup}')
+    if not op.isdir(save_foler):
+        os.mkdir(save_foler)
+
+    viewer.check_format(batch)
+    viewer.render_seq(batch, out_folder=save_foler)
