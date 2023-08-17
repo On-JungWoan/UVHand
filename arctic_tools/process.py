@@ -46,7 +46,7 @@ def post_process_arctic_output(outputs, meta_info, args, cfg):
     out_logits = outputs['pred_logits']
     hand_cam, obj_cam = outputs['pred_cams']
     mano_pose, mano_shape = outputs['pred_mano_params']
-    obj_rad, obj_rot = outputs['pred_obj_params']
+    out_obj_rad, out_obj_rot = outputs['pred_obj_params']
     prob = out_logits.sigmoid()
     B, num_queries, num_classes = prob.shape
     K = meta_info["intrinsics"]
@@ -62,22 +62,24 @@ def post_process_arctic_output(outputs, meta_info, args, cfg):
 
     hand_idx = []
     for i in cfg.hand_idx:
-        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1).item()) 
+        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
     # hand_idx = torch.stack(hand_idx, dim=-1) 
     left_hand_idx, right_hand_idx = hand_idx
 
     # extract cam
-    root_r = hand_cam[:, left_hand_idx, :]
-    root_l = hand_cam[:, right_hand_idx, :]
-    root_o = obj_cam[:, obj_idx, :].view(B, 3)
-    # extract mano param
-    mano_pose_l = mano_pose[:, left_hand_idx, :]
-    mano_pose_r = mano_pose[:, right_hand_idx, :]
-    mano_shape_l = mano_shape[:, left_hand_idx, :]
-    mano_shape_r = mano_shape[:, right_hand_idx, :]
-    # extract rotation
-    obj_rot = obj_rot[:, obj_idx, :].view(B, 3)
-    obj_rad = obj_rad[:, obj_idx, :].view(B, 1)
+    root_r=root_l=root_o=mano_pose_l=mano_pose_r=mano_shape_l=mano_shape_r=obj_rot=obj_rad = torch.tensor([]).to(args.device)
+    for b in range(B):
+        root_r = torch.cat([root_r, hand_cam[b, left_hand_idx[b], :].unsqueeze(0)])
+        root_l = torch.cat([root_l, hand_cam[b, right_hand_idx[b], :].unsqueeze(0)])
+        root_o = torch.cat([root_o, obj_cam[b, obj_idx[b], :].unsqueeze(0)])
+        # extract mano param
+        mano_pose_l = torch.cat([mano_pose_l, mano_pose[b, left_hand_idx[b], :].unsqueeze(0)])
+        mano_pose_r = torch.cat([mano_pose_r, mano_pose[b, right_hand_idx[b], :].unsqueeze(0)])
+        mano_shape_l = torch.cat([mano_shape_l, mano_shape[b, left_hand_idx[b], :].unsqueeze(0)])
+        mano_shape_r = torch.cat([mano_shape_r, mano_shape[b, right_hand_idx[b], :].unsqueeze(0)])
+        # extract rotation
+        obj_rot = torch.cat([obj_rot, out_obj_rot[b, obj_idx[b], :].unsqueeze(0)])
+        obj_rad = torch.cat([obj_rad, out_obj_rad[b, obj_idx[b], :].unsqueeze(0)])
 
     mano_pose_r = axis_angle_to_matrix(mano_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
     mano_pose_l = axis_angle_to_matrix(mano_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)

@@ -412,21 +412,21 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
 
             # prepare data
             data = prepare_data(args, outputs, targets, meta_info, cfg)
+
+            # measure error
+            assert samples.tensors.shape[0] != 1
             stats = measure_error(data, args.eval_metrics)
-            pbar.set_postfix({
-                'CDev':stats['cdev/ho'].mean(),
-                'MRRPE_rl/ro':f"{stats['mrrpe/r/l'].mean()} / {stats['mrrpe/r/o'].mean()}",
-                'MPJPE': stats['mpjpe/ra/h'].mean(),
-                'AAE': stats['aae'].mean(),
-                'S_R_0.05': stats['success_rate/0.05'].mean(),
-                })
-
             for k,v in stats.items():
-                if stats[k] != stats[k]:
-                    stats = stats.rm(k)
-                    continue
-                stats.overwrite(k, float(v.mean()))
+                not_non_idx = ~np.isnan(stats[k])
+                stats.overwrite(k, float(stats[k][not_non_idx].mean()))
 
+            pbar.set_postfix({
+                'CDev':round(stats['cdev/ho'],2),
+                'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
+                'MPJPE': round(stats['mpjpe/ra/h'],2),
+                'AAE': round(stats['aae'],2),
+                'S_R_0.05': round(stats['success_rate/0.05'],2),
+                })
             metric_logger.update(**stats)
 
             if args.debug == True:

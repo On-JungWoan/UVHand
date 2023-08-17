@@ -377,7 +377,7 @@ def main(args):
                     'args': args,
                 }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
 
-                # test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
