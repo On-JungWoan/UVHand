@@ -42,6 +42,7 @@ import wandb
 
 from arctic_tools.common.xdict import xdict
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
+from arctic_tools.visualizer import visualize_arctic_result
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -413,21 +414,25 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             # prepare data
             data = prepare_data(args, outputs, targets, meta_info, cfg)
 
-            # measure error
-            assert samples.tensors.shape[0] != 1
-            stats = measure_error(data, args.eval_metrics)
-            for k,v in stats.items():
-                not_non_idx = ~np.isnan(stats[k])
-                stats.overwrite(k, float(stats[k][not_non_idx].mean()))
+            if args.visualization:
+                assert samples.tensors.shape[0] == 1
+                visualize_arctic_result(args, data, 'pred')
+            else:
+                # measure error
+                assert samples.tensors.shape[0] != 1
+                stats = measure_error(data, args.eval_metrics)
+                for k,v in stats.items():
+                    not_non_idx = ~np.isnan(stats[k])
+                    stats.overwrite(k, float(stats[k][not_non_idx].mean()))
 
-            pbar.set_postfix({
-                'CDev':round(stats['cdev/ho'],2),
-                'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
-                'MPJPE': round(stats['mpjpe/ra/h'],2),
-                'AAE': round(stats['aae'],2),
-                'S_R_0.05': round(stats['success_rate/0.05'],2),
-                })
-            metric_logger.update(**stats)
+                pbar.set_postfix({
+                    'CDev':round(stats['cdev/ho'],2),
+                    'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
+                    'MPJPE': round(stats['mpjpe/ra/h'],2),
+                    'AAE': round(stats['aae'],2),
+                    'S_R_0.05': round(stats['success_rate/0.05'],2),
+                    })
+                metric_logger.update(**stats)
 
             if args.debug == True:
                 if args.num_debug == _:

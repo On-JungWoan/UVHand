@@ -350,7 +350,7 @@ def main(args):
             test_stats = test_pose(model, criterion, data_loader_test, device, cfg, args=args, vis=args.visualization)
             print(f"Test ||left : {test_stats['left']} || right : {test_stats['right']} || obj : {test_stats['obj']} || class : {test_stats['class_error']}")        
         else:
-            val_stats = test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+            test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
             # print(f"Val ||left : {val_stats['left']} || right : {val_stats['right']} || obj : {val_stats['obj']} || class : {val_stats['class_error']}")
         sys.exit(0)
         
