@@ -365,8 +365,9 @@ def main(args):
                 #     data_loader_train.dataset[0] + data_loader_train.dataset[1] + data_loader_train.dataset[2] + data_loader_train.dataset[3]
                 # )
                 data_loader_train.dataset[0]
-                _ = train_pose(
-                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args)
+                train_pose(
+                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args
+                )
                 lr_scheduler.step()
 
                 utils.save_on_master({

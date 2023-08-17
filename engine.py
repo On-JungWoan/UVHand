@@ -462,44 +462,6 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         )
     return stats
 
-def eval_mpjpe_ra(pred, targets, meta_info):
-    joints3d_cam_r_gt = targets["mano.j3d.cam.r"]
-    joints3d_cam_l_gt = targets["mano.j3d.cam.l"]
-    joints3d_cam_r_pred = pred["mano.j3d.cam.r"]
-    joints3d_cam_l_pred = pred["mano.j3d.cam.l"]
-    is_valid = targets["is_valid"]
-    left_valid = targets["left_valid"] * is_valid
-    right_valid = targets["right_valid"] * is_valid
-    num_examples = len(joints3d_cam_r_gt)
-
-    joints3d_cam_r_gt_ra = joints3d_cam_r_gt - joints3d_cam_r_gt[:, :1, :]
-    joints3d_cam_l_gt_ra = joints3d_cam_l_gt - joints3d_cam_l_gt[:, :1, :]
-    joints3d_cam_r_pred_ra = joints3d_cam_r_pred - joints3d_cam_r_pred[:, :1, :]
-    joints3d_cam_l_pred_ra = joints3d_cam_l_pred - joints3d_cam_l_pred[:, :1, :]
-    mpjpe_ra_r = metrics.compute_joint3d_error(
-        joints3d_cam_r_gt_ra, joints3d_cam_r_pred_ra, right_valid
-    )
-    mpjpe_ra_l = metrics.compute_joint3d_error(
-        joints3d_cam_l_gt_ra, joints3d_cam_l_pred_ra, left_valid
-    )
-
-    mpjpe_ra_r = mpjpe_ra_r.mean(axis=1)
-    mpjpe_ra_l = mpjpe_ra_l.mean(axis=1)
-
-    # average over hand direction
-    mpjpe_ra_h = torch.FloatTensor(np.stack((mpjpe_ra_r, mpjpe_ra_l), axis=1))
-    mpjpe_ra_h = torch_utils.nanmean(mpjpe_ra_h, dim=1)
-
-    metric_dict = xdict()
-    # metric_dict["mpjpe/ra/r"] = mpjpe_ra_r
-    # metric_dict["mpjpe/ra/l"] = mpjpe_ra_l
-    metric_dict["mpjpe/ra/h"] = mpjpe_ra_h
-    metric_dict = metric_dict.mul(1000.0).to_np()
-
-    # assert len(metric_dict["mpjpe/ra/r"]) == num_examples
-    # assert len(metric_dict["mpjpe/ra/l"]) == num_examples
-    assert len(metric_dict["mpjpe/ra/h"]) == num_examples
-    return metric_dict
 
 def train_contact(temporal_model, mano_left, mano_right, GT_3D_bbox_dict, GT_obj_vertices_dict, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
