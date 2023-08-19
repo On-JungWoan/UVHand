@@ -39,6 +39,7 @@ from manopth.manolayer import ManoLayer
 import trimesh
 import json
 import wandb
+import os.path as op
 
 from arctic_tools.common.xdict import xdict
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
@@ -293,6 +294,15 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
 
             loss_dict = criterion(outputs, targets, data)
         else:
+            for i in range(len(targets)):
+                target = targets[i]
+                img_id = target['image_id'].item()
+                label = [l.item()-1 for l in target['labels']]
+                joint_valid = data_loader.dataset.coco.loadAnns(img_id)[0]['joint_valid']
+                joint_valid = torch.stack([torch.tensor(joint_valid[:21]), torch.tensor(joint_valid[21:])]).type(torch.bool)[label]
+                joint_valid = joint_valid.unsqueeze(-1).repeat(1,1,3)
+                targets[i]['joint_valid'] = joint_valid
+
             loss_dict = criterion(outputs, targets)
 
         weight_dict = criterion.weight_dict
@@ -413,7 +423,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'loss_cam' : train_stat["loss_cam"]
             }, step=epoch)
         elif args.dataset_file == 'AssemblyHands':
-            pass
+            wandb.log({
+                'loss' : loss_value,
+                'ce_loss' : train_stat['loss_ce'],
+                'hand': train_stat['loss_hand_keypoint'], 
+            }, step=epoch)
 
     # end training process
     return train_stat
@@ -488,30 +502,44 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                 if args.dataset_file == 'arctic':
                     visualize_arctic_result(args, data, 'pred')
                 elif args.dataset_file == 'AssemblyHands':
-                    visualize_assembly_result(cv_img, img_points, mode='left')
+                    visualize_assembly_result(args, cfg, outputs, targets, data_loader)
             else:
-                # measure error
-                stats = measure_error(data, args.eval_metrics)
-                for k,v in stats.items():
-                    not_non_idx = ~np.isnan(stats[k])
-                    stats.overwrite(k, float(stats[k][not_non_idx].mean()))
+                if args.dataset_file == 'AssemblyHands':
+                    # measure error
+                    stats = eval_assembly_result(outputs, targets, cfg, data_loader)
 
-                pbar.set_postfix({
-                    'CDev':round(stats['cdev/ho'],2),
-                    'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
-                    'MPJPE': round(stats['mpjpe/ra/h'],2),
-                    'AAE': round(stats['aae'],2),
-                    'S_R_0.05': round(stats['success_rate/0.05'],2),
-                    })
+                    pbar.set_postfix({
+                        'MPJPE': stats['mpjpe'],
+                        })                    
+                else:
+                    # measure error
+                    stats = measure_error(data, args.eval_metrics)
+                    for k,v in stats.items():
+                        not_non_idx = ~np.isnan(stats[k])
+                        stats.overwrite(k, float(stats[k][not_non_idx].mean()))
+
+                    pbar.set_postfix({
+                        'CDev':round(stats['cdev/ho'],2),
+                        'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
+                        'MPJPE': round(stats['mpjpe/ra/h'],2),
+                        'AAE': round(stats['aae'],2),
+                        'S_R_0.05': round(stats['success_rate/0.05'],2),
+                        })
                 metric_logger.update(**stats)
 
             if args.debug == True:
                 if args.num_debug == _:
                     break
-        samples, targets, meta_info = prefetcher.next()
+        if args.dataset_file == 'arctic':
+            samples, targets, meta_info = prefetcher.next()
+        else:
+            samples, targets = prefetcher.next()
 
-    metric_logger.synchronize_between_processes()
-    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    try:
+        metric_logger.synchronize_between_processes()
+        stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    except:
+        return 0
 
     save_dir = os.path.join(f'exps/{args.dataset_file}/results.txt')
     if utils.get_local_rank() == 0:
@@ -527,21 +555,134 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         if args.distributed:
             if utils.get_local_rank() != 0:
                 return stats
-        wandb.log(
-            {
-                'score_CDev' : stats['cdev/ho'],
-                'score_MRRPE_rl': stats['mrrpe/r/l'],
-                'score_MRRPE_ro' : stats['mrrpe/r/o'],
-                'score_MPJPE' : stats['mpjpe/ra/h'],
-                'score_AAE' : stats['aae'],
-                'score_S_R_0.05' : stats['success_rate/0.05'],
-            }, step=epoch
-        )
+        if args.dataset_file == 'arctic':
+            wandb.log(
+                {
+                    'score_CDev' : stats['cdev/ho'],
+                    'score_MRRPE_rl': stats['mrrpe/r/l'],
+                    'score_MRRPE_ro' : stats['mrrpe/r/o'],
+                    'score_MPJPE' : stats['mpjpe/ra/h'],
+                    'score_AAE' : stats['aae'],
+                    'score_S_R_0.05' : stats['success_rate/0.05'],
+                }, step=epoch
+            )
+        else:
+            wandb.log(
+                {
+                    'mpjpe' : stats['mpjpe'],
+                }, step=epoch
+            )            
     return stats
 
 
-def visualize_assembly_result():
-    pass
+def eval_assembly_result(outputs, targets, cfg, data_loader):
+    gt_keypoints = [t['keypoints'] for t in targets]
+
+    # model output
+    out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
+    prob = out_logits.sigmoid()
+    B, num_queries, num_classes = prob.shape
+
+    # hand index select
+    hand_idx = []
+    for i in cfg.hand_idx:
+        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1))
+    hand_idx = torch.stack(hand_idx, dim=-1)
+
+    # de-normalize
+    hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
+    orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+    im_h, im_w = orig_target_sizes[:,0], orig_target_sizes[:,1]
+    target_sizes = torch.cat([im_w.unsqueeze(-1), im_h.unsqueeze(-1)], dim=-1)
+    target_sizes =target_sizes.cuda()
+
+    hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
+    key_points = hand_kp
+
+    gt_keypoints = [t['keypoints'] for t in targets]
+    if 'labels' in targets[0].keys():
+        gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
+
+    # measure
+    mpjpe_ra_list = []
+    for i, batch in enumerate(gt_labels):
+        target = targets[i]
+        img_id = target['image_id'].item()
+        joint_valid = data_loader.dataset.coco.loadAnns(img_id)[0]['joint_valid']
+        joint_valid = torch.stack([torch.tensor(joint_valid[:21]), torch.tensor(joint_valid[21:])]).type(torch.bool)
+
+        cam_fx, cam_fy, cam_cx, cam_cy, _, _ = target['cam_param']
+
+        for k, label in enumerate(batch):
+            if label == cfg.hand_idx[0]: j=0
+            else: j=1
+            
+            pred_kp = key_points[i][j]
+            pred_joint_cam = pixel2cam(pred_kp, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
+            pred_joint_cam[:, -1] = 1000.0
+
+            x, y = target_sizes[0].detach().cpu().numpy()
+            gt_scaled_keypoints = gt_keypoints[i][k] * torch.tensor([x, y, 1000]).cuda()
+            gt_joint_cam = pixel2cam(gt_scaled_keypoints, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
+
+            joints3d_cam_gt_ra = gt_joint_cam - gt_joint_cam[:1, :]
+            joints3d_cam_pred_ra = pred_joint_cam - pred_joint_cam[:1, :]
+
+            mpjpe_ra = ((joints3d_cam_gt_ra - joints3d_cam_pred_ra) ** 2)[joint_valid[j]].sum(dim=-1).sqrt()
+            mpjpe_ra = mpjpe_ra.cpu().numpy()
+            mpjpe_ra_list.append(mpjpe_ra.mean())
+    return {
+        'mpjpe':float(np.array(mpjpe_ra_list).mean())
+    }
+
+
+def visualize_assembly_result(args, cfg, outputs, targets, data_loader, ):
+    filename = data_loader.dataset.coco.loadImgs(targets[0]['image_id'][0].item())[0]['file_name']
+    filepath = data_loader.dataset.root / filename
+    source_img = np.array(Image.open(filepath))
+
+
+    # model output
+    out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
+    prob = out_logits.sigmoid()
+    B, num_queries, num_classes = prob.shape
+
+    # hand index select
+    thold = 0.1
+    hand_idx = []
+    hand_score = []
+    for i in cfg.hand_idx:
+        score, idx = torch.max(prob[:,:,i], dim=-1)
+        hand_idx.append(idx)
+        hand_score.append(score)
+    hand_idx = torch.stack(hand_idx, dim=-1)
+
+    # de-normalize
+    hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
+    orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+    im_h, im_w = orig_target_sizes[:,0], orig_target_sizes[:,1]
+    target_sizes = torch.cat([im_w.unsqueeze(-1), im_h.unsqueeze(-1)], dim=-1)
+    target_sizes =target_sizes.cuda()
+
+    hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
+
+    batch, js, _, _ = hand_kp.shape
+    for b in range(batch):
+        for j in range(js):
+            pred_kp = hand_kp[b][j]
+            pred_score = hand_score[j]
+
+            if pred_score < thold:
+                continue
+
+            if j ==0:
+                source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'left')
+            elif j == 1:
+                source_img = visualize(source_img, pred_kp.detach().cpu().numpy().astype(np.int32), 'right')
+
+    save_name = '_'.join(filename.split('/')[-2:])
+    plt.imsave(f'exps/{args.dataset_file}/{save_name}.png', source_img)
+
 
 # def old_test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False):
     
