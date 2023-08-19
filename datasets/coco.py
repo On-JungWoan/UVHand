@@ -78,7 +78,7 @@ class ConvertCocoPolysToMask(object):
         classes = None
         obj6D = None
         if self.dataset == 'AssemblyHands':
-            name_to_idx = {'left':1, 'right':2}
+            name_to_idx = {'right':1, 'left':2}
             classes = [key for key, val in anno[0]['bbox'].items() if val is not None]
             classes = [name_to_idx[c] for c in classes]
         else:
@@ -97,7 +97,7 @@ class ConvertCocoPolysToMask(object):
         if anno and "keypoints" in anno[0]:
             keypoints = [obj["keypoints"] for obj in anno]
             if self.dataset == 'AssemblyHands':
-                keypoints = [keypoints[0][21:], keypoints[0][:21]]
+                keypoints = [keypoints[0][:21], keypoints[0][21:]]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             num_keypoints = keypoints.shape[0]
             if num_keypoints:
@@ -121,12 +121,13 @@ class ConvertCocoPolysToMask(object):
 
         if self.dataset == 'AssemblyHands':
             assert len(keypoints.shape) == 3
-            for key in keypoints:
-                for i in range(2):
-                    target = key[..., i]
-                    val = w if i == 0 else h
-                    target[target > val] = val
-                    target[target < -1] = -1
+            keypoints[keypoints<-1]=-1
+            # for key in keypoints:
+            #     for i in range(2):
+            #         target = key[..., i]
+            #         val = w if i == 0 else h
+            #         # target[target > val] = val
+            #         target[target < -1] = -1
             uvd = keypoints
         else:
             uvd = torch.stack([

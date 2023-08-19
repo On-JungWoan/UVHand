@@ -154,20 +154,8 @@ def main(args):
 
     output_dir = Path(args.output_dir)
     if args.resume:
-        new_model_dict = model_without_ddp.state_dict()
-        
-        #temp dir
-        checkpoint = torch.load(args.resume)
-        pretraind_model = checkpoint["model"]
-        name_list = [name for name in new_model_dict.keys() if name in pretraind_model.keys()]
-
-        if args.use_h2o_pth:
-            name_list = list(filter(lambda x : "cls_embed" not in x, name_list))
-            name_list = list(filter(lambda x : "obj_keypoint_embed" not in x, name_list))
-        pretraind_model_dict = {k : v for k, v in pretraind_model.items() if k in name_list }
-        
-        new_model_dict.update(pretraind_model_dict)
-        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(new_model_dict)
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
             print('Missing Keys: {}'.format(missing_keys))

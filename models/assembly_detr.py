@@ -316,6 +316,8 @@ class SetAssemblyCriterion(nn.Module):
         assert 'pred_keypoints' in outputs
         idx = self._get_src_permutation_idx(indices)
         src_keypoints = outputs['pred_keypoints'][idx]
+        joint_valid = torch.cat([v["joint_valid"] for v in targets])
+        joint_valid = joint_valid.view(-1, 63)
 
         target_keypoints = torch.cat([t['keypoints'][i] for t, (_, i) in zip(targets, indices)], dim=0)
         
@@ -334,10 +336,11 @@ class SetAssemblyCriterion(nn.Module):
 
         # loss_handkey = F.l1_loss(src_keypoints, target_keypoints, reduction='none')
 
-        loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63), reduction='none')
+        loss_handkey = F.l1_loss(src_keypoints[hand_cal_idx], target_keypoints[hand_cal_idx].view(-1, 63), reduction='none')[joint_valid]
 
         losses = {}
-        losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
+        # losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
+        losses['loss_hand_keypoint'] = (loss_handkey.sum() / 21)
 
         return losses
 
