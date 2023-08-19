@@ -283,7 +283,7 @@ class SetArcticCriterion(nn.Module):
         self.focal_alpha = focal_alpha
         self.cfg = cfg
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=False):
+    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -310,6 +310,171 @@ class SetArcticCriterion(nn.Module):
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
         return losses
 
+    @torch.no_grad()
+    def loss_cardinality(self, outputs, targets, indices, num_boxes):
+        """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
+        This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
+        """
+        pred_logits = outputs['pred_logits']
+        device = pred_logits.device
+        # tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        tgt_lengths = torch.as_tensor([v.shape[-1] for v in targets['labels']], device=device)
+        # Count the number of predictions that are NOT "no-object" (which is the last class)
+        card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
+        card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
+        losses = {'cardinality_error': card_err}
+        return losses
+
+    def loss_cam(self, outputs, targets, indices, num_boxes):
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
+           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+        """
+        assert 'pred_cams' in outputs
+        # assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
+        left_valid = targets['left_valid'].type(torch.bool)
+        right_valid = targets['right_valid'].type(torch.bool)
+
+        pred_hand_cam, pred_obj_cam = outputs['pred_cams']
+        idx = self._get_src_permutation_idx(indices)
+        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
+
+        src_hand = pred_hand_cam[idx]
+        src_obj = pred_obj_cam[idx]
+
+        # target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
+        left_idx = target_labels == self.cfg.hand_idx[0]
+        right_idx = target_labels == self.cfg.hand_idx[1]
+        obj_idx = torch.tensor([label not in self.cfg.hand_idx for label in target_labels])
+
+        src_left_cam = src_hand[left_idx]
+        src_right_cam = src_hand[right_idx]
+        src_obj_cam = src_obj[obj_idx]
+
+        # target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_left_cam = targets['mano.cam_t.wp.l'][left_valid]
+        target_right_cam = targets['mano.cam_t.wp.l'][right_valid]
+        target_obj_cam = targets['object.cam_t.wp']
+
+        loss_left_cam = F.l1_loss(src_left_cam, target_left_cam, reduction='mean')
+        loss_right_cam = F.l1_loss(src_right_cam, target_right_cam, reduction='mean')
+        loss_obj_cam = F.l1_loss(src_obj_cam, target_obj_cam, reduction='mean')
+
+        loss_hand_cam = (loss_left_cam + loss_right_cam) / 2
+
+        losses = {}
+        losses['loss_cam'] = loss_hand_cam + loss_obj_cam
+        return losses
+
+    def loss_obj_rotations(self, outputs, targets, indices, num_boxes):
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
+           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+        """
+        assert 'pred_obj_params' in outputs
+        left_valid = targets['left_valid'].type(torch.bool)
+        right_valid = targets['right_valid'].type(torch.bool)
+        bs = left_valid.shape[0]
+
+        pred_obj_radian, pred_obj_rot = outputs['pred_obj_params']
+        idx = self._get_src_permutation_idx(indices)
+        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
+
+        src_rad = pred_obj_radian[idx]
+        src_rot = pred_obj_rot[idx]
+    
+        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
+        obj_idx = torch.tensor([label not in self.cfg.hand_idx for label in target_labels])
+
+        src_obj_rad = src_rad[obj_idx]
+        src_obj_rot = src_rot[obj_idx]
+
+        # target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_obj_rad = targets['object.radian']
+        target_obj_rot = targets['object.rot']
+
+        loss_rad = F.l1_loss(src_obj_rad, target_obj_rad.unsqueeze(-1), reduction='mean')
+        loss_rot = F.l1_loss(src_obj_rot, target_obj_rot.view(bs, -1), reduction='mean')
+
+        losses = {}
+        losses['loss_rad_rot'] = loss_rad + loss_rot
+        return losses
+
+    def loss_mano_poses(self, outputs, targets, indices, num_boxes):
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
+           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+        """
+        assert 'pred_mano_params' in outputs
+        # assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
+        left_valid = targets['left_valid'].type(torch.bool)
+        right_valid = targets['right_valid'].type(torch.bool)
+
+        pred_mano_pose, pred_mano_beta = outputs['pred_mano_params']
+        idx = self._get_src_permutation_idx(indices)
+        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
+
+        src_pose = pred_mano_pose[idx]
+
+        # target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
+        left_idx = target_labels == self.cfg.hand_idx[0]
+        right_idx = target_labels == self.cfg.hand_idx[1]
+
+        src_left_pose = src_pose[left_idx]
+        src_right_pose = src_pose[right_idx]
+
+        # target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_left_mano_pose = targets['mano.pose.l'][left_valid]
+        target_right_mano_pose = targets['mano.pose.r'][right_valid]
+        
+        loss_left_pose = F.l1_loss(src_left_pose, target_left_mano_pose, reduction='mean')
+        loss_right_pose = F.l1_loss(src_right_pose, target_right_mano_pose, reduction='mean')
+
+        loss_pose = (loss_left_pose + loss_right_pose) / 2
+
+        losses = {}
+        losses['loss_mano_pose'] = loss_pose
+        return losses
+    
+    def loss_mano_betas(self, outputs, targets, indices, num_boxes):
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
+           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+        """
+        assert 'pred_mano_params' in outputs
+        # assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
+        left_valid = targets['left_valid'].type(torch.bool)
+        right_valid = targets['right_valid'].type(torch.bool)
+
+        pred_mano_pose, pred_mano_beta = outputs['pred_mano_params']
+        idx = self._get_src_permutation_idx(indices)
+        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
+
+        src_beta = pred_mano_beta[idx]
+
+        # target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
+        left_idx = target_labels == self.cfg.hand_idx[0]
+        right_idx = target_labels == self.cfg.hand_idx[1]
+
+        src_left_beta = src_beta[left_idx]
+        src_right_beta = src_beta[right_idx]
+
+        # target_mano_beta = torch.cat([t['mano_beta'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_left_mano_beta = targets['mano.beta.l'][left_valid]
+        target_right_mano_beta = targets['mano.beta.r'][right_valid]
+        
+        loss_left_beta = F.l1_loss(src_left_beta, target_left_mano_beta, reduction='mean')
+        loss_right_beta = F.l1_loss(src_right_beta, target_right_mano_beta, reduction='mean')
+
+        loss_beta = (loss_left_beta + loss_right_beta) / 2
+
+        losses = {}
+        losses['loss_mano_beta'] = loss_beta
+        return losses    
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -324,12 +489,20 @@ class SetArcticCriterion(nn.Module):
 
     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
         loss_map = {
-            'labels': self.loss_labels
+            'labels': self.loss_labels,
+            'cardinality': self.loss_cardinality,
+            # 'mano_params': self.loss_mano_params,
+            'mano_poses': self.loss_mano_poses,
+            'mano_betas': self.loss_mano_betas,
+            'cam': self.loss_cam,
+            'obj_rotation': self.loss_obj_rotations,
+            # 'obj_keypoint': self.loss_obj_keypoints,
+            # 'hand_keypoint': self.loss_hand_keypoints,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
-    def forward(self, args, outputs, targets, meta_info, data):
+    def forward(self, outputs, targets, data):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -364,17 +537,12 @@ class SetArcticCriterion(nn.Module):
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
                 indices = self.matcher(aux_outputs, targets)
 
-                aux_data = prepare_data(args, outputs, targets, meta_info, self.cfg)
-                aux_arctic_pred = aux_data.search('pred.', replace_to='')
-                aux_arctic_gt = aux_data.search('targets.', replace_to='')
-
                 for loss in self.losses:
                     kwargs = {}
                     if loss == 'labels':
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
-                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, None, None))
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
         return losses
@@ -417,25 +585,42 @@ def build(args, cfg):
     matcher = build_matcher(args, cfg)
     weight_dict = {
         'loss_ce': args.cls_loss_coef,
-        "loss/mano/cam_t/r":1.0,
-        "loss/mano/cam_t/l":1.0,
-        "loss/object/cam_t":1.0,
+        'loss_cam': 1.0,
+        'loss_rad_rot' : 1.0,
+        'loss_mano_pose' : 10.0,
+        'loss_mano_beta' : 0.001,
         "loss/mano/kp2d/r":5.0,
         "loss/mano/kp3d/r":5.0,
-        "loss/mano/pose/r":10.0,
-        "loss/mano/beta/r":0.001,
         "loss/mano/kp2d/l":5.0,
         "loss/mano/kp3d/l":5.0,
-        "loss/mano/pose/l":10.0,
-        "loss/cd":1.0,
+        # "loss/cd":1.0,
+        "loss/cd":2.0,
         "loss/mano/transl/l":1.0,
-        "loss/mano/beta/l":0.001,
         "loss/object/kp2d":1.0,
         "loss/object/kp3d":5.0,
-        "loss/object/radian":1.0,
-        "loss/object/rot":1.0,
         "loss/object/transl":1.0,
     }
+    # weight_dict = {
+    #     'loss_ce': args.cls_loss_coef,
+    #     "loss/mano/cam_t/r":1.0,
+    #     "loss/mano/cam_t/l":1.0,
+    #     "loss/object/cam_t":1.0,
+    #     "loss/mano/kp2d/r":5.0,
+    #     "loss/mano/kp3d/r":5.0,
+    #     "loss/mano/pose/r":10.0,
+    #     "loss/mano/beta/r":0.001,
+    #     "loss/mano/kp2d/l":5.0,
+    #     "loss/mano/kp3d/l":5.0,
+    #     "loss/mano/pose/l":10.0,
+    #     "loss/cd":1.0,
+    #     "loss/mano/transl/l":1.0,
+    #     "loss/mano/beta/l":0.001,
+    #     "loss/object/kp2d":1.0,
+    #     "loss/object/kp3d":5.0,
+    #     "loss/object/radian":1.0,
+    #     "loss/object/rot":1.0,
+    #     "loss/object/transl":1.0,
+    # }    
 
     # TODO this is a hack
     if args.aux_loss:
@@ -445,8 +630,8 @@ def build(args, cfg):
         aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
-    # losses = ['labels', 'cardinality', 'mano_params', 'cam', 'obj_rotation']
-    losses = ['labels',]
+    losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
+    # losses = ['labels',]
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
     criterion = SetArcticCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha, cfg=cfg)
     criterion.to(device)

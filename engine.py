@@ -291,7 +291,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             outputs = keep_valid(outputs, is_valid)
             data = prepare_data(args, outputs, targets, meta_info, cfg)
 
-            loss_dict = criterion(args, outputs, targets, meta_info, data)
+            loss_dict = criterion(outputs, targets, data)
         else:
             loss_dict = criterion(outputs, targets)
 
@@ -346,14 +346,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
                 'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
                 'loss_mano' : round(
-                    loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
-                    loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
-                    loss_dict_reduced_scaled["loss/mano/pose/l"].item() + \
-                    loss_dict_reduced_scaled["loss/mano/beta/l"].item(), 2
+                    loss_dict_reduced_scaled["loss_mano_pose"].item() + \
+                    loss_dict_reduced_scaled["loss_mano_beta"].item(), 2
                 ),
                 'loss_rot' : round(
-                    loss_dict_reduced_scaled["loss/object/radian"].item() + \
-                    loss_dict_reduced_scaled["loss/object/rot"].item(), 2
+                    loss_dict_reduced_scaled["loss_rad_rot"].item(), 2
                 ),
                 'loss_transl' : round(
                     loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
@@ -368,9 +365,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
                 ),
                 'loss_cam' : round(
-                    loss_dict_reduced_scaled["loss/mano/cam_t/r"].item() + \
-                    loss_dict_reduced_scaled["loss/mano/cam_t/l"].item() + \
-                    loss_dict_reduced_scaled["loss/object/cam_t"].item(), 2
+                    loss_dict_reduced_scaled["loss_cam"].item(), 2
                 ),            
                 })
             samples, targets, meta_info = prefetcher.next()
@@ -399,15 +394,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'ce_loss' : train_stat['loss_ce'],
                 'loss_CDev' : train_stat['loss/cd'],
                 'loss_mano' : (
-                    train_stat["loss/mano/pose/r"] + \
-                    train_stat["loss/mano/beta/r"] + \
-                    train_stat["loss/mano/pose/l"] + \
-                    train_stat["loss/mano/beta/l"]
+                    train_stat["loss_mano_pose"] + \
+                    train_stat["loss_mano_beta"]
                 ),
-                'loss_rot' : (
-                    train_stat["loss/object/radian"] + \
-                    train_stat["loss/object/rot"]
-                ),
+                'loss_rot' : train_stat['loss_rad_rot'],
                 'loss_transl' : (
                     train_stat["loss/mano/transl/l"] + \
                     train_stat["loss/object/transl"]
@@ -420,11 +410,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     train_stat["loss/object/kp2d"] + \
                     train_stat["loss/object/kp3d"]
                 ),
-                'loss_cam' : (
-                    train_stat["loss/mano/cam_t/r"] + \
-                    train_stat["loss/mano/cam_t/l"] + \
-                    train_stat["loss/object/cam_t"]
-                )
+                'loss_cam' : train_stat["loss_cam"]
             }, step=epoch)
         elif args.dataset_file == 'AssemblyHands':
             pass
@@ -505,7 +491,6 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                     visualize_assembly_result(cv_img, img_points, mode='left')
             else:
                 # measure error
-                assert samples.tensors.shape[0] != 1
                 stats = measure_error(data, args.eval_metrics)
                 for k,v in stats.items():
                     not_non_idx = ~np.isnan(stats[k])
