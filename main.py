@@ -383,9 +383,9 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
-    parent_args = parser.parse_known_args()[0]
+    args = parser.parse_known_args()[0]
 
-    if parent_args.dataset_file == 'arctic':
+    if args.dataset_file == 'arctic':
         from arctic_tools.src.parsers.parser import construct_args
         args = construct_args(parser)
 
