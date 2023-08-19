@@ -274,27 +274,31 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         outputs = model(samples)
 
         # check validation
-        is_valid = targets['is_valid'].type(torch.bool)
-        for k,v in targets.items():
-            if k == 'labels':
-                targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
-            else:
-                targets[k] = v[is_valid]
-        for k,v in meta_info.items():
-            if k in ['imgname', 'query_names']:
-                meta_info[k] = [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True]
-            elif 'mano.faces' in k:
-                continue
-            else:
-                meta_info[k] = v[is_valid]                
-        outputs = keep_valid(outputs, is_valid)
-        data = prepare_data(args, outputs, targets, meta_info, cfg)
+        if args.dataset_file == 'arctic':
+            is_valid = targets['is_valid'].type(torch.bool)
+            for k,v in targets.items():
+                if k == 'labels':
+                    targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
+                else:
+                    targets[k] = v[is_valid]
+            for k,v in meta_info.items():
+                if k in ['imgname', 'query_names']:
+                    meta_info[k] = [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True]
+                elif 'mano.faces' in k:
+                    continue
+                else:
+                    meta_info[k] = v[is_valid]                
+            outputs = keep_valid(outputs, is_valid)
+            data = prepare_data(args, outputs, targets, meta_info, cfg)
 
-        # calc loss
-        loss_dict = criterion(args, outputs, targets, meta_info, data)
+            loss_dict = criterion(outputs, targets, data)
+        else:
+            loss_dict = criterion(outputs, targets)
+
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
+        # for arctic
         for k, v in loss_dict.items():
             if len(v.shape) == 1:
                 loss_dict[k] = v[0]
@@ -306,14 +310,15 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         loss_dict_reduced_scaled = {k: v * weight_dict[k]
                                     for k, v in loss_dict_reduced.items() if k in weight_dict}
         losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-
         loss_value = losses_reduced_scaled.item()
 
+        # loss check
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             print(loss_dict_reduced)
             sys.exit(1)
 
+        # back propagation
         optimizer.zero_grad()
         losses.backward()
         if max_norm > 0:
@@ -322,90 +327,95 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         optimizer.step()
 
+        # logger update
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
-        # metric_logger.update(class_error=loss_dict_reduced['class_error'])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
+        if args.dataset_file == 'AssemblyHands':
+            metric_logger.update(class_error=loss_dict_reduced['class_error'])
 
-        pbar.set_postfix({
-            'loss' : loss_value,
-            'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
-            'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
-            'loss_mano' : round(
-                loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/pose/l"].item() + \
-                loss_dict_reduced_scaled["loss/mano/beta/l"].item(), 2
-            ),
-            'loss_rot' : round(
-                loss_dict_reduced_scaled["loss/object/radian"].item() + \
-                loss_dict_reduced_scaled["loss/object/rot"].item(), 2
-            ),
-            'loss_transl' : round(
-                loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/transl"].item(), 2
-            ),
-            'loss_kp' : round(
-                loss_dict_reduced_scaled["loss/mano/kp2d/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp3d/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp2d/l"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp3d/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/kp2d"].item() + \
-                loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
-            ),
-            'loss_cam' : round(
-                loss_dict_reduced_scaled["loss/mano/cam_t/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/cam_t/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/cam_t"].item(), 2
-            ),            
-            })
-
-        # print(f'{_} : {utils.get_local_rank()} done')
+        # for early stop
         if args.debug:
             if args.num_debug == _:
                 break
-        samples, targets, meta_info = prefetcher.next()       
+
+        # for debug
+        if args.dataset_file == 'arctic':
+            pbar.set_postfix({
+                'loss' : loss_value,
+                'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
+                'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
+                'loss_mano' : round(
+                    loss_dict_reduced_scaled["loss_mano_pose"].item() + \
+                    loss_dict_reduced_scaled["loss_mano_beta"].item(), 2
+                ),
+                'loss_rot' : round(
+                    loss_dict_reduced_scaled["loss_rad_rot"].item(), 2
+                ),
+                'loss_transl' : round(
+                    loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
+                    loss_dict_reduced_scaled["loss/object/transl"].item(), 2
+                ),
+                'loss_kp' : round(
+                    loss_dict_reduced_scaled["loss/mano/kp2d/r"].item() + \
+                    loss_dict_reduced_scaled["loss/mano/kp3d/r"].item() + \
+                    loss_dict_reduced_scaled["loss/mano/kp2d/l"].item() + \
+                    loss_dict_reduced_scaled["loss/mano/kp3d/l"].item() + \
+                    loss_dict_reduced_scaled["loss/object/kp2d"].item() + \
+                    loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
+                ),
+                'loss_cam' : round(
+                    loss_dict_reduced_scaled["loss_cam"].item(), 2
+                ),            
+                })
+            samples, targets, meta_info = prefetcher.next()
+        elif args.dataset_file == 'AssemblyHands':
+            pbar.set_postfix({
+                'loss' : loss_value,
+                'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
+                'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
+            })
+            samples, targets = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     
+    # for wandb
     if args is not None and args.wandb:
         if args.distributed:
             if utils.get_local_rank() != 0:
                 return train_stat
-        wandb.log({
-            'loss' : loss_value,
-            'ce_loss' : train_stat['loss_ce'],
-            'loss_CDev' : train_stat['loss/cd'],
-            'loss_mano' : (
-                train_stat["loss/mano/pose/r"] + \
-                train_stat["loss/mano/beta/r"] + \
-                train_stat["loss/mano/pose/l"] + \
-                train_stat["loss/mano/beta/l"]
-            ),
-            'loss_rot' : (
-                train_stat["loss/object/radian"] + \
-                train_stat["loss/object/rot"]
-            ),
-            'loss_transl' : (
-                train_stat["loss/mano/transl/l"] + \
-                train_stat["loss/object/transl"]
-            ),
-            'loss_kp' : (
-                train_stat["loss/mano/kp2d/r"] + \
-                train_stat["loss/mano/kp3d/r"] + \
-                train_stat["loss/mano/kp2d/l"] + \
-                train_stat["loss/mano/kp3d/l"] + \
-                train_stat["loss/object/kp2d"] + \
-                train_stat["loss/object/kp3d"]
-            ),
-            'loss_cam' : (
-                train_stat["loss/mano/cam_t/r"] + \
-                train_stat["loss/mano/cam_t/l"] + \
-                train_stat["loss/object/cam_t"]
-            )
-        }, step=epoch)
+        
+        # check dataset
+        if args.dataset_file == 'arctic':
+            wandb.log({
+                'loss' : loss_value,
+                'ce_loss' : train_stat['loss_ce'],
+                'loss_CDev' : train_stat['loss/cd'],
+                'loss_mano' : (
+                    train_stat["loss_mano_pose"] + \
+                    train_stat["loss_mano_beta"]
+                ),
+                'loss_rot' : train_stat['loss_rad_rot'],
+                'loss_transl' : (
+                    train_stat["loss/mano/transl/l"] + \
+                    train_stat["loss/object/transl"]
+                ),
+                'loss_kp' : (
+                    train_stat["loss/mano/kp2d/r"] + \
+                    train_stat["loss/mano/kp3d/r"] + \
+                    train_stat["loss/mano/kp2d/l"] + \
+                    train_stat["loss/mano/kp3d/l"] + \
+                    train_stat["loss/object/kp2d"] + \
+                    train_stat["loss/object/kp3d"]
+                ),
+                'loss_cam' : train_stat["loss_cam"]
+            }, step=epoch)
+        elif args.dataset_file == 'AssemblyHands':
+            pass
+
+    # end training process
     return train_stat
 
 
@@ -459,6 +469,8 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
 
         with torch.no_grad():
             outputs = model(samples.to(device))
+            if args.dataset_file == 'arctic':
+                data = prepare_data(args, outputs, targets, meta_info, cfg)
             
             # # check validation
             # is_valid = targets['is_valid'].type(torch.bool)
@@ -470,14 +482,15 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             # outputs = keep_valid(outputs, is_valid)
 
             # prepare data
-            data = prepare_data(args, outputs, targets, meta_info, cfg)
 
             if args.visualization:
                 assert samples.tensors.shape[0] == 1
-                visualize_arctic_result(args, data, 'pred')
+                if args.dataset_file == 'arctic':
+                    visualize_arctic_result(args, data, 'pred')
+                elif args.dataset_file == 'AssemblyHands':
+                    visualize_assembly_result(cv_img, img_points, mode='left')
             else:
                 # measure error
-                assert samples.tensors.shape[0] != 1
                 stats = measure_error(data, args.eval_metrics)
                 for k,v in stats.items():
                     not_non_idx = ~np.isnan(stats[k])
@@ -527,178 +540,8 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     return stats
 
 
-def train_contact(temporal_model, mano_left, mano_right, GT_3D_bbox_dict, GT_obj_vertices_dict, criterion: torch.nn.Module,
-                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, cfg=None):
-
-    temporal_model.train()
-    header = 'Epoch: [{}]'.format(epoch)
-    print(header)
-
-    prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-    samples, targets = prefetcher.next()
-    pbar = tqdm(range(len(data_loader)))
-
-    fx,fy,cx,cy = cfg.cam_param
-    for i, _ in enumerate(pbar):
-        cam = targets[0]['cam'][0,:,0]
-        obj_6D = targets[0]['6D'][0,:,0]
-        label = targets[0]['label'][0,:,0]
-        mano_param = targets[0]['mano'][0,:,0]
-        action_label = targets[0]['action']
-        dataset = 'H2O' if len(cfg.hand_idx) ==2 else 'FPHA'
-        num_frame = cam.shape[0]
-        obj_label = label[:,:-2].sum(0).argmax(dim=-1).item()
-        R = obj_6D[:,:9].reshape(-1,3,3).to(torch.float32)
-        t = obj_6D[:,9:].to(torch.float32)
-        obj_vertices = torch.tensor(GT_obj_vertices_dict[obj_label], dtype=torch.float32)[None].repeat(R.shape[0], 1, 1).cuda()
-        obj_vertices = torch.matmul(R, obj_vertices.permute(0,2,1)*1000).permute(0,2,1) + t[:,None]
-
-        hand_cam = cam[:,:-63].reshape(num_frame, -1,21,3)
-        
-        opt_tensor_shape = torch.zeros(cam.shape[0], 10).to(cam.device)
-        
-        MANO_LAYER= [mano_left, mano_right] if dataset == 'H2O' else [mano_right]
-        mano_results = [mano_layer(mano_param[:,48*i:48*(i+1)], opt_tensor_shape) for i, mano_layer in enumerate(MANO_LAYER)]
-        hand_verts = torch.stack([m[0] for m in mano_results], dim=1)
-        j3d_recon = torch.stack([m[1] for m in mano_results], dim=1)
-        hand_verts = hand_verts - j3d_recon[:,:,:1] + hand_cam[:,:,:1]
-        
-        obj_nn_dist_affordance = get_NN(obj_vertices.to(torch.float32), hand_verts.reshape(num_frame,-1,3).to(torch.float32))
-        hand_nn_dist_affordance = torch.stack([get_NN(hand_verts[:,idx].to(torch.float32), obj_vertices.to(torch.float32)) for idx in range(hand_verts.shape[1])], dim=1)
-        obj_cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)
-        hand_cmap_affordance = torch.stack([get_pseudo_cmap(hand_nn_dist_affordance[:,idx]) for idx in range(hand_verts.shape[1])], dim=1)
-
-        ##################### vis #############
-        # idx = 0
-        # v_color = np.array([[v.item()*255, 255-v.item()*255, 0] for v in obj_cmap_affordance[idx]], dtype=np.int64)
-        # obj_mesh = trimesh.Trimesh(vertices=obj_vertices.detach().cpu().numpy()[idx], vertex_colors=v_color)
-        # # left_hand = trimesh.Trimesh(vertices=hand_verts.detach().cpu().numpy()[idx,0], faces=(mano_left.th_faces).detach().cpu().numpy())
-        # right_hand = trimesh.Trimesh(vertices=hand_verts.detach().cpu().numpy()[idx,-1], faces=(mano_right.th_faces).detach().cpu().numpy())
-        # # obj_mesh = trimesh.Trimesh(vertices=obj_vertices.detach().cpu().numpy()[0])
-        # save_path = './'
-        # # trimesh.exchange.export.export_mesh(left_hand,f'{save_path}_left.obj')
-        # trimesh.exchange.export.export_mesh(right_hand,f'{save_path}_right.obj')
-        # trimesh.exchange.export.export_mesh(obj_mesh,f'{save_path}_obj.obj')
-        #########################################
-        ############### all mesh (dim=308) ###########
-        hand_info = torch.cat([hand_verts/1000, hand_cmap_affordance], dim=-1).to(torch.float32)
-        obj_info = torch.cat([obj_vertices/1000, obj_cmap_affordance], dim=-1).to(torch.float32)
-
-        outputs = temporal_model(hand_info.detach(), obj_info.detach(), label[:,1:cfg.hand_idx[0]].detach())
-        # outputs = temporal_model(left_info.reshape(64,-1), right_info.reshape(64,-1), obj_info.reshape(64,-1), label[:,1:]) ## h+o ##########################################3
-        if torch.isnan(outputs.sum()):
-            samples, targets = prefetcher.next()
-            continue
-
-        loss = criterion(outputs, action_label)
-        if torch.isnan(loss):
-            print('this')
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        pbar.set_postfix({
-            'ce_loss' : loss.item(),
-            })
-    
-        samples, targets = prefetcher.next()
-
-    return 0
-
-# def test_contact(temporal_model, mano_left, mano_right, GT_3D_bbox_dict, GT_obj_vertices_dict, criterion: torch.nn.Module,
-#                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-#                     device: torch.device, epoch: int, cfg=None, save_json=None, save_confusion=None):
-#     temporal_model.eval()
-#     metric_logger = utils.MetricLogger(delimiter="  ")
-#     header = 'Epoch: [{}]'.format(epoch)
-#     print(header)
-
-#     prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-#     samples, targets = prefetcher.next()
-#     pbar = tqdm(range(len(data_loader)))
-
-#     cnt = 0
-    
-#     preds = []
-#     gts = []
-#     json_action_dict = defaultdict(int)
-#     fx,fy,cx,cy = cfg.cam_param
-#     for i, _ in enumerate(pbar):
-#         cam = targets[0]['cam'][0,:,0]
-#         obj_6D = targets[0]['6D'][0,:,0]
-#         label = targets[0]['label'][0,:,0]
-#         mano_param = targets[0]['mano'][0,:,0]
-#         action_label = targets[0]['action']
-#         dataset = 'H2O' if len(cfg.hand_idx) ==2 else 'FPHA'
-#         num_frame = cam.shape[0]
-#         obj_label = label[:,:-2].sum(0).argmax(dim=-1).item()
-#         R = obj_6D[:,:9].reshape(-1,3,3).to(torch.float32)
-#         t = obj_6D[:,9:].to(torch.float32)
-#         obj_vertices = torch.tensor(GT_obj_vertices_dict[obj_label], dtype=torch.float32)[None].repeat(R.shape[0], 1, 1).cuda()
-#         obj_vertices = torch.matmul(R, obj_vertices.permute(0,2,1)*1000).permute(0,2,1) + t[:,None]
-
-#         hand_cam = cam[:,:-63].reshape(num_frame, -1,21,3)
-        
-#         opt_tensor_shape = torch.zeros(cam.shape[0], 10).to(cam.device)
-        
-#         MANO_LAYER= [mano_left, mano_right] if dataset == 'H2O' else [mano_right]
-#         mano_results = [mano_layer(mano_param[:,48*i:48*(i+1)], opt_tensor_shape) for i, mano_layer in enumerate(MANO_LAYER)]
-#         hand_verts = torch.stack([m[0] for m in mano_results], dim=1)
-#         j3d_recon = torch.stack([m[1] for m in mano_results], dim=1)
-#         hand_verts = hand_verts - j3d_recon[:,:,:1] + hand_cam[:,:,:1]
-        
-#         obj_nn_dist_affordance = get_NN(obj_vertices.to(torch.float32), hand_verts.reshape(num_frame,-1,3).to(torch.float32))
-#         hand_nn_dist_affordance = torch.stack([get_NN(hand_verts[:,idx].to(torch.float32), obj_vertices.to(torch.float32)) for idx in range(hand_verts.shape[1])], dim=1)
-#         obj_cmap_affordance = get_pseudo_cmap(obj_nn_dist_affordance)
-#         hand_cmap_affordance = torch.stack([get_pseudo_cmap(hand_nn_dist_affordance[:,idx]) for idx in range(hand_verts.shape[1])], dim=1)
-
-#         ##################### vis #############
-#         '''
-#         idx = 32
-#         v_color = np.array([[v.item()*255, 255-v.item()*255, 0] for v in obj_cmap_affordance[idx]], dtype=np.int64)
-#         obj_mesh = trimesh.Trimesh(vertices=obj_vertices.detach().cpu().numpy()[idx], vertex_colors=v_color)
-#         left_hand = trimesh.Trimesh(vertices=hand_verts.detach().cpu().numpy()[idx,0], faces=(mano_left.th_faces).detach().cpu().numpy())
-#         right_hand = trimesh.Trimesh(vertices=hand_verts.detach().cpu().numpy()[idx,1], faces=(mano_right.th_faces).detach().cpu().numpy())
-#         # obj_mesh = trimesh.Trimesh(vertices=obj_vertices.detach().cpu().numpy()[0])
-#         save_path = './'
-#         trimesh.exchange.export.export_mesh(left_hand,f'{save_path}_left.obj')
-#         trimesh.exchange.export.export_mesh(right_hand,f'{save_path}_right.obj')
-#         trimesh.exchange.export.export_mesh(obj_mesh,f'{save_path}_obj.obj')
-#         '''
-#         #########################################
-#         ############### all mesh (dim=308) ###########
-#         hand_info = torch.cat([hand_verts/1000, hand_cmap_affordance], dim=-1).to(torch.float32)
-#         obj_info = torch.cat([obj_vertices/1000, obj_cmap_affordance], dim=-1).to(torch.float32)
-
-#         with torch.no_grad():
-#             outputs = temporal_model(hand_info.detach(), obj_info.detach(), label[:,1:cfg.hand_idx[0]].detach())
-
-#         if outputs[0].argmax() == action_label[0]:
-#             cnt+=1
-#         preds.append(outputs[0].argmax().item())
-#         gts.append(action_label[0].item())
-#         metric_logger.update(**{'action_acc':cnt})
-#             # reduce losses over all GPUs for logging purposes
-#         json_action_dict[str(i+1)] = outputs[0].argmax().item()
-#         samples, targets = prefetcher.next()
-#     # gather the stats from all processes
-
-#     metric_logger.synchronize_between_processes()
-#     print("Averaged stats:", cnt/len(data_loader.dataset))
-    
-#     if save_json :
-#         with open('action_labels.json', 'w') as f:
-#             json.dump(json_action_dict, f)
-#     if save_confusion:
-#         cf_mat = confusion_matrix(preds, gts)
-#         df_cm = pd.DataFrame(cf_mat, index = [i for i in interaction_label],
-#                     columns = [i for i in interaction_label])
-#         plt.figure(figsize = (19,15))
-#         heatmap = sn.heatmap(df_cm, annot=True, annot_kws={'fontsize' : 20})
-#         plt.savefig(f'./confusion/{epoch}.png')
-        
-#     return cnt/len(data_loader.dataset)
+def visualize_assembly_result():
+    pass
 
 # def old_test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False):
     
