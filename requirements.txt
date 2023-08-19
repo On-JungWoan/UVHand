@@ -13,3 +13,4 @@ smplx
 pytorch_lightning
 wandb
 aitviewer==1.8.1
+chardet
