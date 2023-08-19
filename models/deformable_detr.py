@@ -757,7 +757,7 @@ class SetArcticCriterion(nn.Module):
         self.focal_alpha = focal_alpha
         self.cfg = cfg
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_labels(self, outputs, targets, indices, num_boxes, log=False):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -784,21 +784,6 @@ class SetArcticCriterion(nn.Module):
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
         return losses
 
-    @torch.no_grad()
-    def loss_cardinality(self, outputs, targets, indices, num_boxes):
-        """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
-        This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
-        """
-        pred_logits = outputs['pred_logits']
-        device = pred_logits.device
-        # tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
-        tgt_lengths = torch.as_tensor([v.shape[-1] for v in targets['labels']], device=device)
-        # Count the number of predictions that are NOT "no-object" (which is the last class)
-        card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
-        card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
-        losses = {'cardinality_error': card_err}
-        return losses
-
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -813,8 +798,7 @@ class SetArcticCriterion(nn.Module):
 
     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
         loss_map = {
-            'labels': self.loss_labels,
-            'cardinality': self.loss_cardinality,
+            'labels': self.loss_labels
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -908,8 +892,6 @@ def build(args, cfg):
     # weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_hand_keypoint': args.keypoint_loss_coef, 'loss_obj_keypoint': args.keypoint_loss_coef}
     weight_dict = {
         'loss_ce': args.cls_loss_coef,
-        'class_error':1,
-        'cardinality_error':1,
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,
         "loss/object/cam_t":1.0,
@@ -942,7 +924,7 @@ def build(args, cfg):
         weight_dict.update(aux_weight_dict)
 
     # losses = ['labels', 'cardinality', 'mano_params', 'cam', 'obj_rotation']
-    losses = ['labels', 'cardinality']
+    losses = ['labels',]
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
     criterion = SetArcticCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha, cfg=cfg)
     criterion.to(device)
