@@ -492,17 +492,19 @@ class SetArcticCriterion(nn.Module):
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
             # 'mano_params': self.loss_mano_params,
-            'mano_poses': self.loss_mano_poses,
-            'mano_betas': self.loss_mano_betas,
-            'cam': self.loss_cam,
-            'obj_rotation': self.loss_obj_rotations,
+
+            # 'mano_poses': self.loss_mano_poses,
+            # 'mano_betas': self.loss_mano_betas,
+            # 'cam': self.loss_cam,
+            # 'obj_rotation': self.loss_obj_rotations,
+
             # 'obj_keypoint': self.loss_obj_keypoints,
             # 'hand_keypoint': self.loss_hand_keypoints,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
-    def forward(self, outputs, targets, data):
+    def forward(self, outputs, targets, data, args, meta_info):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -537,12 +539,17 @@ class SetArcticCriterion(nn.Module):
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
                 indices = self.matcher(aux_outputs, targets)
 
+                aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
+                aux_arctic_pred = aux_data.search('pred.', replace_to='')
+                aux_arctic_gt = aux_data.search('targets.', replace_to='')
+
                 for loss in self.losses:
                     kwargs = {}
                     if loss == 'labels':
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
+                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, None, None))
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
         return losses
@@ -583,44 +590,50 @@ def build(args, cfg):
         img_res=args.img_res
     )
     matcher = build_matcher(args, cfg)
-    weight_dict = {
-        'loss_ce': args.cls_loss_coef,
-        'loss_cam': 1.0,
-        'loss_rad_rot' : 1.0,
-        'loss_mano_pose' : 10.0,
-        'loss_mano_beta' : 0.001,
-        "loss/mano/kp2d/r":5.0,
-        "loss/mano/kp3d/r":5.0,
-        "loss/mano/kp2d/l":5.0,
-        "loss/mano/kp3d/l":5.0,
-        # "loss/cd":1.0,
-        "loss/cd":2.0,
-        "loss/mano/transl/l":1.0,
-        "loss/object/kp2d":1.0,
-        "loss/object/kp3d":5.0,
-        "loss/object/transl":1.0,
-    }
     # weight_dict = {
     #     'loss_ce': args.cls_loss_coef,
-    #     "loss/mano/cam_t/r":1.0,
-    #     "loss/mano/cam_t/l":1.0,
-    #     "loss/object/cam_t":1.0,
+    #     'loss_cam': 1.0,
+    #     'loss_rad_rot' : 1.0,
+    #     'loss_mano_pose' : 10.0,
+    #     'loss_mano_beta' : 0.001,
     #     "loss/mano/kp2d/r":5.0,
     #     "loss/mano/kp3d/r":5.0,
-    #     "loss/mano/pose/r":10.0,
-    #     "loss/mano/beta/r":0.001,
     #     "loss/mano/kp2d/l":5.0,
     #     "loss/mano/kp3d/l":5.0,
-    #     "loss/mano/pose/l":10.0,
-    #     "loss/cd":1.0,
+    #     # "loss/cd":1.0,
+    #     "loss/cd":2.0,
     #     "loss/mano/transl/l":1.0,
-    #     "loss/mano/beta/l":0.001,
     #     "loss/object/kp2d":1.0,
     #     "loss/object/kp3d":5.0,
-    #     "loss/object/radian":1.0,
-    #     "loss/object/rot":1.0,
     #     "loss/object/transl":1.0,
-    # }    
+    # }
+    weight_dict = {
+        'loss_ce': args.cls_loss_coef,
+        'class_error':1,
+        'cardinality_error':1,
+        "loss/mano/cam_t/r":1.0,
+        "loss/mano/cam_t/l":1.0,
+        "loss/object/cam_t":1.0,
+        "loss/mano/kp2d/r":5.0,
+        "loss/mano/kp3d/r":5.0,
+        "loss/mano/pose/r":10.0,
+        "loss/mano/beta/r":0.001,
+        "loss/mano/kp2d/l":5.0,
+        "loss/mano/kp3d/l":5.0,
+        "loss/mano/pose/l":10.0,
+        # "loss/cd":1.0,
+        "loss/cd":10.0,
+        "loss/mano/transl/l":1.0,
+        "loss/mano/beta/l":0.001,
+        "loss/object/kp2d":1.0,
+        "loss/object/kp3d":5.0,
+        "loss/object/radian":1.0,
+        "loss/object/rot":1.0,
+        "loss/object/transl":1.0,
+        # 'loss_cam': args.cls_loss_coef,
+        # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
+        # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
+    }
 
     # TODO this is a hack
     if args.aux_loss:
@@ -630,8 +643,8 @@ def build(args, cfg):
         aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
-    losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
-    # losses = ['labels',]
+    # losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
+    losses = ['labels', 'cardinality']
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
     criterion = SetArcticCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha, cfg=cfg)
     criterion.to(device)
