@@ -73,8 +73,8 @@ def post_process_arctic_output(outputs, meta_info, args, cfg):
     # extract cam
     root_r=root_l=root_o=mano_pose_l=mano_pose_r=mano_shape_l=mano_shape_r=obj_rot=obj_rad = torch.tensor([]).to(args.device)
     for b in range(B):
-        root_r = torch.cat([root_r, hand_cam[b, left_hand_idx[b], :].unsqueeze(0)])
-        root_l = torch.cat([root_l, hand_cam[b, right_hand_idx[b], :].unsqueeze(0)])
+        root_l = torch.cat([root_l, hand_cam[b, left_hand_idx[b], :].unsqueeze(0)])
+        root_r = torch.cat([root_r, hand_cam[b, right_hand_idx[b], :].unsqueeze(0)])
         root_o = torch.cat([root_o, obj_cam[b, obj_idx[b], :].unsqueeze(0)])
         # extract mano param
         mano_pose_l = torch.cat([mano_pose_l, mano_pose[b, left_hand_idx[b], :].unsqueeze(0)])
@@ -114,7 +114,7 @@ def post_process_arctic_output(outputs, meta_info, args, cfg):
     output = xdict()
     output.merge(mano_output_r)
     output.merge(mano_output_l)
-    output.merge(arti_output)  
+    output.merge(arti_output)
 
     return output
 
@@ -239,7 +239,7 @@ def prepare_data(args, outputs, targets, meta_info, cfg):
             pred[denorm_key] = val_denorm_pred
             targets[denorm_key] = val_denorm_gt
     
-    layers = build_layers(args.device)
+    # layers = build_layers(args.device)
     pred.overwrite(
         "mano.pose.r", matrix_to_axis_angle(pred["mano.pose.r"])
     )
@@ -249,7 +249,7 @@ def prepare_data(args, outputs, targets, meta_info, cfg):
 
     # fk_params_batch
     # targets = fk_params_batch(xdict(targets), layers, meta_info, args.device)
-    pred = fk_params_batch(pred, layers, meta_info, args.device)
+    # pred = fk_params_batch(pred, layers, meta_info, args.device)
     # meta_info.overwrite("part_ids", targets["object.parts_ids"])
     # meta_info.overwrite("diameter", targets["object.diameter"])
     # targets = prepare_interfield(targets, max_dist=0.1)
