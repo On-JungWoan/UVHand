@@ -33,6 +33,10 @@ def arctic_pre_process(args, targets, meta_info):
     meta_info["mano.faces.r"] = pre_process_models['mano_r'].faces
     meta_info["mano.faces.l"] = pre_process_models['mano_l'].faces
 
+    meta_info = xdict(meta_info)
+    meta_info.overwrite("part_ids", targets["object.parts_ids"])
+    meta_info.overwrite("diameter", targets["object.diameter"])    
+
     return targets, meta_info
 
 def post_process_arctic_output(outputs, meta_info, args, cfg):
@@ -244,11 +248,11 @@ def prepare_data(args, outputs, targets, meta_info, cfg):
     )
 
     # fk_params_batch
-    targets = fk_params_batch(xdict(targets), layers, meta_info, args.device)
+    # targets = fk_params_batch(xdict(targets), layers, meta_info, args.device)
     pred = fk_params_batch(pred, layers, meta_info, args.device)
-    meta_info.overwrite("part_ids", targets["object.parts_ids"])
-    meta_info.overwrite("diameter", targets["object.diameter"])
-    targets = prepare_interfield(targets, max_dist=0.1)
+    # meta_info.overwrite("part_ids", targets["object.parts_ids"])
+    # meta_info.overwrite("diameter", targets["object.diameter"])
+    # targets = prepare_interfield(targets, max_dist=0.1)
 
     data = xdict()
     data.merge(pred.prefix("pred."))

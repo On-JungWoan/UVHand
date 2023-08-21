@@ -284,11 +284,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     targets[k] = v[is_valid]
             for k,v in meta_info.items():
                 if k in ['imgname', 'query_names']:
-                    meta_info[k] = [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True]
+                    meta_info.overwrite(k, [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True])
                 elif 'mano.faces' in k:
                     continue
                 else:
-                    meta_info[k] = v[is_valid]                
+                    meta_info.overwrite(k, v[is_valid])
             outputs = keep_valid(outputs, is_valid)
             data = prepare_data(args, outputs, targets, meta_info, cfg)
 
