@@ -286,9 +286,13 @@ class ArcticDataset(Dataset):
         hand_idx = cfg(args).hand_idx
 
         label.append(obj2idx[meta_info['query_names']])
-        for idx, valid in enumerate([left_valid, right_valid]):
-            if valid == 1:
-                label.append(hand_idx[idx])
+        
+        assert isinstance(left_valid, np.int64)
+        assert isinstance(right_valid, np.int64)
+        if left_valid == 1:
+            label.append(hand_idx[0])
+        if right_valid == 1:
+            label.append(hand_idx[1])
 
         targets["labels"] = torch.tensor(label)
         # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])

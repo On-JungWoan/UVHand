@@ -1,11 +1,90 @@
 import torch
 import torch.nn as nn
 
+import numpy as np
 import common.torch_utils as torch_utils
 from common.torch_utils import nanmean
+from pytorch3d.structures import Meshes
 
 l1_loss = nn.L1Loss(reduction="none")
 mse_loss = nn.MSELoss(reduction="none")
+
+
+def compute_penetration_loss(pred, gt, meta_info):
+    is_valid = gt['is_valid']
+    left_valid = gt['left_valid']
+    right_valid = gt['right_valid']
+    B = is_valid.size(0)
+
+    hand_face = torch.tensor(meta_info['mano.faces.r'].astype(np.int64)).unsqueeze(0).repeat(B,1,1)
+    pred_obj_xyz = pred["object.v.cam"] 
+
+    pl_or = penetration_loss(
+        hand_face,
+        pred["mano.v3d.cam.r"],
+        pred_obj_xyz,
+        gt['dist.or'],
+        gt['idx.or'],
+        is_valid,
+        right_valid
+    )
+    pl_ol = penetration_loss(
+        hand_face,
+        pred["mano.v3d.cam.l"],
+        pred_obj_xyz,
+        gt['dist.ol'],
+        gt['idx.ol'],
+        is_valid,
+        left_valid
+    )
+
+    return pl_or, pl_ol
+
+
+def penetration_loss(
+        hand_face, pred_hand_xyz, pred_obj_xyz, nn_dist, nn_idx, is_valid, hand_valid
+    ):
+    # batch size
+    B = hand_face.size(0)
+
+    # validation check
+    valid_info = hand_valid.clone() * is_valid
+    invalid_idx = (1 - valid_info).nonzero()[:, 0]
+    
+    # construct meshes
+    mesh = Meshes(verts=pred_hand_xyz, faces=hand_face)
+    hand_normal = mesh.verts_normals_packed().view(-1, 778, 3)
+
+    # [B,778,3] -> [B,3947,3]
+    NN_src_xyz = batched_index_select(pred_hand_xyz, nn_idx)
+    NN_src_normal = batched_index_select(hand_normal, nn_idx)
+
+    # get interior
+    NN_vector = NN_src_xyz - pred_obj_xyz  # [B, 3000, 3]
+    interior = (NN_vector * NN_src_normal).sum(dim=-1) > 0
+
+    # validation check
+    interior[invalid_idx] = False
+
+    # get penetration loss
+    penetr_dist = 120 * nn_dist[interior].sum() / B
+
+    return penetr_dist
+
+
+def batched_index_select(input, index, dim=1):
+    '''
+    :param input: [B, N1, *]
+    :param dim: the dim to be selected
+    :param index: [B, N2]
+    :return: [B, N2, *] selected result
+    '''
+    views = [input.size(0)] + [1 if i != dim else -1 for i in range(1, len(input.shape))]
+    expanse = list(input.shape)
+    expanse[0] = -1
+    expanse[dim] = -1
+    index = index.view(views).expand(expanse)
+    return torch.gather(input, dim=dim, index=index)
 
 
 def subtract_root_batch(joints: torch.Tensor, root_idx: int):
