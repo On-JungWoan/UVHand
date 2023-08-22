@@ -276,23 +276,23 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # check validation
         if args.dataset_file == 'arctic':
-            is_valid = targets['is_valid'].type(torch.bool)
-            for k,v in targets.items():
-                if k == 'labels':
-                    targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
-                else:
-                    targets[k] = v[is_valid]
-            for k,v in meta_info.items():
-                if k in ['imgname', 'query_names']:
-                    meta_info[k] = [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True]
-                elif 'mano.faces' in k:
-                    continue
-                else:
-                    meta_info[k] = v[is_valid]                
-            outputs = keep_valid(outputs, is_valid)
+            # is_valid = targets['is_valid'].type(torch.bool)
+            # for k,v in targets.items():
+            #     if k == 'labels':
+            #         targets[k] = [v for idx, v in enumerate(targets[k]) if is_valid[idx] == True]
+            #     else:
+            #         targets[k] = v[is_valid]
+            # for k,v in meta_info.items():
+            #     if k in ['imgname', 'query_names']:
+            #         meta_info.overwrite(k, [v for idx, v in enumerate(meta_info[k]) if is_valid[idx] == True])
+            #     elif 'mano.faces' in k:
+            #         continue
+            #     else:
+            #         meta_info.overwrite(k, v[is_valid])
+            # outputs = keep_valid(outputs, is_valid)
             data = prepare_data(args, outputs, targets, meta_info, cfg)
 
-            loss_dict = criterion(outputs, targets, data, args, meta_info)
+            loss_dict = criterion(outputs, targets, data, args, meta_info, cfg)
         else:
             for i in range(len(targets)):
                 target = targets[i]
@@ -355,6 +355,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'loss' : loss_value,
                 'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
                 'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
+                'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
                 'loss_mano' : round(
                     loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
                     loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
@@ -408,6 +409,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'loss' : loss_value,
                 'ce_loss' : train_stat['loss_ce'],
                 'loss_CDev' : train_stat['loss/cd'],
+                'loss_penetr' : train_stat['loss/penetr'],
                 'loss_mano' : (
                     train_stat["loss/mano/pose/r"] + \
                     train_stat["loss/mano/beta/r"] + \

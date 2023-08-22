@@ -42,7 +42,8 @@ def main(args):
             pass
         else:
             wandb.init(
-                project='2023_ICCV_hand'
+                project='2023-ICCV-hand-New',
+                entity='jeongwanon'
             )
             wandb.config.update(args)
 
@@ -66,7 +67,7 @@ def main(args):
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
-    # dataset_val[0]
+    dataset_train[8]
 
     model, criterion = build_model(args, cfg)
     model.to(device)

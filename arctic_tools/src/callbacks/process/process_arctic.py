@@ -146,6 +146,8 @@ def process_data(
 
     targets["object.f"] = out["f"]
     targets["object.f_len"] = out["f_len"]
+    targets["object.diameter"] =  out["diameter"]
+    targets["object.parts_ids"] =  out["parts_ids"]
 
     targets = generic.prepare_interfield(targets, field_max)
 

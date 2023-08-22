@@ -9,6 +9,7 @@ from src.utils.loss_modules import (
     mano_loss,
     object_kp3d_loss,
     vector_loss,
+    compute_penetration_loss
 )
 
 l1_loss = nn.L1Loss(reduction="none")
@@ -131,7 +132,12 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         pred["object.cam_t.wp"], gt["object.cam_t.wp"], mse_loss, is_valid
     )
 
+    # cdev loss
     cd_ro, cd_lo = compute_contact_devi_loss(pred, gt)
+
+    # penetraion loss
+    pl_or, pl_ol = compute_penetration_loss(pred, gt, meta_info)
+    
     loss_dict = {
         "loss/mano/cam_t/r": loss_cam_t_r.to(device),
         "loss/mano/cam_t/l": loss_cam_t_l.to(device),
@@ -143,7 +149,7 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         "loss/mano/kp2d/l": loss_keypoints_l.to(device),
         "loss/mano/kp3d/l": loss_keypoints_3d_l.to(device),
         "loss/mano/pose/l": loss_regr_pose_l.to(device),
-        "loss/cd": cd_ro + cd_lo.to(device),
+        "loss/cd": cd_ro.to(device) + cd_lo.to(device),
         "loss/mano/transl/l": loss_transl_l.to(device),
         "loss/mano/beta/l": loss_regr_betas_l.to(device),
         "loss/object/kp2d": loss_keypoints_o.to(device),
@@ -151,5 +157,6 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         "loss/object/radian": loss_radian.to(device),
         "loss/object/rot": loss_rot.to(device),
         "loss/object/transl": loss_transl_o.to(device),
+        "loss/penetr": pl_or.to(device) + pl_ol.to(device),
     }    
     return loss_dict
