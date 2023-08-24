@@ -581,20 +581,23 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     except:
         return 0
 
+    if args.distributed:
+        if utils.get_local_rank() != 0:
+            return stats
+    
     save_dir = os.path.join(f'exps/{args.dataset_file}/results.txt')
-    if utils.get_local_rank() == 0:
-        with open(save_dir, 'a') as f:
-            if args.test_viewpoint is not None:
-                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-            for key, val in stats.items():
-                f.write(f'{key:30} : {val}\n')
-            f.write('\n\n')
+    if epoch is None:
+        file_name = args.resume.split('/')[-1]
+        epoch = op.splitext(file_name)[0]
+    with open(save_dir, 'a') as f:
+        if args.test_viewpoint is not None:
+            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+        for key, val in stats.items():
+            f.write(f'{key:30} : {val}\n')
+        f.write('\n\n')
 
     if args is not None and args.wandb:
-        if args.distributed:
-            if utils.get_local_rank() != 0:
-                return stats
         if args.dataset_file == 'arctic':
             wandb.log(
                 {

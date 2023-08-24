@@ -16,11 +16,13 @@ import random
 import argparse
 import datetime
 import numpy as np
+import os.path as op
 from pathlib import Path
 import matplotlib.pyplot as plt
 import torch.backends.cudnn as cudnn
 
 import wandb
+from glob import glob
 from cfg import Config
 import util.misc as utils
 import datasets.samplers as samplers
@@ -29,7 +31,7 @@ from torch.utils.data import DataLoader
 from models import build_model
 from datasets import build_dataset
 from engine import train_pose, test_pose
-from util.settings import get_args_parser
+from util.settings import get_args_parser, load_resume
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
 
 # main script
@@ -154,20 +156,24 @@ def main(args):
 
     output_dir = Path(args.output_dir)
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
-        unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
-        if len(missing_keys) > 0:
-            print('Missing Keys: {}'.format(missing_keys))
-        if len(unexpected_keys) > 0:
-            print('Unexpected Keys: {}'.format(unexpected_keys))
+        assert not args.resume_dir
+        load_resume(model_without_ddp, args.resume)
 
     print("Start training")
     start_time = time.time()
 
     # for evaluation
     if args.eval:
-        test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+        if args.resume_dir:
+            assert not args.resume
+            resume_list = glob(op.join(args.resume_dir,'*'))
+
+            for resume in resume_list:
+                args.resume = resume
+                load_resume(model_without_ddp, resume)
+                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+        else:
+            test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
         sys.exit(0)
         
     # for training
