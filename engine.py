@@ -292,10 +292,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 res[key] = value
                 key = key.replace('/', '+')
                 key = key.replace('.jpg', '')
-                with open(f'results/Assemblyhands/{key}.pkl', 'wb') as f:
+                with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
                     pickle.dump(res, f)
 
             # next iteration
+            samples, targets = prefetcher.next()
             continue
 
         # check validation
@@ -526,6 +527,30 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
             
+            if args.extract:
+                # post-process output
+                out_key = extract_output(outputs, targets, cfg)[0]
+                B = out_key.size(0)
+
+                # store result
+                res = {}
+                for idx in range(B):
+                    key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
+                    value = out_key[idx]
+
+                    res[key] = value
+                    key = key.replace('/', '+')
+                    key = key.replace('.jpg', '')
+                    save_dir = f'results/Assemblyhands/val/{key}.pkl'
+                    
+                    assert not op.isfile(save_dir)
+                    with open(save_dir, 'wb') as f:
+                        pickle.dump(res, f)
+
+                # next iteration
+                samples, targets = prefetcher.next()
+                continue
+
             # # check validation
             # is_valid = targets['is_valid'].type(torch.bool)
             # for k,v in targets.items():
