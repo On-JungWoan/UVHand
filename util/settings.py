@@ -105,6 +105,7 @@ def get_args_parser():
     # for train
     parser.add_argument('--use_h2o_pth', default=False, action='store_true', help='When you use h2o pretrained wegihts, use this argument.')
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
+    parser.add_argument('--dist_backend', default=None, help='Choose backend of distribtion mode.')
 
     # for eval
     parser.add_argument('--val_batch_size', default=4, type=int)
