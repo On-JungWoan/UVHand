@@ -31,7 +31,7 @@ from torch.utils.data import DataLoader
 from models import build_model
 from datasets import build_dataset
 from engine import train_pose, test_pose
-from util.settings import get_args_parser, load_resume
+from util.settings import get_args_parser, load_resume, extract_epoch
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
 
 # main script
@@ -167,10 +167,12 @@ def main(args):
         if args.resume_dir:
             assert not args.resume
             resume_list = glob(op.join(args.resume_dir,'*'))
+            resume_list.sort(key=extract_epoch)
 
             for resume in resume_list:
                 args.resume = resume
                 load_resume(model_without_ddp, resume)
+                print(f"\n{'='*10} current epoch :{extract_epoch(args.resume)} {'='*10}")
                 test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
         else:
             test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)

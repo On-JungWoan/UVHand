@@ -45,6 +45,7 @@ import os.path as op
 from arctic_tools.common.xdict import xdict
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
 from arctic_tools.visualizer import visualize_arctic_result
+from util.settings import extract_epoch
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -611,9 +612,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             return stats
     
     save_dir = os.path.join(f'exps/{args.dataset_file}/results.txt')
-    if epoch is None:
-        file_name = args.resume.split('/')[-1]
-        epoch = op.splitext(file_name)[0]
+    epoch = extract_epoch(args.resume) if epoch is None else epoch
     with open(save_dir, 'a') as f:
         if args.test_viewpoint is not None:
             f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")

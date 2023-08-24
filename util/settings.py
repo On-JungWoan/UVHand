@@ -1,6 +1,7 @@
 import torch
 import argparse
 import numpy as np
+import os.path as op
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
@@ -133,3 +134,10 @@ def load_resume(model, resume):
         print('Unexpected Keys: {}'.format(unexpected_keys))
     
     return model
+
+
+def extract_epoch(file_path):
+    file_name = file_path.split('/')[-1]
+    epoch = op.splitext(file_name)[0]
+
+    return int(epoch)
