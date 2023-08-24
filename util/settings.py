@@ -112,8 +112,10 @@ def get_args_parser():
                             e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
     parser.add_argument('--eval_metrics', default=["aae","mpjpe.ra","mrrpe","success_rate","cdev","mdev","acc_err_pose"], nargs='+', \
                         help='Choose evaluation metrics.')
+    parser.add_argument('--extract', default=False, action='store_true',
+                        help='Save pred_keypoints to json format.')
     
     # for custom arctic
-    parser.add_argument('--seq', default=None, type=str) 
+    parser.add_argument('--seq', default=None, type=str)
 
     return parser
