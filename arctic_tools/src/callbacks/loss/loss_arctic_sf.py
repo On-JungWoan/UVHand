@@ -16,7 +16,7 @@ l1_loss = nn.L1Loss(reduction="none")
 mse_loss = nn.MSELoss(reduction="none")
 
 
-def compute_loss(pred, gt, meta_info, args, device='cuda'):
+def compute_loss(pred, gt, meta_info, mode, device='cuda'):
     # unpacking pred and gt
     pred_betas_r = pred["mano.beta.r"]
     pred_rotmat_r = pred["mano.pose.r"]
@@ -135,9 +135,6 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
     # cdev loss
     cd_ro, cd_lo = compute_contact_devi_loss(pred, gt)
 
-    # penetraion loss
-    pl_or, pl_ol = compute_penetration_loss(pred, gt, meta_info)
-    
     loss_dict = {
         "loss/mano/cam_t/r": loss_cam_t_r.to(device),
         "loss/mano/cam_t/l": loss_cam_t_l.to(device),
@@ -157,6 +154,11 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         "loss/object/radian": loss_radian.to(device),
         "loss/object/rot": loss_rot.to(device),
         "loss/object/transl": loss_transl_o.to(device),
-        "loss/penetr": pl_or.to(device) + pl_ol.to(device),
-    }    
+    }
+
+    # penetraion loss
+    if mode == 'loss':
+        pl_or, pl_ol = compute_penetration_loss(pred, gt, meta_info)
+        loss_dict["loss/penetr"] = pl_or.to(device) + pl_ol.to(device)
+    
     return loss_dict

@@ -578,7 +578,7 @@ class SetArcticCriterion(nn.Module):
 
         arctic_pred = data.search('pred.', replace_to='')
         arctic_gt = data.search('targets.', replace_to='')
-        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, None))
+        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, 'loss'))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -596,7 +596,7 @@ class SetArcticCriterion(nn.Module):
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
                     l_dict = self.get_loss(loss, aux_outputs, targets, idx, num_boxes, **kwargs)
-                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, None))
+                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, 'aux_loss'))
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
         return losses
@@ -670,14 +670,14 @@ def build(args, cfg):
         "loss/mano/pose/l":10.0,
         # "loss/cd":1.0,
         "loss/cd":10.0,
-        "loss/mano/transl/l":1.0,
+        "loss/mano/transl/l":10.0,
         "loss/mano/beta/l":0.001,
         "loss/object/kp2d":1.0,
         "loss/object/kp3d":5.0,
         "loss/object/radian":1.0,
         "loss/object/rot":1.0,
-        "loss/object/transl":1.0,
-        "loss/penetr": 100,
+        "loss/object/transl":10.0,
+        "loss/penetr": 0.1,
         # 'loss_cam': args.cls_loss_coef,
         # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
         # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
