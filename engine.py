@@ -600,11 +600,8 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         else:
             samples, targets = prefetcher.next()
 
-    try:
-        metric_logger.synchronize_between_processes()
-        stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    except:
-        return 0
+    metric_logger.synchronize_between_processes()
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
     if args.distributed:
         if utils.get_local_rank() != 0:
