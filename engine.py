@@ -564,7 +564,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             # prepare data
 
             if args.visualization:
-                assert samples.tensors.shape[0] == 1
+                # assert samples.tensors.shape[0] == 1
                 if args.dataset_file == 'arctic':
                     visualize_arctic_result(args, data, 'pred')
                 elif args.dataset_file == 'AssemblyHands':
@@ -582,15 +582,14 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                     stats = measure_error(data, args.eval_metrics)
                     for k,v in stats.items():
                         not_non_idx = ~np.isnan(stats[k])
-                        stats.overwrite(k, float(stats[k][not_non_idx].mean()))
+                        replace_value = float(stats[k][not_non_idx].mean())
+                        # If all values are nan, drop that key.
+                        if replace_value != replace_value:
+                            stats = stats.rm(k)
+                        else:
+                            stats.overwrite(k, replace_value)
 
-                    pbar.set_postfix({
-                        'CDev':round(stats['cdev/ho'],2),
-                        'MRRPE_rl/ro':f"{round(stats['mrrpe/r/l'],2)} / {round(stats['mrrpe/r/o'],2)}",
-                        'MPJPE': round(stats['mpjpe/ra/h'],2),
-                        'AAE': round(stats['aae'],2),
-                        'S_R_0.05': round(stats['success_rate/0.05'],2),
-                        })
+                    pbar.set_postfix(stat_round(**stats))
                 metric_logger.update(**stats)
 
             if args.debug == True:
@@ -640,6 +639,13 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                 }, step=epoch
             )            
     return stats
+
+
+def stat_round(round_num=2, **kwargs):
+    result = {}
+    for k,v in kwargs.items():
+        result[k] = round(v, round_num)
+    return result
 
 
 def extract_output(outputs, targets, cfg):
