@@ -29,6 +29,8 @@ def construct_args(parser):
         # eval
         args.split = 'val'
         args.task = 'pose'
+        if args.full_validation:
+            args.valsplit = 'val'
     else:
         args.trainsplit = 'train'
         args.valsplit = 'minival'

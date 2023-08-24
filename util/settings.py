@@ -117,6 +117,8 @@ def get_args_parser():
                         help='Save pred_keypoints to json format.')
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--resume_dir', default='', help='resume dir from checkpoint')
+    parser.add_argument('--full_validation', default=False, action='store_true', \
+                        help='Use full size of validation dataset to evaluate the model.')
     
     # for custom arctic
     parser.add_argument('--seq', default=None, type=str)

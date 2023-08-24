@@ -677,7 +677,7 @@ def build(args, cfg):
         "loss/object/radian":1.0,
         "loss/object/rot":1.0,
         "loss/object/transl":1.0,
-        "loss/penetr": 0.001,
+        "loss/penetr": 100,
         # 'loss_cam': args.cls_loss_coef,
         # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
         # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef

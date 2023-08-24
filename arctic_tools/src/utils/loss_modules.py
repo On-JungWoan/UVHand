@@ -1,10 +1,11 @@
 import torch
-import torch.nn as nn
-
 import numpy as np
-import common.torch_utils as torch_utils
-from common.torch_utils import nanmean
+import torch.nn as nn
 from pytorch3d.structures import Meshes
+from pytorch3d.ops.knn import knn_gather, knn_points
+
+from common.torch_utils import nanmean
+import common.torch_utils as torch_utils
 
 l1_loss = nn.L1Loss(reduction="none")
 mse_loss = nn.MSELoss(reduction="none")
@@ -17,14 +18,15 @@ def compute_penetration_loss(pred, gt, meta_info):
     B = is_valid.size(0)
 
     hand_face = torch.tensor(meta_info['mano.faces.r'].astype(np.int64)).unsqueeze(0).repeat(B,1,1)
-    pred_obj_xyz = pred["object.v.cam"] 
+    pred_obj_xyz = pred["object.v.cam"]
+    nn_dist, nn_idx = get_NN(pred_obj_xyz, pred["mano.v3d.cam.r"])
 
     pl_or = penetration_loss(
         hand_face,
         pred["mano.v3d.cam.r"],
         pred_obj_xyz,
-        gt['dist.or'],
-        gt['idx.or'],
+        nn_dist,
+        nn_idx,
         is_valid,
         right_valid
     )
@@ -32,13 +34,32 @@ def compute_penetration_loss(pred, gt, meta_info):
         hand_face,
         pred["mano.v3d.cam.l"],
         pred_obj_xyz,
-        gt['dist.ol'],
-        gt['idx.ol'],
+        nn_dist,
+        nn_idx,
         is_valid,
         left_valid
     )
 
     return pl_or, pl_ol
+
+
+def get_NN(src_xyz, trg_xyz, k=1):
+    '''
+    :param src_xyz: [B, N1, 3]
+    :param trg_xyz: [B, N2, 3]
+    :return: nn_dists, nn_dix: all [B, 3000] tensor for NN distance and index in N2
+    '''
+    B = src_xyz.size(0)
+    src_lengths = torch.full(
+        (src_xyz.shape[0],), src_xyz.shape[1], dtype=torch.int64, device=src_xyz.device
+    )  # [B], N for each num
+    trg_lengths = torch.full(
+        (trg_xyz.shape[0],), trg_xyz.shape[1], dtype=torch.int64, device=trg_xyz.device
+    )
+    src_nn = knn_points(src_xyz, trg_xyz, lengths1=src_lengths, lengths2=trg_lengths, K=k)  # [dists, idx]
+    nn_dists = src_nn.dists[..., 0]
+    nn_idx = src_nn.idx[..., 0]
+    return nn_dists, nn_idx
 
 
 def penetration_loss(
@@ -55,7 +76,7 @@ def penetration_loss(
     mesh = Meshes(verts=pred_hand_xyz, faces=hand_face)
     hand_normal = mesh.verts_normals_packed().view(-1, 778, 3)
 
-    # [B,778,3] -> [B,3947,3]
+    # [B,778,3] -> [B,3947,3] or 3947?
     NN_src_xyz = batched_index_select(pred_hand_xyz, nn_idx)
     NN_src_normal = batched_index_select(hand_normal, nn_idx)
 
