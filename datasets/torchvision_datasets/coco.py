@@ -74,9 +74,12 @@ class CocoDetection(VisionDataset):
         ann_ids = coco.getAnnIds(imgIds=img_id)
         target = coco.loadAnns(ann_ids)
 
-        path = coco.loadImgs(img_id)[0]['file_name']
+        try:
+            path = coco.loadImgs(img_id)[0]['file_name']
+            img = self.get_image(path)
+        except:
+            return None, target
 
-        img = self.get_image(path)
         if self.transforms is not None:
             img, target = self.transforms(img, target)
 

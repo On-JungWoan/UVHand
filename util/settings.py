@@ -1,5 +1,7 @@
+import torch
 import argparse
 import numpy as np
+import os.path as op
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
@@ -86,7 +88,6 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
     # parser.add_argument('--resume', default='./weights/paper_pose.pth', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
@@ -112,8 +113,31 @@ def get_args_parser():
                             e.g) --test_viewpoint nusar-2021_action_both_9081-c11b_9081_user_id_2021-02-12_161433/HMC_21110305_mono10bit')
     parser.add_argument('--eval_metrics', default=["aae","mpjpe.ra","mrrpe","success_rate","cdev","mdev","acc_err_pose"], nargs='+', \
                         help='Choose evaluation metrics.')
+    parser.add_argument('--extract', default=False, action='store_true',
+                        help='Save pred_keypoints to json format.')
+    parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--resume_dir', default='', help='resume dir from checkpoint')
     
     # for custom arctic
-    parser.add_argument('--seq', default=None, type=str) 
+    parser.add_argument('--seq', default=None, type=str)
 
     return parser
+
+
+def load_resume(model, resume):
+    checkpoint = torch.load(resume, map_location='cpu')
+    missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
+    unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
+    if len(missing_keys) > 0:
+        print('Missing Keys: {}'.format(missing_keys))
+    if len(unexpected_keys) > 0:
+        print('Unexpected Keys: {}'.format(unexpected_keys))
+    
+    return model
+
+
+def extract_epoch(file_path):
+    file_name = file_path.split('/')[-1]
+    epoch = op.splitext(file_name)[0]
+
+    return int(epoch)

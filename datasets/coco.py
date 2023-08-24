@@ -34,9 +34,17 @@ class CocoDetection(TvCocoDetection):
 
     def __getitem__(self, idx):
         img, target = super(CocoDetection, self).__getitem__(idx)
+
+        if img is None:
+            return None, target
+
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
+
+        if img is None:
+            return None, target
+
         if self._transforms is not None:
             img, target = self._transforms(img, target)
         return img, target
@@ -106,7 +114,10 @@ class ConvertCocoPolysToMask(object):
         if num_keypoints != len(classes):
             # print('==Not matching!==')
             assert len(classes) < num_keypoints
-            keypoints = keypoints[classes.item()-1][None]
+            try:
+                keypoints = keypoints[classes.item()-1][None]
+            except:
+                return None, None
 
                  #max_y         min_y          max_x           min_x
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])

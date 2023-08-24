@@ -17,6 +17,7 @@ import sys
 from typing import Iterable
 from cv2 import KeyPoint
 
+import pickle
 import torch
 import util.misc as utils
 from util.misc import NestedTensor
@@ -44,6 +45,7 @@ import os.path as op
 from arctic_tools.common.xdict import xdict
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
 from arctic_tools.visualizer import visualize_arctic_result
+from util.settings import extract_epoch
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -270,9 +272,33 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
+        if samples is None:
+            continue
+        
         if args.dataset_file == 'arctic':
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
         outputs = model(samples)
+
+        if args.extract:
+            # post-process output
+            out_key = extract_output(outputs, targets, cfg)[0]
+            B = out_key.size(0)
+
+            # store result
+            res = {}
+            for idx in range(B):
+                key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
+                value = out_key[idx]
+
+                res[key] = value
+                key = key.replace('/', '+')
+                key = key.replace('.jpg', '')
+                with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
+                    pickle.dump(res, f)
+
+            # next iteration
+            samples, targets = prefetcher.next()
+            continue
 
         # check validation
         if args.dataset_file == 'arctic':
@@ -502,6 +528,30 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
             
+            if args.extract:
+                # post-process output
+                out_key = extract_output(outputs, targets, cfg)[0]
+                B = out_key.size(0)
+
+                # store result
+                res = {}
+                for idx in range(B):
+                    key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
+                    value = out_key[idx]
+
+                    res[key] = value
+                    key = key.replace('/', '+')
+                    key = key.replace('.jpg', '')
+                    save_dir = f'results/Assemblyhands/val/{key}.pkl'
+                    
+                    assert not op.isfile(save_dir)
+                    with open(save_dir, 'wb') as f:
+                        pickle.dump(res, f)
+
+                # next iteration
+                samples, targets = prefetcher.next()
+                continue
+
             # # check validation
             # is_valid = targets['is_valid'].type(torch.bool)
             # for k,v in targets.items():
@@ -557,20 +607,21 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     except:
         return 0
 
+    if args.distributed:
+        if utils.get_local_rank() != 0:
+            return stats
+    
     save_dir = os.path.join(f'exps/{args.dataset_file}/results.txt')
-    if utils.get_local_rank() == 0:
-        with open(save_dir, 'a') as f:
-            if args.test_viewpoint is not None:
-                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-            for key, val in stats.items():
-                f.write(f'{key:30} : {val}\n')
-            f.write('\n\n')
+    epoch = extract_epoch(args.resume) if epoch is None else epoch
+    with open(save_dir, 'a') as f:
+        if args.test_viewpoint is not None:
+            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+        for key, val in stats.items():
+            f.write(f'{key:30} : {val}\n')
+        f.write('\n\n')
 
     if args is not None and args.wandb:
-        if args.distributed:
-            if utils.get_local_rank() != 0:
-                return stats
         if args.dataset_file == 'arctic':
             wandb.log(
                 {
@@ -591,9 +642,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
     return stats
 
 
-def eval_assembly_result(outputs, targets, cfg, data_loader):
-    gt_keypoints = [t['keypoints'] for t in targets]
-
+def extract_output(outputs, targets, cfg):
     # model output
     out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
     prob = out_logits.sigmoid()
@@ -613,9 +662,13 @@ def eval_assembly_result(outputs, targets, cfg, data_loader):
     target_sizes =target_sizes.cuda()
 
     hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
-    key_points = hand_kp
+    return hand_kp, target_sizes
 
+
+def eval_assembly_result(outputs, targets, cfg, data_loader):
+    key_points, target_sizes = extract_output(outputs, targets, cfg)
     gt_keypoints = [t['keypoints'] for t in targets]
+
     if 'labels' in targets[0].keys():
         gt_labels = [t['labels'].detach().cpu().numpy() for t in targets]
 
