@@ -17,25 +17,25 @@ def compute_penetration_loss(pred, gt, meta_info):
     right_valid = gt['right_valid']
     B = is_valid.size(0)
 
-    hand_face = torch.tensor(meta_info['mano.faces.r'].astype(np.int64)).unsqueeze(0).repeat(B,1,1)
+    hand_face_r = torch.tensor(meta_info['mano.faces.r'].astype(np.int64)).unsqueeze(0).repeat(B,1,1)
+    hand_face_l = torch.tensor(meta_info['mano.faces.l'].astype(np.int64)).unsqueeze(0).repeat(B,1,1)
     pred_obj_xyz = pred["object.v.cam"]
-    nn_dist, nn_idx = get_NN(pred_obj_xyz, pred["mano.v3d.cam.r"])
 
     pl_or = penetration_loss(
-        hand_face,
+        hand_face_r,
         pred["mano.v3d.cam.r"],
         pred_obj_xyz,
-        nn_dist,
-        nn_idx,
+        pred['nn_dist_r'],
+        pred['nn_idx_r'],
         is_valid,
         right_valid
     )
     pl_ol = penetration_loss(
-        hand_face,
+        hand_face_l,
         pred["mano.v3d.cam.l"],
         pred_obj_xyz,
-        nn_dist,
-        nn_idx,
+        pred['nn_dist_l'],
+        pred['nn_idx_l'],
         is_valid,
         left_valid
     )
