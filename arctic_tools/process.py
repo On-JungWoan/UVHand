@@ -15,6 +15,7 @@ from arctic_tools.src.nets.obj_heads.obj_head import ArtiHead
 from arctic_tools.src.nets.hand_heads.mano_head import MANOHead
 from arctic_tools.common.body_models import build_layers
 from arctic_tools.src.utils.eval_modules import eval_fn_dict
+from arctic_tools.src.utils.loss_modules import get_NN
 
 def arctic_pre_process(args, targets, meta_info):
     pre_process_models = {
@@ -253,6 +254,9 @@ def prepare_data(args, outputs, targets, meta_info, cfg):
     # meta_info.overwrite("part_ids", targets["object.parts_ids"])
     # meta_info.overwrite("diameter", targets["object.diameter"])
     # targets = prepare_interfield(targets, max_dist=0.1)
+
+    pred['nn_dist_r'], pred['nn_idx_r'] = get_NN(pred["object.v.cam"], pred["mano.v3d.cam.r"])
+    pred['nn_dist_l'], pred['nn_idx_l'] = get_NN(pred["object.v.cam"], pred["mano.v3d.cam.l"])
 
     data = xdict()
     data.merge(pred.prefix("pred."))
