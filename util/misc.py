@@ -350,6 +350,42 @@ def collate_custom_fn(data_list):
     return tuple([batch[0], out_targets, out_meta_info])
 
 
+def collate_lstm_fn(data_list):
+    # data_list = [
+    #     [data_list[0], data_list[1], data_list[2]],
+    #     [data_list[3], data_list[4], data_list[5]],
+    #     [data_list[6], data_list[7], data_list[8]],
+    #     [data_list[9], data_list[10], data_list[11]]
+    # ]
+    bs = len(data_list)
+    _inputs, _targets, _meta_info = data_list[0]
+    window_size = len(_inputs)
+
+    batch = list(zip(*data_list))
+
+    # inputs
+    out_inputs = torch.stack(batch[0]).view(bs*window_size, -1)
+
+    # targets
+    out_targets = {}
+    for key in _targets.keys():
+        if key == 'labels':
+            out_targets[key] = sum([batch[1][i][key] for i in range(bs)], [])
+        else:
+            tmp = torch.cat([batch[1][i][key].unsqueeze(0) for i in range(bs)]).view(bs*window_size, -1)
+            out_targets[key] = torch.cat([batch[1][i][key].unsqueeze(0) for i in range(bs)]).view(bs*window_size, -1)
+
+    # meta information
+    out_meta_info = {}
+    for key in _meta_info.keys():
+        if key in ['imgname', 'query_names']:
+            out_meta_info[key] = sum([batch[2][i][key] for i in range(bs)], [])
+            continue
+        out_meta_info[key] = torch.cat([batch[2][i][key].unsqueeze(0) for i in range(bs)]).view(bs*window_size, -1)
+
+    return tuple([out_inputs, out_targets, out_meta_info])
+
+
 def _max_by_axis(the_list):
     # type: (List[List[int]]) -> List[int]
     maxes = the_list[0]
@@ -385,7 +421,7 @@ class NestedTensor(object):
         self.mask = mask
 
     def to(self, device, non_blocking=False):
-        # type: (Device) -> NestedTensor # noqa
+        # type (Device) -> NestedTensor # noqa
         cast_tensor = self.tensors.to(device, non_blocking=non_blocking)
         mask = self.mask
         if mask is not None:

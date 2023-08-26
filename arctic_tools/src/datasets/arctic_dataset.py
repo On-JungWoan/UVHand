@@ -294,7 +294,10 @@ class ArcticDataset(Dataset):
         if right_valid == 1:
             label.append(hand_idx[1])
 
-        targets["labels"] = torch.tensor(label)
+        if args.method == 'arctic_lstm':
+            targets["labels"] = [(label)]
+        else:
+            targets["labels"] = torch.tensor(label)
         # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])
 
         return inputs, targets, meta_info

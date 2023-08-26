@@ -63,8 +63,8 @@ class TempoDataset(ArcticDataset):
         meta_list = []
         img_feats = []
         inputs_list = []
-        # load_rgb = True if self.args.method in ["tempo_ft"] else False
-        load_rgb = True
+        load_rgb = True if self.args.method in ["tempo_ft"] else False
+        # load_rgb = True
         for imgname in imgnames:
             img_folder = f"./data/arctic_data/data/images/"
             inputs, targets, meta_info = self.getitem(

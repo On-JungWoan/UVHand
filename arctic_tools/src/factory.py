@@ -83,7 +83,10 @@ def collate_custom_fn(data_list):
         out_inputs[key] = torch.cat(out_inputs[key], dim=0)
 
     for key in _targets.keys():
-        out_targets[key] = torch.cat(out_targets[key], dim=0)
+        if key not in ['labels']:
+            out_targets[key] = torch.cat(out_targets[key], dim=0)
+        else:
+            out_targets[key] = sum(out_targets[key], [])
 
     for key in _meta_info.keys():
         if key not in ["imgname", "query_names"]:
@@ -91,7 +94,7 @@ def collate_custom_fn(data_list):
         else:
             out_meta_info[key] = sum(out_meta_info[key], [])
 
-    return out_inputs, out_targets, out_meta_info
+    return out_inputs['img_feat'], out_targets, out_meta_info
 
 
 def fetch_dataloader(args, mode, seq=None):

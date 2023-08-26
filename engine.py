@@ -270,7 +270,6 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         samples, targets = prefetcher.next()
 
     pbar = tqdm(range(len(data_loader)))
-    B = samples.tensors.size(0)
 
     for _ in pbar:
         if samples is None:
@@ -281,6 +280,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         if args.extract:
+            B = samples.tensors.size(0)
             if args.dataset_file == 'arctic':
                 srcs, pos = model(samples, is_extract=True)
                 srcs = [src.contiguous().view(B, -1) for src in srcs]

@@ -70,7 +70,6 @@ def main(args):
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
-    # dataset_train[0]
 
     model, criterion = build_model(args, cfg)
     model.to(device)
@@ -93,10 +92,10 @@ def main(args):
         collate_fn=utils.collate_fn
 
     # data_list = [
-    #     [dataset_train[0], dataset_train[1], dataset_train[2]],
-    #     [dataset_train[3], dataset_train[4], dataset_train[5]],
-    #     [dataset_train[6], dataset_train[7], dataset_train[8]],
-    #     [dataset_train[9], dataset_train[10], dataset_train[11]]
+    #     [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
+    #     [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
+    #     [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
+    #     [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
     # ]
     # collate_fn(data_list)
 
@@ -169,7 +168,7 @@ def main(args):
     output_dir = Path(args.output_dir)
     if args.resume:
         assert not args.resume_dir
-        load_resume(model_without_ddp, args.resume)
+        load_resume(args, model_without_ddp, args.resume)
 
     print("Start training")
     start_time = time.time()
