@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader
 from models import build_model
 from datasets import build_dataset
 from engine import train_pose, test_pose
+from arctic_tools.src.factory import collate_custom_fn as lstm_fn
 from util.settings import get_args_parser, load_resume, extract_epoch
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
 
@@ -83,9 +84,20 @@ def main(args):
 
 
     if args.dataset_file == 'arctic':
-        collate_fn=utils.collate_custom_fn
+        if args.method == 'arctic_lstm':
+            collate_fn=lstm_fn
+        else:
+            collate_fn=utils.collate_custom_fn
     else:
         collate_fn=utils.collate_fn
+
+    # data_list = [
+    #     [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
+    #     [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
+    #     [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
+    #     [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
+    # ]
+    # collate_fn(data_list)
 
     if args.distributed:
         if args.cache_mode:
@@ -156,7 +168,7 @@ def main(args):
     output_dir = Path(args.output_dir)
     if args.resume:
         assert not args.resume_dir
-        load_resume(model_without_ddp, args.resume)
+        load_resume(args, model_without_ddp, args.resume)
 
     print("Start training")
     start_time = time.time()

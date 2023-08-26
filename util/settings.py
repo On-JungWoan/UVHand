@@ -34,7 +34,7 @@ def get_args_parser():
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--dilation', action='store_true',
                         help="If true, we replace stride with dilation in the last convolutional block (DC5)")
-    parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
+    parser.add_argument('--position_embedding', default='learned', type=str, choices=('sine', 'learned'),
                         help="Type of positional embedding to use on top of the image features")
     parser.add_argument('--position_embedding_scale', default=2 * np.pi, type=float,
                         help="position / size * scale")
@@ -103,7 +103,7 @@ def get_args_parser():
     parser.add_argument('--num_debug', default=3, type=int)
 
     # for train
-    parser.add_argument('--use_h2o_pth', default=False, action='store_true', help='When you use h2o pretrained wegihts, use this argument.')
+    parser.add_argument('--not_use_params', default=[], nargs='+', help='The params, including this keywords, are ignored when the model imports the checkpoint.')
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
     parser.add_argument('--dist_backend', default=None, help='Choose backend of distribtion mode.')
 
@@ -127,8 +127,17 @@ def get_args_parser():
     return parser
 
 
-def load_resume(model, resume):
+def load_resume(args, model, resume):
     checkpoint = torch.load(resume, map_location='cpu')
+    ckpt = checkpoint['model'].copy()
+    for key in ckpt.keys():
+        if len(args.not_use_params) != 0:
+            for ig_key in args.not_use_params:
+                if ig_key in key:
+                    print(f'ignored params : {key}')
+                    checkpoint['model'].pop(key)
+    del ckpt
+
     missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
     unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
     if len(missing_keys) > 0:

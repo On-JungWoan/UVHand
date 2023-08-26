@@ -40,7 +40,7 @@ class DeformableDETR(nn.Module):
     """ This is the Deformable DETR module that performs object detection """
     def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, 
                  aux_loss=True, with_box_refine=False, two_stage=False, cfg=None,
-                 focal_length=None, img_res=None):
+                 method=None, window_size=None):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -56,8 +56,10 @@ class DeformableDETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         self.hidden_dim = transformer.d_model
-        self.cls_embed = nn.Linear(self.hidden_dim, num_classes)
+        self.method = method
+        self.window_size = window_size
 
+        self.cls_embed = nn.Linear(self.hidden_dim, num_classes)
         self.mano_pose_embed = nn.Linear(self.hidden_dim, 48)
         self.mano_beta_embed = nn.Linear(self.hidden_dim, 10)
         self.hand_cam = nn.Linear(self.hidden_dim, 3)
@@ -68,29 +70,70 @@ class DeformableDETR(nn.Module):
         self.num_feature_levels = num_feature_levels
         self.cfg = cfg
 
-        self.query_embed = nn.Embedding(num_queries, self.hidden_dim*2) 
-        if num_feature_levels > 1:
-            num_backbone_outs = len(backbone.strides)
-            input_proj_list = []
-            for _ in range(num_backbone_outs):
-                in_channels = backbone.num_channels[_]
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, self.hidden_dim),
-                ))
-            for _ in range(num_feature_levels - num_backbone_outs):   # multi-scale feature는 4개, backbone output feature가 3개.
-                input_proj_list.append(nn.Sequential(                 # backbone의 last featrue에 kernel_3, stride 2인 conv를 추가하여 4개로 만들어줌
-                    nn.Conv2d(in_channels, self.hidden_dim, kernel_size=3, stride=2, padding=1),
-                    nn.GroupNorm(32, self.hidden_dim),
-                ))
-                in_channels = self.hidden_dim
-            self.input_proj = nn.ModuleList(input_proj_list)
+        self.query_embed = nn.Embedding(num_queries, self.hidden_dim*2)
+        if self.method == 'arctic_sf':
+            if num_feature_levels > 1:
+                num_backbone_outs = len(backbone.strides)
+                input_proj_list = []
+                for _ in range(num_backbone_outs):
+                    in_channels = backbone.num_channels[_]
+                    input_proj_list.append(nn.Sequential(
+                        nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, self.hidden_dim),
+                    ))
+                for _ in range(num_feature_levels - num_backbone_outs):   # multi-scale feature는 4개, backbone output feature가 3개.
+                    input_proj_list.append(nn.Sequential(                 # backbone의 last featrue에 kernel_3, stride 2인 conv를 추가하여 4개로 만들어줌
+                        nn.Conv2d(in_channels, self.hidden_dim, kernel_size=3, stride=2, padding=1),
+                        nn.GroupNorm(32, self.hidden_dim),
+                    ))
+                    in_channels = self.hidden_dim
+                self.input_proj = nn.ModuleList(input_proj_list)
+            else:
+                self.input_proj = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Conv2d(backbone.num_channels[0], self.hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, self.hidden_dim),
+                    )])
         else:
-            self.input_proj = nn.ModuleList([
+            self.lstm = nn.LSTM(
+                input_size=2048,
+                hidden_size=1024,
+                num_layers=2,
+                bidirectional=True,
+                batch_first=True,
+            )
+            self.feature_proj = nn.Sequential(
+                nn.Linear(2048, 4096),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(4096, 256*256),
+                nn.Dropout(0.1),
+                nn.LayerNorm(256*256)
+            )
+            input_proj_list = [
                 nn.Sequential(
-                    nn.Conv2d(backbone.num_channels[0], self.hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, self.hidden_dim),
-                )])
+                    nn.Conv2d(256, 256, kernel_size=1, padding=6),
+                    nn.GroupNorm(32, self.hidden_dim)
+                ),
+                nn.Sequential(
+                    nn.Conv2d(256, 256, kernel_size=3),
+                    nn.GroupNorm(32, self.hidden_dim)
+                ),
+                nn.Sequential(
+                    nn.Conv2d(256, 256, kernel_size=3, stride=2),
+                    nn.GroupNorm(32, self.hidden_dim)
+                ),
+                nn.Sequential(
+                    nn.Conv2d(256, 256, kernel_size=4, stride=4),
+                    nn.GroupNorm(32, self.hidden_dim)
+                )
+            ]
+            self.input_proj = nn.ModuleList(input_proj_list)
+            for idx, proj in enumerate(self.feature_proj):
+                if idx in [0, 3]:
+                    nn.init.xavier_uniform_(proj.weight, gain=1)
+                    nn.init.constant_(proj.bias, 0)
+
         self.backbone = backbone
         self.aux_loss = aux_loss
         self.with_box_refine = with_box_refine
@@ -137,7 +180,7 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.cls_embed = self.cls_embed
         self.transformer.decoder.get_reference_point = self.get_reference_point 
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples, is_extract=False):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -152,31 +195,60 @@ class DeformableDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        ### backbone ###
+        if self.method == 'arctic_lstm':
+            samples = samples.view(-1, self.window_size, 2048)
+            B, W, C = samples.shape
+            device = samples.device
+            
+            # bidirectional
+            h0 = torch.randn(2 * 2, B, C // 2, device=device)
+            c0 = torch.randn(2 * 2, B, C // 2, device=device)
+            feat_vec, (hn, cn) = self.lstm(samples, (h0, c0))  # batch, seq, 2*dim
+            feat_vec = feat_vec.reshape(B*W, C)
+            feat_vec = self.feature_proj(feat_vec)
+            feat_vec = feat_vec.view(B*W, -1, 16, 16)
 
-        if not isinstance(samples, NestedTensor):
-            samples = nested_tensor_from_tensor_list(samples)
-        features, pos = self.backbone(samples)  # output feature, output feature size에 해당하는 positional embedding
-        srcs = []
-        masks = []
-        for l, feat in enumerate(features):
-            src, mask = feat.decompose() # Nested tensor -> return (tensor, mask)
-            srcs.append(self.input_proj[l](src))  # 모든 feature의 output dim -> hidden dim으로 projection
-            masks.append(mask)
-            assert mask is not None
-        if self.num_feature_levels > len(srcs): # output last feature map 이후
-            _len_srcs = len(srcs)
-            for l in range(_len_srcs, self.num_feature_levels):
-                if l == _len_srcs:
-                    src = self.input_proj[l](features[-1].tensors) # 
-                else:
-                    src = self.input_proj[l](srcs[-1])
-                m = samples.mask
-                mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
+            srcs = []
+            masks = []
+            pos = []
+            for i in range(self.num_feature_levels):
+                src = self.input_proj[i](feat_vec)
+                B, C, W, H = src.shape
+                mask = torch.cuda.FloatTensor(B,W,H).uniform_() > 0.3
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
+
                 srcs.append(src)
                 masks.append(mask)
                 pos.append(pos_l)
+        
+        else:
+            ### backbone ###
+            if not isinstance(samples, NestedTensor):
+                samples = nested_tensor_from_tensor_list(samples)
+            features, pos = self.backbone(samples)  # output feature, output feature size에 해당하는 positional embedding
+            srcs = []
+            masks = []
+            for l, feat in enumerate(features):
+                src, mask = feat.decompose() # Nested tensor -> return (tensor, mask)
+                srcs.append(self.input_proj[l](src))  # 모든 feature의 output dim -> hidden dim으로 projection
+                masks.append(mask)
+                assert mask is not None
+            if self.num_feature_levels > len(srcs): # output last feature map 이후
+                _len_srcs = len(srcs)
+                for l in range(_len_srcs, self.num_feature_levels):
+                    if l == _len_srcs:
+                        src = self.input_proj[l](features[-1].tensors) # 
+                    else:
+                        src = self.input_proj[l](srcs[-1])
+                    m = samples.mask
+                    mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
+                    pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
+                    srcs.append(src) # B, C, (28 & 14 & 7 & 4)
+                    masks.append(mask)
+                    pos.append(pos_l)
+
+        if is_extract:
+            return srcs, pos
 
         query_embeds = None
         query_embeds = self.query_embed.weight ############## two_stage
@@ -293,7 +365,11 @@ class SetArcticCriterion(nn.Module):
         # idx = self._get_src_permutation_idx(indices)
         # target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)]).cuda()
         # target_classes_o = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)]).cuda()
-        target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+        try:
+            target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+        except:
+            target_classes_o = torch.cat([torch.tensor(t) for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+            
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -563,7 +639,10 @@ class SetArcticCriterion(nn.Module):
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         # num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = sum([v.shape[-1] for v in targets['labels']])
+        try:
+            num_boxes = sum([v.shape[-1] for v in targets['labels']])
+        except:
+            num_boxes = sum([len(v) for v in targets['labels']])
         num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes)
@@ -633,8 +712,8 @@ def build(args, cfg):
         with_box_refine=args.with_box_refine,
         two_stage=args.two_stage,
         cfg = cfg,
-        focal_length=args.focal_length,
-        img_res=args.img_res
+        method = args.method,
+        window_size= args.window_size
     )
     matcher = build_matcher(args, cfg)
     # weight_dict = {
@@ -677,7 +756,7 @@ def build(args, cfg):
         "loss/object/radian":1.0,
         "loss/object/rot":1.0,
         "loss/object/transl":10.0,
-        "loss/penetr": 10.0,
+        "loss/penetr": 0.1,
         # 'loss_cam': args.cls_loss_coef,
         # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
         # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
