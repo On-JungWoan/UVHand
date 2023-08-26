@@ -137,7 +137,7 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.cls_embed = self.cls_embed
         self.transformer.decoder.get_reference_point = self.get_reference_point 
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples: NestedTensor, is_extract=False):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -177,6 +177,9 @@ class DeformableDETR(nn.Module):
                 srcs.append(src)
                 masks.append(mask)
                 pos.append(pos_l)
+
+        if is_extract:
+            return srcs, pos
 
         query_embeds = None
         query_embeds = self.query_embed.weight ############## two_stage
@@ -677,7 +680,7 @@ def build(args, cfg):
         "loss/object/radian":1.0,
         "loss/object/rot":1.0,
         "loss/object/transl":10.0,
-        "loss/penetr": 10.0,
+        "loss/penetr": 1.0,
         # 'loss_cam': args.cls_loss_coef,
         # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
         # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef

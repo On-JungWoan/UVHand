@@ -270,35 +270,60 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         samples, targets = prefetcher.next()
 
     pbar = tqdm(range(len(data_loader)))
+    B = samples.tensors.size(0)
 
     for _ in pbar:
         if samples is None:
+            samples, targets = prefetcher.next()
             continue
         
         if args.dataset_file == 'arctic':
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
-        outputs = model(samples)
 
         if args.extract:
-            # post-process output
-            out_key = extract_output(outputs, targets, cfg)[0]
-            B = out_key.size(0)
+            if args.dataset_file == 'arctic':
+                srcs, pos = model(samples, is_extract=True)
+                srcs = [src.contiguous().view(B, -1) for src in srcs]
+                pos = [p.contiguous().view(B, -1) for p in pos]
 
-            # store result
-            res = {}
-            for idx in range(B):
-                key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
-                value = out_key[idx]
+                    
+                with open(f'/home/unist/Desktop/hdd/arctic/data/pickle/{args.setup}/batch_{_}.pt', 'wb') as f:
+                    torch.save(
+                        tuple([srcs, pos, meta_info['imgname']]),
+                        f
+                    )
 
-                res[key] = value
-                key = key.replace('/', '+')
-                key = key.replace('.jpg', '')
-                with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
-                    pickle.dump(res, f)
+                # with open(f'./results/arctic/{args.setup}/batch_{_}.pkl', 'rb') as f:
+                #     test = pickle.load(f)
 
-            # next iteration
-            samples, targets = prefetcher.next()
-            continue
+                # next iteration
+                samples, targets, meta_info = prefetcher.next()
+                continue
+
+            elif args.dataset_file == 'AssemblyHands':
+                outputs = model(samples)
+                
+                # post-process output
+                out_key = extract_output(outputs, targets, cfg)[0]
+                B = out_key.size(0)
+
+                # store result
+                res = {}
+                for idx in range(B):
+                    key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
+                    value = out_key[idx]
+
+                    res[key] = value
+                    key = key.replace('/', '+')
+                    key = key.replace('.jpg', '')
+                    with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
+                        pickle.dump(res, f)
+
+                # next iteration
+                samples, targets = prefetcher.next()
+                continue
+
+        outputs = model(samples)
 
         # check validation
         if args.dataset_file == 'arctic':

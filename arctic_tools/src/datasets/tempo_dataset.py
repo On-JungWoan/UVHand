@@ -12,7 +12,9 @@ from src.datasets.arctic_dataset import ArcticDataset
 
 class TempoDataset(ArcticDataset):
     def _load_data(self, args, split):
-        data_p = f"./data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
+        root = op.join(args.coco_path, args.dataset_file)
+
+        data_p = f"{root}/data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
         logger.info(f"Loading: {data_p}")
         data = torch.load(data_p)
         imgnames = data["imgnames"]
@@ -35,6 +37,8 @@ class TempoDataset(ArcticDataset):
 
         imgnames = list(self.vec_dict.keys())
         imgnames = dataset_utils.downsample(imgnames, split)
+
+        self.args = args
 
         self.imgnames = imgnames
         logger.info(
@@ -59,7 +63,8 @@ class TempoDataset(ArcticDataset):
         meta_list = []
         img_feats = []
         inputs_list = []
-        load_rgb = True if self.args.method in ["tempo_ft"] else False
+        # load_rgb = True if self.args.method in ["tempo_ft"] else False
+        load_rgb = True
         for imgname in imgnames:
             img_folder = f"./data/arctic_data/data/images/"
             inputs, targets, meta_info = self.getitem(
@@ -73,10 +78,10 @@ class TempoDataset(ArcticDataset):
             meta_list.append(meta_info)
 
         if load_rgb:
-            inputs_list = ld_utils.stack_dl(
-                ld_utils.ld2dl(inputs_list), dim=0, verbose=False
-            )
-            inputs = {"img": inputs_list["img"]}
+            # inputs_list = ld_utils.stack_dl(
+            #     ld_utils.ld2dl(inputs_list), dim=0, verbose=False
+            # )
+            inputs = {"img": torch.stack(inputs_list).squeeze()}
         else:
             img_feats = torch.stack(img_feats, dim=0)
             inputs = {"img_feat": img_feats}
