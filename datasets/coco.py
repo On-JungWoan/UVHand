@@ -102,10 +102,10 @@ class ConvertCocoPolysToMask(object):
             cam_param = torch.Tensor(self.coco.loadImgs(image_id.item())[0]['cam_param'])
 
         keypoints = None
-        if anno and "keypoints" in anno[0]:
-            keypoints = [obj["keypoints"] for obj in anno]
+        if anno and "joint3d" in anno[0]:
+            keypoints = [obj["joint3d"] for obj in anno]
             if self.dataset == 'AssemblyHands':
-                keypoints = [keypoints[0][:21], keypoints[0][21:]]
+                keypoints = [keypoints[0]['right'], keypoints[0]['left']]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             num_keypoints = keypoints.shape[0]
             if num_keypoints:
@@ -130,23 +130,23 @@ class ConvertCocoPolysToMask(object):
 
         fx, fy, cx, cy, _, _ = cam_param
 
-        if self.dataset == 'AssemblyHands':
-            assert len(keypoints.shape) == 3
-            keypoints[keypoints<-1]=-1
-            # for key in keypoints:
-            #     for i in range(2):
-            #         target = key[..., i]
-            #         val = w if i == 0 else h
-            #         # target[target > val] = val
-            #         target[target < -1] = -1
-            uvd = keypoints
-        else:
-            uvd = torch.stack([
-                cam2pixel(keypoints[i], (fx, fy), (cx, cy)) \
-                    if keypoints[i].sum()!=0 else \
-                torch.zeros(21,3) \
-                    for i in range(len(classes)) 
-            ])
+        # if self.dataset == 'AssemblyHands':
+        #     assert len(keypoints.shape) == 3
+        #     keypoints[keypoints<-1]=-1
+        #     # for key in keypoints:
+        #     #     for i in range(2):
+        #     #         target = key[..., i]
+        #     #         val = w if i == 0 else h
+        #     #         # target[target > val] = val
+        #     #         target[target < -1] = -1
+        #     uvd = keypoints
+        # else:
+        uvd = torch.stack([
+            cam2pixel(keypoints[i], (fx, fy), (cx, cy)) \
+                if keypoints[i].sum()!=0 else \
+            torch.zeros(21,3) \
+                for i in range(len(classes)) 
+        ])
 
         if self.dataset == 'FPHA':
             uvd[...,2] /= 1000
