@@ -123,6 +123,7 @@ def get_args_parser():
     
     # for custom arctic
     parser.add_argument('--seq', default=None, type=str)
+    parser.add_argument('--split_window', default=False, action='store_true')
 
     return parser
 

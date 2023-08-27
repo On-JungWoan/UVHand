@@ -89,6 +89,7 @@ class TempoInferenceDataset(ArcticDataset):
         windows = create_windows(self.imgnames, self.window_size)
         windows = dataset_utils.downsample(windows, split)
 
+        self.split_window = args.split_window
         self.windows = windows
         num_imgnames = len(sum(self.windows, []))
         logger.info(
@@ -126,7 +127,7 @@ class TempoInferenceDataset(ArcticDataset):
         meta_list = ld_utils.stack_dl(ld_utils.ld2dl(meta_list), dim=0, verbose=False)
         img_feats = torch.stack(img_feats, dim=0).float()
 
-        inputs_list["img_feat"] = img_feats
+        inputs_list["img"] = img_feats
         targets_list["is_valid"] = torch.FloatTensor(np.array(targets_list["is_valid"]))
         targets_list["left_valid"] = torch.FloatTensor(
             np.array(targets_list["left_valid"])
