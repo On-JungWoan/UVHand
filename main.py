@@ -84,8 +84,8 @@ def main(args):
 
 
     if args.dataset_file == 'arctic':
-        if args.method == 'arctic_lstm':
-            collate_fn=lstm_fn
+        if args.method == 'arctic_lstm' and args.split_window:
+                collate_fn=lstm_fn
         else:
             collate_fn=utils.collate_custom_fn
     else:

@@ -40,10 +40,11 @@ def fetch_dataset_devel(args, is_train, seq=None):
         else:
             DATASET = ArcticDataset
     elif args.method in ["field_lstm", "arctic_lstm"]:
-        if is_train:
-            DATASET = TempoDataset
-        else:
-            DATASET = TempoInferenceDataset
+        DATASET = TempoDataset
+        # if is_train:
+        #     DATASET = TempoDataset
+        # else:
+        #     DATASET = TempoInferenceDataset
     else:
         assert False
     if seq is not None:
@@ -94,7 +95,7 @@ def collate_custom_fn(data_list):
         else:
             out_meta_info[key] = sum(out_meta_info[key], [])
 
-    return out_inputs['img_feat'], out_targets, out_meta_info
+    return out_inputs['img'], out_targets, out_meta_info
 
 
 def fetch_dataloader(args, mode, seq=None):

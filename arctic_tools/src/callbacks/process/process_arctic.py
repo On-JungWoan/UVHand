@@ -61,7 +61,7 @@ def process_data(
     gt_model_joints_l = gt_out_l.joints
     gt_vertices_l = gt_out_l.vertices
     gt_root_cano_l = gt_out_l.joints[:, 0]
-    import smplx
+
     # map MANO mesh to object canonical space
     Tr0 = (joints3d_r0 - gt_model_joints_r).mean(dim=1)
     Tl0 = (joints3d_l0 - gt_model_joints_l).mean(dim=1)

@@ -12,9 +12,7 @@ from src.datasets.arctic_dataset import ArcticDataset
 
 class TempoDataset(ArcticDataset):
     def _load_data(self, args, split):
-        root = op.join(args.coco_path, args.dataset_file)
-
-        data_p = f"{root}/data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
+        data_p = f"{self.root}/data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
         logger.info(f"Loading: {data_p}")
         data = torch.load(data_p)
         imgnames = data["imgnames"]
@@ -33,14 +31,23 @@ class TempoDataset(ArcticDataset):
     def __init__(self, args, split, seq=None):
         Dataset.__init__(self)
         super()._load_data(args, split, seq)
+        self.root = op.join(args.coco_path, args.dataset_file)
         self._load_data(args, split)
 
+        self.split_window = args.split_window
         imgnames = list(self.vec_dict.keys())
         imgnames = dataset_utils.downsample(imgnames, split)
-
-        self.args = args
-
         self.imgnames = imgnames
+        
+        # self.args = args
+        # self.aug_data = False
+        # self.window_size = args.window_size
+
+        # imgnames = self.imgnames
+        # assert len(imgnames) == len(set(imgnames))
+        # imgnames = dataset_utils.downsample(imgnames, split)
+        # self.imgnames = imgnames        
+
         logger.info(
             f"TempoDataset Loaded {self.split} split, num samples {len(imgnames)}"
         )
@@ -53,11 +60,15 @@ class TempoDataset(ArcticDataset):
         ).astype(np.int64)
         num_frames = self.data["/".join(imgname.split("/")[:2])]["params"][
             "rot_r"
-        ].shape[0]
+        ].shape[0]        
+        # num_frames = self.data["/".join(imgname.split("/")[4:6])]["params"][
+        #     "rot_r"
+        # ].shape[0]
         ind = np.clip(
             ind, 10, num_frames - 10 - 1
         )  # skip first and last 10 frames as they are not useful
         imgnames = [op.join(op.dirname(imgname), "%05d.jpg" % (idx)) for idx in ind]
+
 
         targets_list = []
         meta_list = []
@@ -65,17 +76,25 @@ class TempoDataset(ArcticDataset):
         inputs_list = []
         load_rgb = True if self.args.method in ["tempo_ft"] else False
         # load_rgb = True
-        for imgname in imgnames:
-            img_folder = f"./data/arctic_data/data/images/"
+        for name in imgnames:
             inputs, targets, meta_info = self.getitem(
-                op.join(img_folder, imgname), load_rgb=load_rgb
+                name, load_rgb=load_rgb
             )
             if load_rgb:
                 inputs_list.append(inputs)
             else:
-                img_feats.append(self.vec_dict[imgname].type(torch.FloatTensor))
+                img_feats.append(self.vec_dict[name].type(torch.FloatTensor))
+            if self.split_window:
+                targets_list.append(targets)
+                meta_list.append(meta_info)
+
+        if not self.split_window:
+            _, targets, meta_info = self.getitem(
+                imgname, load_rgb=False
+            )            
             targets_list.append(targets)
             meta_list.append(meta_info)
+
 
         if load_rgb:
             # inputs_list = ld_utils.stack_dl(
@@ -84,7 +103,7 @@ class TempoDataset(ArcticDataset):
             inputs = {"img": torch.stack(inputs_list).squeeze()}
         else:
             img_feats = torch.stack(img_feats, dim=0)
-            inputs = {"img_feat": img_feats}
+            inputs = {"img": img_feats}
 
         targets_list = ld_utils.stack_dl(
             ld_utils.ld2dl(targets_list), dim=0, verbose=False

@@ -328,22 +328,33 @@ def collate_custom_fn(data_list):
     # ]
     bs = len(data_list)
     _inputs, _targets, _meta_info = data_list[0]
+    is_lstm = False
 
     batch = list(zip(*data_list))
     if len(batch[0]) != 0:
-        batch[0] = nested_tensor_from_tensor_list(batch[0])
+        try:
+            batch[0] = nested_tensor_from_tensor_list(batch[0])
+        except:
+            is_lstm = True
+            batch[0] = torch.stack([b['img'] for b in batch[0]])
 
     out_targets = {}
     for key in _targets.keys():
         if key == 'labels':
-            out_targets[key] = [batch[1][i][key].unsqueeze(0) for i in range(bs)]
+            if not is_lstm:
+                out_targets[key] = [batch[1][i][key].unsqueeze(0) for i in range(bs)]
+            else:
+                out_targets[key] = sum([batch[1][i][key] for i in range(bs)], [])
         else:
             out_targets[key] = torch.cat([batch[1][i][key].unsqueeze(0) for i in range(bs)])
 
     out_meta_info = {}
     for key in _meta_info.keys():
         if key in ['imgname', 'query_names']:
-            out_meta_info[key] = [batch[2][i][key] for i in range(bs)]
+            if not is_lstm:
+                out_meta_info[key] = [batch[2][i][key] for i in range(bs)]
+            else:
+                out_meta_info[key] = [batch[2][i][key][0] for i in range(bs)]
             continue
         out_meta_info[key] = torch.cat([batch[2][i][key].unsqueeze(0) for i in range(bs)])
 

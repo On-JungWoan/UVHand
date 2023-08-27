@@ -447,7 +447,42 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    
+    if args.dataset_file == 'arctic':
+        result = {
+                    'loss' : loss_value,
+                    'ce_loss' : train_stat['loss_ce'],
+                    'loss_CDev' : train_stat['loss/cd'],
+                    'loss_penetr' : train_stat['loss/penetr'],
+                    'loss_mano' : (
+                        train_stat["loss/mano/pose/r"] + \
+                        train_stat["loss/mano/beta/r"] + \
+                        train_stat["loss/mano/pose/l"] + \
+                        train_stat["loss/mano/beta/l"]
+                    ),
+                    'loss_rot' : (
+                        train_stat["loss/object/radian"] + \
+                        train_stat["loss/object/rot"]
+                    ),
+                    'loss_transl' : (
+                        train_stat["loss/mano/transl/l"] + \
+                        train_stat["loss/object/transl"]
+                    ),
+                    'loss_kp' : (
+                        train_stat["loss/mano/kp2d/r"] + \
+                        train_stat["loss/mano/kp3d/r"] + \
+                        train_stat["loss/mano/kp2d/l"] + \
+                        train_stat["loss/mano/kp3d/l"] + \
+                        train_stat["loss/object/kp2d"] + \
+                        train_stat["loss/object/kp3d"]
+                    ),
+                    'loss_cam' : (
+                        train_stat["loss/mano/cam_t/r"] + \
+                        train_stat["loss/mano/cam_t/l"] + \
+                        train_stat["loss/object/cam_t"]
+                    )
+                }
+        print(result)
+
     # for wandb
     if args is not None and args.wandb:
         if args.distributed:
@@ -456,39 +491,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         
         # check dataset
         if args.dataset_file == 'arctic':
-            wandb.log({
-                'loss' : loss_value,
-                'ce_loss' : train_stat['loss_ce'],
-                'loss_CDev' : train_stat['loss/cd'],
-                'loss_penetr' : train_stat['loss/penetr'],
-                'loss_mano' : (
-                    train_stat["loss/mano/pose/r"] + \
-                    train_stat["loss/mano/beta/r"] + \
-                    train_stat["loss/mano/pose/l"] + \
-                    train_stat["loss/mano/beta/l"]
-                ),
-                'loss_rot' : (
-                    train_stat["loss/object/radian"] + \
-                    train_stat["loss/object/rot"]
-                ),
-                'loss_transl' : (
-                    train_stat["loss/mano/transl/l"] + \
-                    train_stat["loss/object/transl"]
-                ),
-                'loss_kp' : (
-                    train_stat["loss/mano/kp2d/r"] + \
-                    train_stat["loss/mano/kp3d/r"] + \
-                    train_stat["loss/mano/kp2d/l"] + \
-                    train_stat["loss/mano/kp3d/l"] + \
-                    train_stat["loss/object/kp2d"] + \
-                    train_stat["loss/object/kp3d"]
-                ),
-                'loss_cam' : (
-                    train_stat["loss/mano/cam_t/r"] + \
-                    train_stat["loss/mano/cam_t/l"] + \
-                    train_stat["loss/object/cam_t"]
-                )
-            }, step=epoch)
+            wandb.log(result, step=epoch)
         elif args.dataset_file == 'AssemblyHands':
             wandb.log({
                 'loss' : loss_value,
