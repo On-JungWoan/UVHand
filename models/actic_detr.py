@@ -241,6 +241,10 @@ class DeformableDETR(nn.Module):
             if not isinstance(samples, NestedTensor):
                 samples = nested_tensor_from_tensor_list(samples)
             features, pos = self.backbone(samples)  # output feature, output feature size에 해당하는 positional embedding
+
+            if is_extract:
+                return features
+
             srcs = []
             masks = []
             for l, feat in enumerate(features):
@@ -262,8 +266,8 @@ class DeformableDETR(nn.Module):
                     masks.append(mask)
                     pos.append(pos_l)
 
-        if is_extract:
-            return srcs
+        # if is_extract:
+        #     return srcs
 
         query_embeds = None
         query_embeds = self.query_embed.weight ############## two_stage
