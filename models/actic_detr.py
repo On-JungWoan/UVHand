@@ -71,60 +71,75 @@ class DeformableDETR(nn.Module):
         self.cfg = cfg
 
         self.query_embed = nn.Embedding(num_queries, self.hidden_dim*2)
-        # if self.method == 'arctic_sf':
-        if num_feature_levels > 1:
-            num_backbone_outs = len(backbone.strides)
-            input_proj_list = []
-            for _ in range(num_backbone_outs):
-                if self.method == 'arctic_lstm':
-                    in_channels = 32
-                else:
+        if self.method == 'arctic_sf':
+            if num_feature_levels > 1:
+                num_backbone_outs = len(backbone.strides)
+                input_proj_list = []
+                for _ in range(num_backbone_outs):
+                    # if self.method == 'arctic_lstm':
+                    #     in_channels = 32
+                    # else:
                     in_channels = backbone.num_channels[_]
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, self.hidden_dim),
-                ))
-            for _ in range(num_feature_levels - num_backbone_outs):   # multi-scale feature는 4개, backbone output feature가 3개.
-                input_proj_list.append(nn.Sequential(                 # backbone의 last featrue에 kernel_3, stride 2인 conv를 추가하여 4개로 만들어줌
-                    nn.Conv2d(in_channels, self.hidden_dim, kernel_size=3, stride=2, padding=1),
-                    nn.GroupNorm(32, self.hidden_dim),
-                ))
-                in_channels = self.hidden_dim
-            self.input_proj = nn.ModuleList(input_proj_list)
-        else:
-            self.input_proj = nn.ModuleList([
+                    input_proj_list.append(nn.Sequential(
+                        nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, self.hidden_dim),
+                    ))
+                for _ in range(num_feature_levels - num_backbone_outs):   # multi-scale feature는 4개, backbone output feature가 3개.
+                    input_proj_list.append(nn.Sequential(                 # backbone의 last featrue에 kernel_3, stride 2인 conv를 추가하여 4개로 만들어줌
+                        nn.Conv2d(in_channels, self.hidden_dim, kernel_size=3, stride=2, padding=1),
+                        nn.GroupNorm(32, self.hidden_dim),
+                    ))
+                    in_channels = self.hidden_dim
+                self.input_proj = nn.ModuleList(input_proj_list)
+            else:
+                self.input_proj = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Conv2d(backbone.num_channels[0], self.hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, self.hidden_dim),
+                    )])
+
+        elif self.method == 'arctic_lstm':
+            # gru
+            self.gru = nn.GRU(
+                    input_size=2048, hidden_size=1024,
+                    num_layers=2, bidirectional=True, batch_first=True,
+                )
+            
+            # feat proj
+            self.feature_proj = nn.ModuleList([
                 nn.Sequential(
-                    nn.Conv2d(32 if self.method == 'arctic_lstm' else backbone.num_channels[0], self.hidden_dim, kernel_size=1),
+                    nn.Linear(2048*self.window_size, 28*28),
+                    nn.LayerNorm(28*28)
+                ),
+                nn.Sequential(
+                    nn.Linear(2048*self.window_size, 14*14),
+                    nn.LayerNorm(14*14)
+                ),
+                nn.Sequential(
+                    nn.Linear(2048*self.window_size, 7*7),
+                    nn.LayerNorm(7*7)
+                ),
+                nn.Sequential(
+                    nn.Linear(2048*self.window_size, 4*4),
+                    nn.LayerNorm(4*4)
+                ),                                
+            ])
+            for proj in self.feature_proj:
+                nn.init.xavier_uniform_(proj[0].weight, gain=1)
+                nn.init.constant_(proj[0].bias, 0)
+
+            # input proj
+            input_proj_list = []
+            for _ in range(self.num_feature_levels):
+                input_proj_list.append(nn.Sequential(
+                    nn.Conv2d(1, self.hidden_dim, kernel_size=1),
                     nn.GroupNorm(32, self.hidden_dim),
-                )])
-        if self.method == 'arctic_lstm':
-            self.lstm = nn.LSTM(
-                input_size=2048,
-                hidden_size=1024,
-                num_layers=2,
-                bidirectional=True,
-                batch_first=True,
-            )
-            self.feature_proj = nn.Sequential(
-                nn.Linear(2048*self.window_size, 2048),
-                nn.LayerNorm(2048)
-            )
-            # self.output_proj = nn.Sequential(
-            #     nn.Linear(self.hidden_dim, 2048),
-            #     nn.ReLU(),
-            #     nn.Dropout(0.1),
-            #     nn.Linear(2048, self.hidden_dim*self.window_size),
-            #     nn.Dropout(0.1),
-            #     nn.LayerNorm(self.hidden_dim*self.window_size)
-            # )
-            for idx, proj in enumerate(self.feature_proj):
-                if idx == 0:
-                    nn.init.xavier_uniform_(proj.weight, gain=1)
-                    nn.init.constant_(proj.bias, 0)
-            # for idx, proj in enumerate(self.output_proj):
-            #     if idx in [0, 3]:
-            #         nn.init.xavier_uniform_(proj.weight, gain=1)
-            #         nn.init.constant_(proj.bias, 0)
+                ))
+            self.input_proj = nn.ModuleList(input_proj_list)
+
+        for proj in self.input_proj:
+            nn.init.xavier_uniform_(proj[0].weight, gain=1)
+            nn.init.constant_(proj[0].bias, 0)
 
         self.backbone = backbone
         self.aux_loss = aux_loss
@@ -147,10 +162,6 @@ class DeformableDETR(nn.Module):
         nn.init.constant_(self.obj_rot.bias.data, 0)                                        
         nn.init.xavier_uniform_(self.obj_rad.weight, gain=1)
         nn.init.constant_(self.obj_rad.bias.data, 0)
-
-        for proj in self.input_proj:
-            nn.init.xavier_uniform_(proj[0].weight, gain=1)
-            nn.init.constant_(proj[0].bias, 0)
     
         num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
         if with_box_refine:
@@ -191,28 +202,35 @@ class DeformableDETR(nn.Module):
         """
 
         if self.method == 'arctic_lstm':
-            samples = samples.view(-1, self.window_size, 2048)
+            # samples = samples.view(-1, self.window_size, 2048)
             B, W, C = samples.shape
             device = samples.device
-            
+
             # bidirectional
-            h0 = torch.randn(2 * 2, B, C // 2, device=device)
-            c0 = torch.randn(2 * 2, B, C // 2, device=device)
-            feat_vec, (hn, cn) = self.lstm(samples, (h0, c0))  # batch, seq, 2*dim
-            feat_vec = self.feature_proj(feat_vec.reshape(B, W*C))
-            feat_vec = feat_vec.reshape(B, 32, 8, 8)
-            
+            # h0 = torch.randn(2 * 2, B, C // 2, device=device)
+            # c0 = torch.randn(2 * 2, B, C // 2, device=device)
+            # feat_vec, (hn, cn) = self.lstm(samples, (h0, c0))  # batch, seq, 2*dim
+            feat_vec, _ = self.gru(samples)
+            feat_vec = feat_vec.reshape(B, W*C)
+
+            # feat_vec = self.feature_proj(feat_vec.reshape(B, W*C))
+            # feat_vec = feat_vec.reshape(B, 32, 8, 8)
+            #
             # feat_vec = self.feature_proj(feat_vec)
             # feat_vec = feat_vec.view(B, 256, 7, 7)
             # feat_vec = feat_vec.view(B, -1, 8, 8)
-
             srcs = []
             masks = []
             pos = []
             for i in range(self.num_feature_levels):
-                src = self.input_proj[i](feat_vec)
-                B, C, W, H = src.shape
-                mask = torch.cuda.FloatTensor(B,W,H).uniform_() > 0.2
+                src = self.feature_proj[i](feat_vec)
+                f_B, f_C = src.shape
+                sqrt_C = int(np.sqrt(f_C))
+                src = src.reshape(f_B, 1, sqrt_C, sqrt_C)
+
+                src = self.input_proj[i](src)
+                s_B, s_C, s_W, s_H = src.shape
+                mask = torch.cuda.FloatTensor(B,s_W,s_H).uniform_() > 0.2
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
 
                 srcs.append(src)
@@ -245,7 +263,7 @@ class DeformableDETR(nn.Module):
                     pos.append(pos_l)
 
         if is_extract:
-            return srcs, pos
+            return srcs
 
         query_embeds = None
         query_embeds = self.query_embed.weight ############## two_stage
