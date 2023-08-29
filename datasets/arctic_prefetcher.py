@@ -8,7 +8,11 @@ import torch
 from util.misc import NestedTensor
 
 def to_cuda(samples, targets, metas, device):
-    samples = samples.to(device, non_blocking=True)
+    try:
+        samples = samples.to(device, non_blocking=True)
+    except:
+        for idx, v in enumerate(samples):
+            samples[idx] = v.to(device, non_blocking=True)
     # targets = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets]
 
     # targets
@@ -73,7 +77,11 @@ class data_prefetcher():
             metas = self.next_metas
 
             if samples is not None:
-                samples.record_stream(torch.cuda.current_stream())
+                if isinstance(samples, list):
+                    for sample in samples:
+                        sample.record_stream(torch.cuda.current_stream())
+                else:
+                    samples.record_stream(torch.cuda.current_stream())
             if targets is not None:
                 for k, v in targets.items():
                     if k == 'labels':

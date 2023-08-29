@@ -281,19 +281,32 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
 
         if args.extract:
             B = samples.tensors.size(0)
+            root = op.join(args.coco_path, args.dataset_file)
             if args.dataset_file == 'arctic':
-                srcs, pos = model(samples, is_extract=True)
-                srcs = [src.contiguous().view(B, -1) for src in srcs]
-                pos = [p.contiguous().view(B, -1) for p in pos]
+                # # just checking
+                # for name in data_loader.dataset.imgnames:
+                #     save_name = '+'.join(name.split('/')[-4:])
+                #     save_dir = f'{root}/data/pickle/{args.setup}/train/{op.splitext(save_name)[0]}.pkl'
+                #     if not op.isfile(save_dir):
+                #         print(save_name)
+                #         img = data_loader.dataset.getitem(name, load_rgb=True)[0]
+                #         srcs = model(img.unsqueeze(0).cuda(), is_extract=True)
+                #         with open(save_dir, 'wb') as f:
+                #             pickle.dump(
+                #                 [
+                #                     srcs[0][0].cpu().detach(), srcs[1][0].cpu().detach(), srcs[2][0].cpu().detach(), srcs[3][0].cpu().detach()
+                #                 ], f)
+                srcs = model(samples, is_extract=True)
+                for i in range(B):
+                    save_name = '+'.join(meta_info['imgname'][i].split('/')[-4:])
+                    save_dir = f'{root}/data/pickle/{args.setup}/train/{op.splitext(save_name)[0]}.pkl'
+                    with open(save_dir, 'wb') as f:
+                        pickle.dump(
+                            [
+                                srcs[0][i].cpu().detach(), srcs[1][i].cpu().detach(), srcs[2][i].cpu().detach(), srcs[3][i].cpu().detach()
+                            ], f)
 
-                    
-                with open(f'/home/unist/Desktop/hdd/arctic/data/pickle/{args.setup}/batch_{_}.pt', 'wb') as f:
-                    torch.save(
-                        tuple([srcs, pos, meta_info['imgname']]),
-                        f
-                    )
-
-                # with open(f'./results/arctic/{args.setup}/batch_{_}.pkl', 'rb') as f:
+                # with open(f'{root}/data/pickle/{args.setup}/s02+ketchup_grab_01+0+00434.pkl', 'rb') as f:
                 #     test = pickle.load(f)
 
                 # next iteration
@@ -552,33 +565,53 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         with torch.no_grad():
+            if args.extract:
+                B = samples.tensors.size(0)
+                root = op.join(args.coco_path, args.dataset_file)
+                if args.dataset_file == 'arctic':
+                    srcs = model(samples, is_extract=True)
+
+                    for i in range(B):
+                        save_name = '+'.join(meta_info['imgname'][i].split('/')[-4:])
+                        with open(f'{root}/data/pickle/{args.setup}/val/{op.splitext(save_name)[0]}.pkl', 'wb') as f:
+                            pickle.dump(
+                                [
+                                    srcs[0][i].cpu().detach(), srcs[1][i].cpu().detach(), srcs[2][i].cpu().detach(), srcs[3][i].cpu().detach()
+                                ], f)
+
+                    # with open(f'{root}/data/pickle/{args.setup}/s02+ketchup_grab_01+0+00434.pkl', 'rb') as f:
+                    #     test = pickle.load(f)
+
+                    # next iteration
+                    samples, targets, meta_info = prefetcher.next()
+                    continue
+
+                    # post-process output
+                    out_key = extract_output(outputs, targets, cfg)[0]
+                    B = out_key.size(0)
+
+                    # store result
+                    res = {}
+                    for idx in range(B):
+                        key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
+                        value = out_key[idx]
+
+                        res[key] = value
+                        key = key.replace('/', '+')
+                        key = key.replace('.jpg', '')
+                        save_dir = f'results/Assemblyhands/val/{key}.pkl'
+                        
+                        assert not op.isfile(save_dir)
+                        with open(save_dir, 'wb') as f:
+                            pickle.dump(res, f)
+
+                    # next iteration
+                    samples, targets = prefetcher.next()
+                    continue
+
             outputs = model(samples.to(device))
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
-            
-            if args.extract:
-                # post-process output
-                out_key = extract_output(outputs, targets, cfg)[0]
-                B = out_key.size(0)
-
-                # store result
-                res = {}
-                for idx in range(B):
-                    key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
-                    value = out_key[idx]
-
-                    res[key] = value
-                    key = key.replace('/', '+')
-                    key = key.replace('.jpg', '')
-                    save_dir = f'results/Assemblyhands/val/{key}.pkl'
-                    
-                    assert not op.isfile(save_dir)
-                    with open(save_dir, 'wb') as f:
-                        pickle.dump(res, f)
-
-                # next iteration
-                samples, targets = prefetcher.next()
-                continue
 
             # # check validation
             # is_valid = targets['is_valid'].type(torch.bool)
@@ -719,7 +752,6 @@ def eval_assembly_result(outputs, targets, cfg, data_loader):
             
             pred_kp = key_points[i][j]
             pred_joint_cam = pixel2cam(pred_kp, (cam_fx.item(), cam_fy.item()), (cam_cx.item(), cam_cy.item()))
-            pred_joint_cam[:, -1] = 1000.0
 
             x, y = target_sizes[0].detach().cpu().numpy()
             gt_scaled_keypoints = gt_keypoints[i][k] * torch.tensor([x, y, 1000]).cuda()

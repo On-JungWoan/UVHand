@@ -337,6 +337,12 @@ def collate_custom_fn(data_list):
         except:
             is_lstm = True
             batch[0] = torch.stack([b['img'] for b in batch[0]])
+            # batch[0] = [
+            #     torch.stack([b['img'][0] for b in batch[0]]),
+            #     torch.stack([b['img'][1] for b in batch[0]]),
+            #     torch.stack([b['img'][2] for b in batch[0]]),
+            #     torch.stack([b['img'][3] for b in batch[0]])
+            # ]
 
     out_targets = {}
     for key in _targets.keys():
