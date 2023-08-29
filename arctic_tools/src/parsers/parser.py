@@ -33,7 +33,8 @@ def construct_args(parser):
             args.valsplit = 'val'
     else:
         args.trainsplit = 'train'
-        args.valsplit = 'minival'
+        if not args.extract:
+            args.valsplit = 'minival'
 
     if args.method in ["arctic_sf"]:
         import src.parsers.configs.arctic_sf as config

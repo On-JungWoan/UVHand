@@ -43,9 +43,9 @@ import wandb
 import os.path as op
 
 from arctic_tools.common.xdict import xdict
-from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
 from arctic_tools.visualizer import visualize_arctic_result
-from util.settings import extract_epoch
+from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
+from util.settings import extract_epoch, extract_feature, extract_assembly_output
 
 def make_line(cv_img, img_points, idx_1, idx_2, color, line_thickness=2):
     if -1 not in tuple(img_points[idx_1][:-1]):
@@ -262,80 +262,40 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
     print_freq = 10
 
+    # prefetcher settings
     if args.dataset_file == 'arctic':
         prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
         samples, targets, meta_info = prefetcher.next()
     else:
         prefetcher = data_prefetcher(data_loader, device, prefetch=True)
         samples, targets = prefetcher.next()
-
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
+        # not exist images
         if samples is None:
             samples, targets = prefetcher.next()
             continue
-        
+
+        # arctic pre process
         if args.dataset_file == 'arctic':
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
+        # for feature map extraction mode
         if args.extract:
-            B = samples.tensors.size(0)
-            root = op.join(args.coco_path, args.dataset_file)
+            extract_feature(
+                args, model, samples, targets, meta_info, data_loader, cfg, check_mode=True
+            )
+
+            # next samples
             if args.dataset_file == 'arctic':
-                # # just checking
-                # for name in data_loader.dataset.imgnames:
-                #     save_name = '+'.join(name.split('/')[-4:])
-                #     save_dir = f'{root}/data/pickle/{args.setup}/train/{op.splitext(save_name)[0]}.pkl'
-                #     if not op.isfile(save_dir):
-                #         print(save_name)
-                #         img = data_loader.dataset.getitem(name, load_rgb=True)[0]
-                #         srcs = model(img.unsqueeze(0).cuda(), is_extract=True)
-                #         with open(save_dir, 'wb') as f:
-                #             pickle.dump(
-                #                 [
-                #                     srcs[0][0].cpu().detach(), srcs[1][0].cpu().detach(), srcs[2][0].cpu().detach(), srcs[3][0].cpu().detach()
-                #                 ], f)
-                srcs = model(samples, is_extract=True)
-                for i in range(B):
-                    save_name = '+'.join(meta_info['imgname'][i].split('/')[-4:])
-                    save_dir = f'{root}/data/pickle/{args.setup}/train/{op.splitext(save_name)[0]}.pkl'
-                    with open(save_dir, 'wb') as f:
-                        pickle.dump(
-                            [
-                                srcs[0][i].cpu().detach(), srcs[1][i].cpu().detach(), srcs[2][i].cpu().detach(), srcs[3][i].cpu().detach()
-                            ], f)
-
-                # with open(f'{root}/data/pickle/{args.setup}/s02+ketchup_grab_01+0+00434.pkl', 'rb') as f:
-                #     test = pickle.load(f)
-
-                # next iteration
                 samples, targets, meta_info = prefetcher.next()
                 continue
-
-            elif args.dataset_file == 'AssemblyHands':
-                outputs = model(samples)
-                
-                # post-process output
-                out_key = extract_output(outputs, targets, cfg)[0]
-                B = out_key.size(0)
-
-                # store result
-                res = {}
-                for idx in range(B):
-                    key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
-                    value = out_key[idx]
-
-                    res[key] = value
-                    key = key.replace('/', '+')
-                    key = key.replace('.jpg', '')
-                    with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
-                        pickle.dump(res, f)
-
-                # next iteration
+            else:
                 samples, targets = prefetcher.next()
                 continue
 
+        # Training script begin from here
         outputs = model(samples)
 
         # check validation
@@ -457,6 +417,9 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             })
             samples, targets = prefetcher.next()
 
+    if args.extract:
+        return 0
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -565,50 +528,21 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         with torch.no_grad():
+            # for feature map extraction mode
             if args.extract:
-                B = samples.tensors.size(0)
-                root = op.join(args.coco_path, args.dataset_file)
+                extract_feature(
+                    args, model, samples, targets, meta_info, data_loader, cfg
+                )
+
+                # next samples
                 if args.dataset_file == 'arctic':
-                    srcs = model(samples, is_extract=True)
-
-                    for i in range(B):
-                        save_name = '+'.join(meta_info['imgname'][i].split('/')[-4:])
-                        with open(f'{root}/data/pickle/{args.setup}/val/{op.splitext(save_name)[0]}.pkl', 'wb') as f:
-                            pickle.dump(
-                                [
-                                    srcs[0][i].cpu().detach(), srcs[1][i].cpu().detach(), srcs[2][i].cpu().detach(), srcs[3][i].cpu().detach()
-                                ], f)
-
-                    # with open(f'{root}/data/pickle/{args.setup}/s02+ketchup_grab_01+0+00434.pkl', 'rb') as f:
-                    #     test = pickle.load(f)
-
-                    # next iteration
                     samples, targets, meta_info = prefetcher.next()
                     continue
-
-                    # post-process output
-                    out_key = extract_output(outputs, targets, cfg)[0]
-                    B = out_key.size(0)
-
-                    # store result
-                    res = {}
-                    for idx in range(B):
-                        key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
-                        value = out_key[idx]
-
-                        res[key] = value
-                        key = key.replace('/', '+')
-                        key = key.replace('.jpg', '')
-                        save_dir = f'results/Assemblyhands/val/{key}.pkl'
-                        
-                        assert not op.isfile(save_dir)
-                        with open(save_dir, 'wb') as f:
-                            pickle.dump(res, f)
-
-                    # next iteration
+                else:
                     samples, targets = prefetcher.next()
                     continue
 
+            # Testing script begin from here
             outputs = model(samples.to(device))
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
@@ -661,6 +595,9 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         else:
             samples, targets = prefetcher.next()
 
+    if args.extract:
+        return 0
+
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
@@ -706,31 +643,8 @@ def stat_round(round_num=2, **kwargs):
     return result
 
 
-def extract_output(outputs, targets, cfg):
-    # model output
-    out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
-    prob = out_logits.sigmoid()
-    B, num_queries, num_classes = prob.shape
-
-    # hand index select
-    hand_idx = []
-    for i in cfg.hand_idx:
-        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1))
-    hand_idx = torch.stack(hand_idx, dim=-1)
-
-    # de-normalize
-    hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
-    orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-    im_h, im_w = orig_target_sizes[:,0], orig_target_sizes[:,1]
-    target_sizes = torch.cat([im_w.unsqueeze(-1), im_h.unsqueeze(-1)], dim=-1)
-    target_sizes =target_sizes.cuda()
-
-    hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
-    return hand_kp, target_sizes
-
-
 def eval_assembly_result(outputs, targets, cfg, data_loader):
-    key_points, target_sizes = extract_output(outputs, targets, cfg)
+    key_points, target_sizes = extract_assembly_output(outputs, targets, cfg)
     gt_keypoints = [t['keypoints'] for t in targets]
 
     if 'labels' in targets[0].keys():
