@@ -40,6 +40,7 @@ class TempoDataset(ArcticDataset):
         imgnames = list(self.vec_dict.keys())
         imgnames = dataset_utils.downsample(imgnames, split)
         self.imgnames = imgnames
+        self.split = split
         
         # self.aug_data = False
         # self.window_size = args.window_size
@@ -84,11 +85,11 @@ class TempoDataset(ArcticDataset):
             if load_rgb:
                 inputs_list.append(inputs)
             else:
-                img_feats.append(self.vec_dict[name].type(torch.FloatTensor))
-                # mode = 'eval' if self.args.eval else 'train'
-                # with open(f"{self.root}/data/pickle/{self.args.setup}/{mode}/{op.splitext(name.replace('/', '+'))[0]}.pkl", 'rb') as f:
-                #     tmp = pickle.load(f)
-                # img_feats.append(tmp)
+                # img_feats.append(self.vec_dict[name].type(torch.FloatTensor))
+                split = 'val' if 'val' in self.split else 'train'
+                with open(f"{self.root}/data/pickle/{self.args.setup}/{split}/{op.splitext(name.replace('/', '+'))[0]}.pkl", 'rb') as f:
+                    tmp = pickle.load(f)
+                img_feats.append(tmp)
             if self.split_window:
                 targets_list.append(targets)
                 meta_list.append(meta_info)
@@ -107,15 +108,15 @@ class TempoDataset(ArcticDataset):
             # )
             inputs = {"img": torch.stack(inputs_list).squeeze()}
         else:
-            img_feats = torch.stack(img_feats, dim=0)
-            inputs = {"img": img_feats}
-            # res = [
-            #     torch.stack([feat[0] for feat in img_feats]),
-            #     torch.stack([feat[1] for feat in img_feats]),
-            #     torch.stack([feat[2] for feat in img_feats]),
-            #     torch.stack([feat[3] for feat in img_feats])
-            # ]
-            # inputs = {"img": res}
+            # img_feats = torch.stack(img_feats, dim=0)
+            # inputs = {"img": img_feats}
+            res = [
+                torch.stack([feat[0] for feat in img_feats]),
+                torch.stack([feat[1] for feat in img_feats]),
+                torch.stack([feat[2] for feat in img_feats]),
+                torch.stack([feat[3] for feat in img_feats])
+            ]
+            inputs = {"img": res}
 
         targets_list = ld_utils.stack_dl(
             ld_utils.ld2dl(targets_list), dim=0, verbose=False

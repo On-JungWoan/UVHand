@@ -81,7 +81,13 @@ def collate_custom_fn(data_list):
             out_meta_info[key].append(val)
 
     for key in _inputs.keys():
-        out_inputs[key] = torch.cat(out_inputs[key], dim=0)
+        # out_inputs[key] = torch.cat(out_inputs[key], dim=0)
+        out_inputs[key] = [
+            torch.stack([b[0] for b in out_inputs[key]]),
+            torch.stack([b[1] for b in out_inputs[key]]),
+            torch.stack([b[2] for b in out_inputs[key]]),
+            torch.stack([b[3] for b in out_inputs[key]])
+        ]
 
     for key in _targets.keys():
         if key not in ['labels']:
