@@ -10,6 +10,65 @@ import common.torch_utils as torch_utils
 l1_loss = nn.L1Loss(reduction="none")
 mse_loss = nn.MSELoss(reduction="none")
 
+def compute_smooth_loss(
+        args, dim,
+        right_pred, right_gt, left_pred, left_gt, obj_pred, obj_gt,
+        right_valid, left_valid, is_valid
+    ):
+    B, N = args.batch_size, args.window_size
+
+    # right hand
+    rs = compute_acc_vel_loss(
+        right_pred.reshape(B, N, -1),
+        right_gt.reshape(B, N, -1),
+        criterion=mse_loss,
+        valid=right_valid.reshape(B, N, -1).repeat(1,1,dim),
+    )
+
+    # left hand
+    ls = compute_acc_vel_loss(
+        left_pred.reshape(B, N, -1),
+        left_gt.reshape(B, N, -1),
+        criterion=mse_loss,
+        valid=left_valid.reshape(B, N, -1).repeat(1,1,dim),
+    )
+
+    # object
+    _, C, D = obj_pred.shape
+    is_valid = is_valid.unsqueeze(-1).unsqueeze(-1).repeat(1, C, D)
+    obj_pred = obj_pred * is_valid
+    obj_gt = obj_gt * is_valid
+    os = compute_acc_vel_loss(
+        obj_pred.reshape(B, N, -1),
+        obj_gt.reshape(B, N, -1),
+        criterion=mse_loss,
+    )
+
+    return rs + ls + os
+
+
+def compute_acc_vel_loss(pred, gt, criterion, valid=None):
+    pred = pred.permute(0,2,1) # N, C, T
+    gt = gt.permute(0,2,1) # N, C, T
+
+    # check validation
+    if valid is not None:
+        valid = valid.permute(0,2,1)
+        pred = pred * valid
+        gt = gt * valid
+
+    # velocity
+    vel_pred = pred[..., 1:] - pred[..., :-1]
+    vel_gt = gt[..., 1:] - gt[..., :-1]
+
+    # accel
+    acc_pred = vel_pred[..., 1:] - vel_pred[..., :-1]
+    acc_gt = vel_gt[..., 1:] - vel_gt[..., :-1]
+
+    loss_vel = criterion(vel_pred, vel_gt).mean()
+    loss_acc = criterion(acc_pred, acc_gt).mean()
+    return 1.0 * loss_vel + 1.0 * loss_acc
+
 
 def compute_penetration_loss(pred, gt, meta_info):
     is_valid = gt['is_valid']
