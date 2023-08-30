@@ -97,51 +97,17 @@ class DeformableDETR(nn.Module):
                         nn.Conv2d(backbone.num_channels[0], self.hidden_dim, kernel_size=1),
                         nn.GroupNorm(32, self.hidden_dim),
                     )])
-
-        elif self.method == 'arctic_lstm':
-            # gru
-            self.gru = nn.GRU(
-                    input_size=2048, hidden_size=1024,
-                    num_layers=2, bidirectional=True, batch_first=True,
-                )
-            
-            # feat proj
-            self.feature_proj = nn.ModuleList([
-                nn.Sequential(
-                    nn.Linear(2048*self.window_size, 28*28),
-                    nn.LayerNorm(28*28)
-                ),
-                nn.Sequential(
-                    nn.Linear(2048*self.window_size, 14*14),
-                    nn.LayerNorm(14*14)
-                ),
-                nn.Sequential(
-                    nn.Linear(2048*self.window_size, 7*7),
-                    nn.LayerNorm(7*7)
-                ),
-                nn.Sequential(
-                    nn.Linear(2048*self.window_size, 4*4),
-                    nn.LayerNorm(4*4)
-                ),                                
-            ])
-            for proj in self.feature_proj:
+            for proj in self.input_proj:
                 nn.init.xavier_uniform_(proj[0].weight, gain=1)
                 nn.init.constant_(proj[0].bias, 0)
+            self.backbone = backbone
+        else:
+            self.backbone = backbone[1]
+            self.gru = nn.GRU(
+                    input_size=self.hidden_dim, hidden_size=int(self.hidden_dim/2),
+                    num_layers=1, bidirectional=True, batch_first=True,
+                )
 
-            # input proj
-            input_proj_list = []
-            for _ in range(self.num_feature_levels):
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(1, self.hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, self.hidden_dim),
-                ))
-            self.input_proj = nn.ModuleList(input_proj_list)
-
-        for proj in self.input_proj:
-            nn.init.xavier_uniform_(proj[0].weight, gain=1)
-            nn.init.constant_(proj[0].bias, 0)
-
-        self.backbone = backbone
         self.aux_loss = aux_loss
         self.with_box_refine = with_box_refine
         self.two_stage = two_stage
@@ -202,36 +168,15 @@ class DeformableDETR(nn.Module):
         """
 
         if self.method == 'arctic_lstm':
-            # samples = samples.view(-1, self.window_size, 2048)
-            B, W, C = samples.shape
-            device = samples.device
-
-            # bidirectional
-            # h0 = torch.randn(2 * 2, B, C // 2, device=device)
-            # c0 = torch.randn(2 * 2, B, C // 2, device=device)
-            # feat_vec, (hn, cn) = self.lstm(samples, (h0, c0))  # batch, seq, 2*dim
-            feat_vec, _ = self.gru(samples)
-            feat_vec = feat_vec.reshape(B, W*C)
-
-            # feat_vec = self.feature_proj(feat_vec.reshape(B, W*C))
-            # feat_vec = feat_vec.reshape(B, 32, 8, 8)
-            #
-            # feat_vec = self.feature_proj(feat_vec)
-            # feat_vec = feat_vec.view(B, 256, 7, 7)
-            # feat_vec = feat_vec.view(B, -1, 8, 8)
             srcs = []
             masks = []
             pos = []
             for i in range(self.num_feature_levels):
-                src = self.feature_proj[i](feat_vec)
-                f_B, f_C = src.shape
-                sqrt_C = int(np.sqrt(f_C))
-                src = src.reshape(f_B, 1, sqrt_C, sqrt_C)
+                B, N, C, W, H = samples[i].shape
 
-                src = self.input_proj[i](src)
-                s_B, s_C, s_W, s_H = src.shape
-                mask = torch.cuda.FloatTensor(B,s_W,s_H).uniform_() > 0.2
-                pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
+                src = samples[i].view(B*N, C, W, H)
+                mask = torch.cuda.FloatTensor(B*N,W,H).uniform_() > 0.2
+                pos_l = self.backbone(NestedTensor(src, mask)).to(src.dtype)
 
                 srcs.append(src)
                 masks.append(mask)
@@ -289,12 +234,16 @@ class DeformableDETR(nn.Module):
         outputs_obj_rotations = []
 
         for lvl in range(hs.shape[0]):
-            # if self.method == 'arctic_sf':
-            hs_lvl = hs[lvl]
-            # else:
-            #     B, Q, C = hs[lvl].shape
-            #     hs_lvl = self.output_proj[lvl](hs[lvl])
-            #     hs_lvl = hs_lvl.reshape(B, Q, C, self.window_size).permute(0,-1,1,2).reshape(B*self.window_size, Q, C)
+            if self.method == 'arctic_sf':
+                hs_lvl = hs[lvl]
+            else:
+                Q, C = self.num_queries, self.hidden_dim
+                # time step을 고려하기 위해 GRU 통과
+                hs_lvl = hs[lvl]
+                hs_lvl = hs_lvl.reshape(B, N, Q, C) # split batch & frame
+                hs_lvl = hs_lvl.permute(0,2,1,3).reshape(-1, N, C) # B*Q, N, C
+                hs_lvl, _ = self.gru(hs_lvl) # GRU
+                hs_lvl = hs_lvl.reshape(B, Q, N, C).permute(0,2,1,3).reshape(B*N, Q, C) # B*N, Q, C
             
             outputs_class = self.cls_embed[lvl](hs_lvl)
             out_mano_pose = self.mano_pose_embed[lvl](hs_lvl)
@@ -381,21 +330,26 @@ class SetArcticCriterion(nn.Module):
         self.focal_alpha = focal_alpha
         self.cfg = cfg
 
-    def loss_labels(self, outputs, targets, idx, num_boxes, log=True):
+    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
 
-        # idx = self._get_src_permutation_idx(indices)
+        idx = self._get_src_permutation_idx(indices)
         # target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)]).cuda()
         # target_classes_o = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)]).cuda()
+        is_valid = targets['is_valid'].type(torch.bool)
         try:
-            target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+            # target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+            # FIXME : is valid 고려
+            target_classes_o = torch.cat([t[0][indices[i][1]] for i, t in enumerate(targets['labels'])]).to('cuda')
         except:
-            target_classes_o = torch.cat([torch.tensor(t) for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
-            
+            # target_classes_o = torch.cat([torch.tensor(t) for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+            labels = [t for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
+            target_classes_o = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
+
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -660,8 +614,8 @@ class SetArcticCriterion(nn.Module):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        # indices = self.matcher(outputs_without_aux, targets)
-        idx = self.select_indices(cfg, outputs_without_aux, targets, device)
+        indices = self.matcher(outputs_without_aux, targets)
+        # idx = self.select_indices(cfg, outputs_without_aux, targets, device)
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         # num_boxes = sum(len(t["labels"]) for t in targets)
@@ -678,18 +632,18 @@ class SetArcticCriterion(nn.Module):
         losses = {}
         for loss in self.losses:
             kwargs = {}
-            # losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
-            losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
+            losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
+            # losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
 
         arctic_pred = data.search('pred.', replace_to='')
         arctic_gt = data.search('targets.', replace_to='')
-        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info))
+        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
-                # indices = self.matcher(aux_outputs, targets)
-                idx = self.select_indices(cfg, aux_outputs, targets, device)
+                indices = self.matcher(aux_outputs, targets)
+                # idx = self.select_indices(cfg, aux_outputs, targets, device)
 
                 aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
                 aux_arctic_pred = aux_data.search('pred.', replace_to='')
@@ -700,8 +654,8 @@ class SetArcticCriterion(nn.Module):
                     if loss == 'labels':
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
-                    l_dict = self.get_loss(loss, aux_outputs, targets, idx, num_boxes, **kwargs)
-                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info))
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
+                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args))
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
         return losses
@@ -761,7 +715,7 @@ def build(args, cfg):
     # }
     weight_dict = {
         # 'loss_ce': args.cls_loss_coef,
-        'loss_ce': 0.01,
+        'loss_ce': 1,
         'class_error':1,
         'cardinality_error':1,
         "loss/mano/cam_t/r":1.0,
@@ -784,6 +738,8 @@ def build(args, cfg):
         "loss/object/rot":1.0,
         "loss/object/transl":10.0,
         "loss/penetr": 0.1,
+        "loss/smooth/2d": 10.0,
+        "loss/smooth/3d": 10.0,
         # 'loss_cam': args.cls_loss_coef,
         # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
         # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef

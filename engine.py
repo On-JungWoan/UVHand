@@ -380,6 +380,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
                 'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
                 'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
+                'smooth_loss' : round(
+                    loss_dict_reduced_scaled["loss/smooth/2d"].item() + \
+                    loss_dict_reduced_scaled["loss/smooth/3d"].item(), 2
+                ),
                 'loss_mano' : round(
                     loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
                     loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
@@ -429,6 +433,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     'ce_loss' : train_stat['loss_ce'],
                     'loss_CDev' : train_stat['loss/cd'],
                     'loss_penetr' : train_stat['loss/penetr'],
+                    'loss_smooth' : round(
+                        train_stat["loss/smooth/2d"] + \
+                        train_stat["loss/smooth/3d"], 2
+                    ),
                     'loss_mano' : (
                         train_stat["loss/mano/pose/r"] + \
                         train_stat["loss/mano/beta/r"] + \
@@ -543,7 +551,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
                     continue
 
             # Testing script begin from here
-            outputs = model(samples.to(device))
+            outputs = model(samples)
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
 
