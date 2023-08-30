@@ -33,7 +33,9 @@ def construct_args(parser):
             args.valsplit = 'val'
     else:
         args.trainsplit = 'train'
-        if not args.extract:
+        if args.full_validation:
+            args.valsplit = 'val'
+        else:
             args.valsplit = 'minival'
 
     if args.method in ["arctic_sf"]:
