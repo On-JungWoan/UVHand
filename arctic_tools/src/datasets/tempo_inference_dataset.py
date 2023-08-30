@@ -5,6 +5,7 @@ import torch
 from loguru import logger
 from torch.utils.data import Dataset
 
+import pickle
 # from src.datasets.tempo_dataset import TempoDataset
 import common.ld_utils as ld_utils
 import src.datasets.dataset_utils as dataset_utils
@@ -64,9 +65,13 @@ class TempoInferenceDataset(ArcticDataset):
         # all imgnames for this split
         # override the original self.imgnames
         imgnames = [
-            imgname.replace("/data/arctic_data/", "/arctic_data/")
+            "/".join(imgname.split("/")[-4:])
             for imgname in imgnames
-        ]
+        ]        
+        # imgnames = [
+        #     imgname.replace("/data/arctic_data/", "/arctic_data/")
+        #     for imgname in imgnames
+        # ]
         self.imgnames = imgnames
         self.aug_data = False
         self.window_size = args.window_size
@@ -89,6 +94,9 @@ class TempoInferenceDataset(ArcticDataset):
         windows = create_windows(self.imgnames, self.window_size)
         windows = dataset_utils.downsample(windows, split)
 
+        self.root = op.join(args.coco_path, args.dataset_file)
+        self.split = split
+
         self.split_window = args.split_window
         self.windows = windows
         num_imgnames = len(sum(self.windows, []))
@@ -109,8 +117,15 @@ class TempoInferenceDataset(ArcticDataset):
             # always load rgb because in training, we need to visualize
             # too complicated if not load rgb in eval or other situations
             # thus: load both rgb and features
+            
+            split = 'val' if 'val' in self.split else 'train'
+            name = '+'.join(imgname.split("/")[-4:])
+            with open(f"{self.root}/data/pickle/{self.args.setup}/{split}/{op.splitext(name)[0]}.pkl", 'rb') as f:
+                tmp = pickle.load(f)
+            img_feats.append(tmp)            
+            # img_feats.append(self.vec_dict[short_imgname])
+
             inputs, targets, meta_info = self.getitem(imgname, load_rgb=load_rgb)
-            img_feats.append(self.vec_dict[short_imgname])
             inputs_list.append(inputs)
             targets_list.append(targets)
             meta_list.append(meta_info)
@@ -125,9 +140,16 @@ class TempoInferenceDataset(ArcticDataset):
             ld_utils.ld2dl(targets_list), dim=0, verbose=False
         )
         meta_list = ld_utils.stack_dl(ld_utils.ld2dl(meta_list), dim=0, verbose=False)
-        img_feats = torch.stack(img_feats, dim=0).float()
 
+        # img_feats = torch.stack(img_feats, dim=0).float()
+        img_feats = [
+            torch.stack([feat[0] for feat in img_feats]),
+            torch.stack([feat[1] for feat in img_feats]),
+            torch.stack([feat[2] for feat in img_feats]),
+            torch.stack([feat[3] for feat in img_feats])
+        ]        
         inputs_list["img"] = img_feats
+
         targets_list["is_valid"] = torch.FloatTensor(np.array(targets_list["is_valid"]))
         targets_list["left_valid"] = torch.FloatTensor(
             np.array(targets_list["left_valid"])

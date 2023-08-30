@@ -40,11 +40,11 @@ def fetch_dataset_devel(args, is_train, seq=None):
         else:
             DATASET = ArcticDataset
     elif args.method in ["field_lstm", "arctic_lstm"]:
-        DATASET = TempoDataset
-        # if is_train:
-        #     DATASET = TempoDataset
-        # else:
-        #     DATASET = TempoInferenceDataset
+        # DATASET = TempoDataset
+        if is_train:
+            DATASET = TempoDataset
+        else:
+            DATASET = TempoInferenceDataset
     else:
         assert False
     if seq is not None:
