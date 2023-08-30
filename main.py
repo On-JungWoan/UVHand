@@ -218,7 +218,7 @@ def main(args):
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'epoch': epoch,
                 'args': args,
-            }, f'{args.output_dir}/{args.dataset_file}/{epoch}.pth')
+            }, f'{args.output_dir}/{epoch}.pth')
 
             # evaluate
             test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)

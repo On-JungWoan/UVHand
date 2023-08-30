@@ -613,7 +613,7 @@ def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, 
         if utils.get_local_rank() != 0:
             return stats
     
-    save_dir = os.path.join(f'exps/{args.dataset_file}/results.txt')
+    save_dir = os.path.join(f'{args.output_dir}/results.txt')
     epoch = extract_epoch(args.resume) if epoch is None else epoch
     with open(save_dir, 'a') as f:
         if args.test_viewpoint is not None:
