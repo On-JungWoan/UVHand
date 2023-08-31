@@ -105,7 +105,7 @@ class DeformableDETR(nn.Module):
             self.backbone = backbone[1]
             self.gru = nn.GRU(
                     input_size=self.hidden_dim, hidden_size=int(self.hidden_dim/2),
-                    num_layers=2, bidirectional=True, batch_first=True,
+                    num_layers=1, bidirectional=True, batch_first=True,
                 )
 
         self.aux_loss = aux_loss
