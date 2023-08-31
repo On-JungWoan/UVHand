@@ -81,7 +81,7 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--train_stage', default='pose')
     parser.add_argument('--dataset_file', default='FPHA')
-    parser.add_argument('--coco_path', requires=True, type=str)
+    parser.add_argument('--coco_path', required=True, type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
     parser.add_argument('--output_dir', default='./weights/local_test',
