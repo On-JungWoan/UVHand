@@ -105,7 +105,7 @@ class DeformableDETR(nn.Module):
             self.backbone = backbone[1]
             self.gru = nn.GRU(
                     input_size=self.hidden_dim, hidden_size=int(self.hidden_dim/2),
-                    num_layers=1, bidirectional=True, batch_first=True,
+                    num_layers=2, bidirectional=True, batch_first=True,
                 )
 
         self.aux_loss = aux_loss
@@ -136,8 +136,8 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.cls_embed = self.cls_embed
 
         else:
-            # if self.method == 'arctic_lstm':
-            #     self.output_proj = nn.ModuleList([self.output_proj for _ in range(num_pred)])
+            if self.method == 'arctic_lstm':
+                self.gru = nn.ModuleList([self.gru for _ in range(num_pred)])
             self.cls_embed = nn.ModuleList([self.cls_embed for _ in range(num_pred)])
             self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
             self.mano_beta_embed = nn.ModuleList([self.mano_beta_embed for _ in range(num_pred)])
@@ -244,7 +244,7 @@ class DeformableDETR(nn.Module):
                 hs_lvl = hs[lvl]
                 hs_lvl = hs_lvl.reshape(B, N, Q, C) # split batch & frame
                 hs_lvl = hs_lvl.permute(0,2,1,3).reshape(-1, N, C) # B*Q, N, C
-                hs_lvl, _ = self.gru(hs_lvl) # GRU
+                hs_lvl, _ = self.gru[lvl](hs_lvl) # GRU
                 hs_lvl = hs_lvl.reshape(B, Q, N, C).permute(0,2,1,3).reshape(B*N, Q, C) # B*N, Q, C
             
             outputs_class = self.cls_embed[lvl](hs_lvl)
