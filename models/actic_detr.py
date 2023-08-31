@@ -173,9 +173,11 @@ class DeformableDETR(nn.Module):
             pos = []
             for i in range(self.num_feature_levels):
                 B, N, C, W, H = samples[i].shape
+                device = samples[i].device
 
                 src = samples[i].view(B*N, C, W, H)
-                mask = torch.cuda.FloatTensor(B*N,W,H).uniform_() > 0.2
+                # mask = torch.cuda.FloatTensor(B*N,W,H).uniform_() > 0.2
+                mask = torch.zeros(B*N,W,H).to(device).type(torch.bool)
                 pos_l = self.backbone(NestedTensor(src, mask)).to(src.dtype)
 
                 srcs.append(src)
