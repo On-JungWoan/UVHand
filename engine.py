@@ -121,14 +121,14 @@ def train_smoothnet(
 
         # for debug
         pbar.set_postfix(
-            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled)
+            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, show_ce_loss=False)
         )
         samples, targets, meta_info = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    result = create_arctic_loss_sum_dict(loss_value, train_stat)
+    result = create_arctic_loss_sum_dict(loss_value, train_stat, show_ce_loss=False)
     print(result)
 
     # for wandb
@@ -143,62 +143,76 @@ def train_smoothnet(
     return train_stat
 
 
-def test_smoothnet(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False, epoch=None):
-    model.eval()
+def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, args=None, vis=False, epoch=None):
+    # set model and criterion
+    base_model.eval()
+    smoothnet.eval()
     criterion.eval()
 
-    # load prefetcher
+    # prefetcher settings
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
     samples, targets, meta_info = prefetcher.next()
 
-    # set metric logger
+    # set logger
     metric_logger = utils.MetricLogger(delimiter="  ")
     pbar = tqdm(range(len(data_loader)))
 
-    # start training
+    # start testing
     for _ in pbar:
         targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
-        outputs = model(samples)
-
-
         with torch.no_grad():
-            # Testing script begin from here
+            # Inference baseline model
+            outputs = base_model(samples)
 
-            data = prepare_data(args, outputs, targets, meta_info, cfg)
+            # select query
+            base_out = get_arctic_item(outputs, cfg, args.device)
+
+            # smoothing
+            sm_root, sm_pose, sm_shape, sm_angle = smoothnet(base_out)
+
+            # post process
+            query_names = meta_info["query_names"]
+            K = meta_info["intrinsics"]
+            arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
+            data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+
+            # vis results
+            if vis:
+                visualize_arctic_result(args, data, 'pred')
 
             # measure error
-            stats = measure_error(data, args.eval_metrics)
+            else:
+                stats = measure_error(data, args.eval_metrics)
+                for k,v in stats.items():
+                    not_non_idx = ~np.isnan(stats[k])
+                    replace_value = float(stats[k][not_non_idx].mean())
+                    # If all values are nan, drop that key.
+                    if replace_value != replace_value:
+                        stats = stats.rm(k)
+                    else:
+                        stats.overwrite(k, replace_value)
 
-            # treat nan value
-            for k,v in stats.items():
-                not_non_idx = ~np.isnan(stats[k])
-                replace_value = float(stats[k][not_non_idx].mean())
-                # If all values are nan, drop that key.
-                if replace_value != replace_value:
-                    stats = stats.rm(k)
-                else:
-                    stats.overwrite(k, replace_value)
-
-            pbar.set_postfix(stat_round(**stats))
-            metric_logger.update(**stats)
+                pbar.set_postfix(stat_round(**stats))
+                metric_logger.update(**stats)
 
             if args.debug == True:
                 if args.num_debug == _:
                     break
 
+        # next step
         samples, targets, meta_info = prefetcher.next()
 
-    # calc global average
+    # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-    # Only main process can reach out to end of this script.
+    # Only main process can reach out last line of this script.
     if args.distributed:
         if utils.get_local_rank() != 0:
             return stats
     
-    # save results to text file
+    # save results to txt
     save_dir = os.path.join(f'{args.output_dir}/results.txt')
     epoch = extract_epoch(args.resume) if epoch is None else epoch
     with open(save_dir, 'a') as f:

@@ -197,3 +197,13 @@ def extract_epoch(file_path):
     epoch = op.splitext(file_name)[0]
 
     return int(epoch)
+
+
+def make_arctic_environments(args):
+    check_dir = 'datasets/arctic/common/environments.py'
+    env_dir = op.join(args.coco_path, args.dataset_file)
+
+    with open(check_dir, 'w') as f:
+        f.write(
+            f"DATASET_ROOT = '{env_dir}'"
+        )
