@@ -5,7 +5,7 @@ scipy
 trimesh
 opencv-python
 chumpy
-numpy==1.22.3
+numpy==1.22.4
 loguru
 easydict
 pyrender
