@@ -172,7 +172,7 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         "loss/object/radian": loss_radian.to(device),
         "loss/object/rot": loss_rot.to(device),
         "loss/object/transl": loss_transl_o.to(device),
-        # "loss/penetr": pl_or.to(device) + pl_ol.to(device),
+        "loss/penetr": pl_or.to(device) + pl_ol.to(device),
         "loss/smooth/2d": smooth_2d_loss.to(device),
         "loss/smooth/3d": smooth_3d_loss.to(device),
     }
