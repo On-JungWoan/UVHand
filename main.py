@@ -25,19 +25,12 @@ import wandb
 from glob import glob
 from cfg import Config
 import util.misc as utils
-import datasets.samplers as samplers
 from torch.utils.data import DataLoader
-from models.smoothnet import ArcticSmoother, SmoothCriterion
 
 from models import build_model
-from datasets import build_dataset
-from engine import train_pose, test_pose, train_smoothnet
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from util.settings import (
-    get_args_parser, load_resume, extract_epoch, set_training_scheduler,
-)
+from util.settings import get_args_parser, load_resume, extract_epoch, make_arctic_environments
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
-
 
 # main script
 def main(args):
@@ -95,21 +88,20 @@ def main(args):
     else:
         collate_fn=utils.collate_fn
 
-    def collate_test(dataset_train, dataset_val):
-        test_train = [
-            [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
-            [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
-            [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
-            [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
-        ]
-        collate_fn(test_train)
-        test_val = [
-            [dataset_val[13][0], dataset_val[13][1], dataset_val[13][2]],
-            [dataset_val[1][0], dataset_val[1][1], dataset_val[1][2]],
-            [dataset_val[2][0], dataset_val[2][1], dataset_val[2][2]],
-            [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
-        ]    
-        collate_fn(test_val)
+    # test_train = [
+    #     [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
+    #     [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
+    #     [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
+    #     [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
+    # ]
+    # test_val = [
+    #     [dataset_val[13][0], dataset_val[13][1], dataset_val[13][2]],
+    #     [dataset_val[1][0], dataset_val[1][1], dataset_val[1][2]],
+    #     [dataset_val[2][0], dataset_val[2][1], dataset_val[2][2]],
+    #     [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
+    # ]    
+    # collate_fn(test_train)
+    # collate_fn(test_val)
 
     if args.distributed:
         if args.cache_mode:
@@ -137,8 +129,37 @@ def main(args):
                                 pin_memory=True)
 
     # lr_backbone_names = ["backbone.0", "backbone.neck", "input_proj", "transformer.encoder"]
+    def match_name_keywords(n, name_keywords):
+        out = False
+        for b in name_keywords:
+            if b in n:
+                out = True
+                break
+        return out
 
-    optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp)
+    param_dicts = [
+        {
+            "params":
+                [p for n, p in model_without_ddp.named_parameters()
+                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr,
+        },
+        {
+            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
+            "lr": args.lr_backbone,
+        },
+        {
+            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr * args.lr_linear_proj_mult,
+        }
+    ]
+    if args.sgd:
+        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
+                                    weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+                                      weight_decay=args.weight_decay)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -148,6 +169,7 @@ def main(args):
         checkpoint = torch.load(args.frozen_weights, map_location='cpu')
         model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
+    output_dir = Path(args.output_dir)
     if args.resume:
         assert not args.resume_dir
         load_resume(args, model_without_ddp, args.resume)
@@ -170,30 +192,21 @@ def main(args):
         else:
             test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
         sys.exit(0)
-        dict
+        
     # for training
     else:
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 sampler_train.set_epoch(epoch)
 
-            # train smoothnet
-            if args.train_smoothnet:
-                from models.actic_detr import WEIGHT_DICT
-                ignore_list = ['loss_ce', 'class_error', 'cardinality_error']
-                for ignore in ignore_list:
-                    WEIGHT_DICT.pop(ignore)
+            # collate_fn(
+            #     data_loader_train.dataset[0] + data_loader_train.dataset[1] + data_loader_train.dataset[2] + data_loader_train.dataset[3]
+            # )
 
-                smoother = ArcticSmoother(args.window_size, args.window_size).to(device)
-                smoother_criterion = SmoothCriterion(WEIGHT_DICT)
-                optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)
-
-                train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
-            # origin training
-            else:
-                train_pose(
-                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
-                )
+            # train
+            train_pose(
+                model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
+            )
             lr_scheduler.step()
 
             utils.save_on_master({
@@ -222,5 +235,11 @@ if __name__ == '__main__':
 
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # check arctic env
+    make_arctic_environments(args)
+    from datasets import build_dataset
+    import datasets.samplers as samplers
+    from engine import train_pose, test_pose    
 
     main(args)
