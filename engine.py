@@ -27,12 +27,201 @@ from datasets.data_prefetcher import data_prefetcher
 from datasets.arctic_prefetcher import data_prefetcher as arctic_prefetcher
 
 from arctic_tools.visualizer import visualize_arctic_result
-from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
+from arctic_tools.process import arctic_pre_process, prepare_data, measure_error, get_arctic_item, make_output
 from util.tools import (
     extract_feature, visualize_assembly_result, eval_assembly_result, stat_round,
     create_arctic_loss_dict, create_arctic_loss_sum_dict, create_arctic_score_dict,
 )
 # os.environ["CUB_HOME"] = os.getcwd() + '/cub-1.10.0'
+
+
+def train_smoothnet(
+        base_model, smoothnet, criterion, data_loader, optimizer, device, epoch, max_norm=0, args=None, cfg=None
+    ):
+    # set model and criterion
+    base_model.eval()
+    smoothnet.train()
+    criterion.train()
+
+    # set logger
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    metric_logger.add_meter('grad_norm', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    header = 'Epoch: [{}]'.format(epoch)
+    print(header)
+
+    # prefetcher settings
+    prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
+    samples, targets, meta_info = prefetcher.next()
+    pbar = tqdm(range(len(data_loader)))
+
+    # start training
+    for _ in pbar:
+        targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+        # Inference baseline model
+        with torch.no_grad():
+            outputs = base_model(samples)
+
+            # select query
+            base_out = get_arctic_item(outputs, cfg, args.device)
+        
+        # smoothing
+        sm_root, sm_pose, sm_shape, sm_angle = smoothnet(base_out)
+        
+        # post process
+        query_names = meta_info["query_names"]
+        K = meta_info["intrinsics"]
+        arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
+        data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+
+        # calc losses
+        loss_dict = criterion(args, data, meta_info)
+        weight_dict = criterion.weight_dict
+        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+
+        # for arctic
+        for k, v in loss_dict.items():
+            if len(v.shape) == 1:
+                loss_dict[k] = v[0]
+
+        # reduce losses over all GPUs for logging purposes
+        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                    for k, v in loss_dict_reduced.items()}
+        loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
+        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+        loss_value = losses_reduced_scaled.item()
+
+        # loss check
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            print(loss_dict_reduced)
+            sys.exit(1)
+
+        # back propagation
+        optimizer.zero_grad()
+        losses.backward()
+        if max_norm > 0:
+            grad_total_norm = torch.nn.utils.clip_grad_norm_(smoothnet.parameters(), max_norm)
+        else:
+            grad_total_norm = utils.get_total_grad_norm(smoothnet.parameters(), max_norm)
+        optimizer.step()
+
+        # logger update
+        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        metric_logger.update(grad_norm=grad_total_norm)
+
+        # for early stop
+        if args.debug:
+            if args.num_debug == _:
+                break
+
+        # for debug
+        pbar.set_postfix(
+            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled)
+        )
+        samples, targets, meta_info = prefetcher.next()
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    result = create_arctic_loss_sum_dict(loss_value, train_stat)
+    print(result)
+
+    # for wandb
+    if args is not None and args.wandb:
+        if args.distributed:
+            if utils.get_local_rank() != 0:
+                return train_stat
+        # check dataset
+        wandb.log(result, step=epoch)
+
+    # end training process
+    return train_stat
+
+
+def test_smoothnet(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False, epoch=None):
+    model.eval()
+    criterion.eval()
+
+    # load prefetcher
+    prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
+    samples, targets, meta_info = prefetcher.next()
+
+    # set metric logger
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    pbar = tqdm(range(len(data_loader)))
+
+    # start training
+    for _ in pbar:
+        targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+        outputs = model(samples)
+
+
+        with torch.no_grad():
+            # Testing script begin from here
+
+            data = prepare_data(args, outputs, targets, meta_info, cfg)
+
+            # measure error
+            stats = measure_error(data, args.eval_metrics)
+
+            # treat nan value
+            for k,v in stats.items():
+                not_non_idx = ~np.isnan(stats[k])
+                replace_value = float(stats[k][not_non_idx].mean())
+                # If all values are nan, drop that key.
+                if replace_value != replace_value:
+                    stats = stats.rm(k)
+                else:
+                    stats.overwrite(k, replace_value)
+
+            pbar.set_postfix(stat_round(**stats))
+            metric_logger.update(**stats)
+
+            if args.debug == True:
+                if args.num_debug == _:
+                    break
+
+        samples, targets, meta_info = prefetcher.next()
+
+    # calc global average
+    metric_logger.synchronize_between_processes()
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+    # Only main process can reach out to end of this script.
+    if args.distributed:
+        if utils.get_local_rank() != 0:
+            return stats
+    
+    # save results to text file
+    save_dir = os.path.join(f'{args.output_dir}/results.txt')
+    epoch = extract_epoch(args.resume) if epoch is None else epoch
+    with open(save_dir, 'a') as f:
+        if args.test_viewpoint is not None:
+            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+        for key, val in stats.items():
+            f.write(f'{key:30} : {val}\n')
+        f.write('\n\n')
+
+    # save results to wandb
+    if args is not None and args.wandb:
+        if args.dataset_file == 'arctic':
+            wandb.log(
+                create_arctic_score_dict(stats), step=epoch
+            )
+        else:
+            wandb.log(
+                {
+                    'mpjpe' : stats['mpjpe'],
+                }, step=epoch
+            )            
+    return stats
 
 
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,

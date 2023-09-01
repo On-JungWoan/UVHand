@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+from arctic_tools.process import make_output
+from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
 
 class SmootherResBlock(nn.Module):
     def __init__(self, in_channels, hidden_channels, dropout=0.5):
@@ -120,3 +122,61 @@ class MotionSmoother(nn.Module):
         x = self.fusion_layer(x)
         x = x.permute(0, 2, 1)
         return x
+
+
+class ArcticSmoother(nn.Module):
+    def __init__(self, batch_size, window_size):
+        super().__init__()
+
+        self.mano_pose_smoother = MotionSmoother(window_size, batch_size)
+        self.mano_shape_smoother = MotionSmoother(window_size, batch_size)
+        self.obj_rot_smoother = MotionSmoother(window_size, batch_size)
+        self.obj_rad_smoother = MotionSmoother(window_size, batch_size)
+        self.mano_root_smoother = MotionSmoother(window_size, batch_size)
+        self.obj_root_smoother = MotionSmoother(window_size, batch_size)
+
+        self.batch_size = batch_size
+        self.window_size = window_size
+
+    def forward(self, output):
+        # select query
+        root, mano_pose, mano_shape, obj_angle = output
+        root_l, root_r, root_o = root
+        mano_pose_l, mano_pose_r = mano_pose
+        mano_shape_l, mano_shape_r = mano_shape
+        obj_rot, obj_rad = obj_angle
+
+        smoothed_root = [
+            self.mano_root_smoother(root_l.view(-1, self.window_size, 3)).reshape(-1, 3),
+            self.mano_root_smoother(root_r.view(-1, self.window_size, 3)).reshape(-1, 3),
+            self.obj_root_smoother(root_o.view(-1, self.window_size, 3)).reshape(-1, 3)
+        ]
+        smoothed_pose = [
+            self.mano_pose_smoother(mano_pose_l.view(-1, self.window_size, 48)).reshape(-1, 48),
+            self.mano_pose_smoother(mano_pose_r.view(-1, self.window_size, 48)).reshape(-1, 48)
+        ]
+        smoothed_shape = [
+            self.mano_shape_smoother(mano_shape_l.view(-1, self.window_size, 10)).reshape(-1, 10),
+            self.mano_shape_smoother(mano_shape_r.view(-1, self.window_size, 10)).reshape(-1, 10)
+        ]
+        smoothed_obj = [
+            self.obj_rot_smoother(obj_rot.view(-1, self.window_size, 3)).reshape(-1,3),
+            self.obj_rad_smoother(obj_rad.view(-1, self.window_size, 1)).reshape(-1,1)
+        ]
+
+        return smoothed_root, smoothed_pose, smoothed_shape, smoothed_obj
+
+
+class SmoothCriterion(nn.Module):
+    def __init__(self, weight_dict):
+        super().__init__()
+        self.weight_dict = weight_dict
+
+    def forward(self, args, data, meta_info):
+        arctic_pred = data.search('pred.', replace_to='')
+        arctic_gt = data.search('targets.', replace_to='')
+
+        losses = {}
+        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
+
+        return losses

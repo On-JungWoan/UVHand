@@ -126,9 +126,49 @@ def get_args_parser():
     parser.add_argument('--seq', default=None, type=str)
     parser.add_argument('--split_window', default=False, action='store_true')
     parser.add_argument('--feature_type', default='local_fm', choices=['origin', 'global_fm', 'local_fm'])
-    parser.add_argument('--temporal_transformer', default=False, action='store_true')
+    parser.add_argument('--train_smoothnet', default=False, action='store_true')
 
     return parser
+
+
+def match_name_keywords(n, name_keywords):
+    out = False
+    for b in name_keywords:
+        if b in n:
+            out = True
+            break
+    return out
+
+
+def set_training_scheduler(args, model, general_lr=None):
+    if general_lr is None:
+        general_lr = args.lr
+
+    param_dicts = [
+        {
+            "params":
+                [p for n, p in model.named_parameters()
+                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": general_lr,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
+            "lr": args.lr_backbone,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr * args.lr_linear_proj_mult,
+        }
+    ]
+    if args.sgd:
+        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
+                                    weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+                                      weight_decay=args.weight_decay)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+
+    return optimizer, lr_scheduler
 
 
 def load_resume(args, model, resume):

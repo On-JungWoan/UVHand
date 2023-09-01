@@ -8,12 +8,11 @@ import matplotlib.pyplot as plt
 from pytorch3d.ops.knn import knn_points
 
 
-def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled):
-    return {
+def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, show_ce_loss=True):
+    res =  {
         'loss' : loss_value,
-        'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
         'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
-        # 'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
+        'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
         'smooth_loss' : round(
             loss_dict_reduced_scaled["loss/smooth/2d"].item() + \
             loss_dict_reduced_scaled["loss/smooth/3d"].item(), 2
@@ -47,13 +46,17 @@ def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled):
         ),
     }
 
+    if show_ce_loss:
+        res['ce_loss'] = loss_dict_reduced_scaled['loss_ce'].item()
 
-def create_arctic_loss_sum_dict(loss_value, train_stat):
-    return {
+    return res
+
+
+def create_arctic_loss_sum_dict(loss_value, train_stat, show_ce_loss=True):
+    res = {
         'loss' : loss_value,
-        'ce_loss' : train_stat['loss_ce'],
         'loss_CDev' : train_stat['loss/cd'],
-        # 'loss_penetr' : train_stat['loss/penetr'],
+        'loss_penetr' : train_stat['loss/penetr'],
         'loss_smooth' : round(
             train_stat["loss/smooth/2d"] + \
             train_stat["loss/smooth/3d"], 2
@@ -87,6 +90,10 @@ def create_arctic_loss_sum_dict(loss_value, train_stat):
         )
     }
 
+    if show_ce_loss:
+        res['ce_loss'] = train_stat['loss_ce']
+
+    return res
 
 def create_arctic_score_dict(stats):
     return {

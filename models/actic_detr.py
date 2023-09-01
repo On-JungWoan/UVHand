@@ -32,6 +32,38 @@ from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
 
 import sys
 
+WEIGHT_DICT = {
+    # 'loss_ce': args.cls_loss_coef,
+    'loss_ce': 1,
+    'class_error':1,
+    'cardinality_error':1,
+    "loss/mano/cam_t/r":1.0,
+    "loss/mano/cam_t/l":1.0,
+    "loss/object/cam_t":1.0,
+    "loss/mano/kp2d/r":5.0,
+    "loss/mano/kp3d/r":5.0,
+    "loss/mano/pose/r":10.0,
+    "loss/mano/beta/r":0.001,
+    "loss/mano/kp2d/l":5.0,
+    "loss/mano/kp3d/l":5.0,
+    "loss/mano/pose/l":10.0,
+    # "loss/cd":1.0,
+    "loss/cd":10.0,
+    "loss/mano/transl/l":10.0,
+    "loss/mano/beta/l":0.001,
+    "loss/object/kp2d":1.0,
+    "loss/object/kp3d":5.0,
+    "loss/object/radian":1.0,
+    "loss/object/rot":1.0,
+    "loss/object/transl":10.0,
+    # "loss/penetr": 0.1,
+    "loss/smooth/2d": 1.0,
+    "loss/smooth/3d": 1.0,
+    # 'loss_cam': args.cls_loss_coef,
+    # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
+    # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
+}
+
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
@@ -142,7 +174,6 @@ class DeformableDETR(nn.Module):
             raise Exception('Not implemented yet')
             # hack implementation for two-stage
             self.transformer.decoder.cls_embed = self.cls_embed
-        self.transformer.decoder.get_reference_point = self.get_reference_point 
 
     def forward(self, samples, is_extract=False):
         """ The forward expects a NestedTensor, which consists of:
@@ -275,20 +306,6 @@ class DeformableDETR(nn.Module):
                         outputs_cams[0][:-1], outputs_cams[1][:-1]
                     )
             ] 
-
-    def get_reference_point(self, bs:int, mano_params:list, class_indices:torch.Tensor, reference_points:torch.Tensor):
-        out_mano_pose, out_mano_beta = mano_params
-
-        hand_lr_idx = [class_indices == self.cfg.hand_idx[0], class_indices == self.cfg.hand_idx[1]]
-        MANO_LAYER = [self.mano_left,self.mano_right]
-        tmp = torch.zeros_like(reference_points)
-        
-        for b in range(bs):
-            for mano, idx in zip(MANO_LAYER, hand_lr_idx):
-                _, out_key = mano(out_mano_pose[b][idx[b]], out_mano_beta[b][idx[b]])
-                tmp[b][idx[b]] = out_key[...,:2]
-
-        return tmp
 
 
 class SetArcticCriterion(nn.Module):
@@ -698,50 +715,20 @@ def build(args, cfg):
     #     "loss/object/kp3d":5.0,
     #     "loss/object/transl":1.0,
     # }
-    weight_dict = {
-        # 'loss_ce': args.cls_loss_coef,
-        'loss_ce': 1,
-        'class_error':1,
-        'cardinality_error':1,
-        "loss/mano/cam_t/r":1.0,
-        "loss/mano/cam_t/l":1.0,
-        "loss/object/cam_t":1.0,
-        "loss/mano/kp2d/r":5.0,
-        "loss/mano/kp3d/r":5.0,
-        "loss/mano/pose/r":10.0,
-        "loss/mano/beta/r":0.001,
-        "loss/mano/kp2d/l":5.0,
-        "loss/mano/kp3d/l":5.0,
-        "loss/mano/pose/l":10.0,
-        # "loss/cd":1.0,
-        "loss/cd":10.0,
-        "loss/mano/transl/l":10.0,
-        "loss/mano/beta/l":0.001,
-        "loss/object/kp2d":1.0,
-        "loss/object/kp3d":5.0,
-        "loss/object/radian":1.0,
-        "loss/object/rot":1.0,
-        "loss/object/transl":10.0,
-        # "loss/penetr": 0.1,
-        "loss/smooth/2d": 1.0,
-        "loss/smooth/3d": 1.0,
-        # 'loss_cam': args.cls_loss_coef,
-        # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
-        # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
-    }
 
     # TODO this is a hack
+    loss_weights = WEIGHT_DICT.copy()
     if args.aux_loss:
         aux_weight_dict = {}
         for i in range(args.dec_layers - 1):
-            aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
-        aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
-        weight_dict.update(aux_weight_dict)
+            aux_weight_dict.update({k + f'_{i}': v for k, v in loss_weights.items()})
+        aux_weight_dict.update({k + f'_enc': v for k, v in loss_weights.items()})
+        loss_weights.update(aux_weight_dict)
 
     # losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
     losses = ['labels',]
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
-    criterion = SetArcticCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha, cfg=cfg)
+    criterion = SetArcticCriterion(num_classes, matcher, loss_weights, losses, focal_alpha=args.focal_alpha, cfg=cfg)
     criterion.to(device)
 
     return model, criterion
