@@ -188,7 +188,10 @@ class ArcticDataset(Dataset):
         targets = {}
         meta_info = {}
         # inputs["img"] = norm_img
-        meta_info["imgname"] = imgname
+        if load_rgb:
+            meta_info["imgname"] = '/'.join(imgname.split('/')[-4:])
+        else:
+            meta_info["imgname"] = imgname
         rot_r = data_cam["rot_r_cam"][vidx, view_idx]
         rot_l = data_cam["rot_l_cam"][vidx, view_idx]
 

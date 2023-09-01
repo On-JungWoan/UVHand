@@ -81,9 +81,9 @@ def collate_custom_fn(data_list):
             out_meta_info[key].append(val)
 
     for key in _inputs.keys():
-        if isinstance(out_inputs[key], torch.Tensor):
+        try:
             out_inputs[key] = torch.cat(out_inputs[key], dim=0)
-        else:
+        except:
             assert isinstance(out_inputs[key], list)
             out_inputs[key] = [
                 torch.stack([b[0] for b in out_inputs[key]]),
