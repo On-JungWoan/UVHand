@@ -247,3 +247,13 @@ def extract_feature(
             key = key.replace('.jpg', '')
             with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
                 pickle.dump(res, f)
+
+
+def make_arctic_environments(args):
+    check_dir = 'datasets/arctic/common/environments.py'
+    env_dir = op.join(args.coco_path, args.dataset_file)
+
+    with open(check_dir, 'w') as f:
+        f.write(
+            f"DATASET_ROOT = '{env_dir}'"
+        )

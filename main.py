@@ -25,14 +25,11 @@ import wandb
 from glob import glob
 from cfg import Config
 import util.misc as utils
-import datasets.samplers as samplers
 from torch.utils.data import DataLoader
 
 from models import build_model
-from datasets import build_dataset
-from engine import train_pose, test_pose
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from util.settings import get_args_parser, load_resume, extract_epoch
+from util.settings import get_args_parser, load_resume, extract_epoch, make_arctic_environments
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
 
 # main script
@@ -238,5 +235,11 @@ if __name__ == '__main__':
 
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # check arctic env
+    make_arctic_environments(args)
+    from datasets import build_dataset
+    import datasets.samplers as samplers
+    from engine import train_pose, test_pose    
 
     main(args)
