@@ -125,8 +125,50 @@ def get_args_parser():
     # for custom arctic
     parser.add_argument('--seq', default=None, type=str)
     parser.add_argument('--split_window', default=False, action='store_true')
+    parser.add_argument('--feature_type', default='local_fm', choices=['origin', 'global_fm', 'local_fm'])
+    parser.add_argument('--train_smoothnet', default=False, action='store_true')
 
     return parser
+
+
+def match_name_keywords(n, name_keywords):
+    out = False
+    for b in name_keywords:
+        if b in n:
+            out = True
+            break
+    return out
+
+
+def set_training_scheduler(args, model, general_lr=None):
+    if general_lr is None:
+        general_lr = args.lr
+
+    param_dicts = [
+        {
+            "params":
+                [p for n, p in model.named_parameters()
+                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": general_lr,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
+            "lr": args.lr_backbone,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr * args.lr_linear_proj_mult,
+        }
+    ]
+    if args.sgd:
+        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
+                                    weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+                                      weight_decay=args.weight_decay)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+
+    return optimizer, lr_scheduler
 
 
 def load_resume(args, model, resume):
@@ -155,105 +197,3 @@ def extract_epoch(file_path):
     epoch = op.splitext(file_name)[0]
 
     return int(epoch)
-
-
-def extract_assembly_output(outputs, targets, cfg):
-    # model output
-    out_logits,  pred_keypoints = outputs['pred_logits'], outputs['pred_keypoints']
-    prob = out_logits.sigmoid()
-    B, num_queries, num_classes = prob.shape
-
-    # hand index select
-    hand_idx = []
-    for i in cfg.hand_idx:
-        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1))
-    hand_idx = torch.stack(hand_idx, dim=-1)
-
-    # de-normalize
-    hand_kp = torch.gather(pred_keypoints, 1, hand_idx.unsqueeze(-1).repeat(1,1,63)).reshape(B, -1 ,21, 3)
-    orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-    im_h, im_w = orig_target_sizes[:,0], orig_target_sizes[:,1]
-    target_sizes = torch.cat([im_w.unsqueeze(-1), im_h.unsqueeze(-1)], dim=-1)
-    target_sizes =target_sizes.cuda()
-
-    hand_kp[...,:2] *=  target_sizes.unsqueeze(1).unsqueeze(1); hand_kp[...,2] *= 1000
-    return hand_kp, target_sizes
-
-
-def extract_feature(
-        args, model, samples, targets, meta_info, data_loader, cfg,
-        check_mode = False
-    ):
-    # dir settings
-    B = samples.tensors.size(0)
-    root = op.join(args.coco_path, args.dataset_file)
-
-    # for arctic
-    if args.dataset_file == 'arctic':
-        # check missing files
-        if check_mode:
-            for name in data_loader.dataset.imgnames:
-                save_name = '+'.join(name.split('/')[-4:])
-                mode = 'val' if args.eval else 'train'
-                save_dir = f'{root}/data/pickle/{args.setup}_2048/{mode}/{op.splitext(save_name)[0]}.pkl'
-                if not op.isfile(save_dir):
-                    print(save_name)
-                    img = data_loader.dataset.getitem(name, load_rgb=True)[0]
-                    srcs = model(img.unsqueeze(0).cuda(), is_extract=True)
-                    with open(save_dir, 'wb') as f:
-                        pickle.dump(
-                            [
-                                srcs[0].tensors[0].cpu().detach(),
-                                srcs[1].tensors[0].cpu().detach(),
-                                srcs[2].tensors[0].cpu().detach()
-                            ], f)
-                        
-        # save results
-        else:
-            srcs = model(samples, is_extract=True)
-            for i in range(B):
-                save_name = '+'.join(meta_info['imgname'][i].split('/')[-4:])
-                mode = 'val' if args.eval else 'train'
-                save_dir = f'{root}/data/pickle/{args.setup}_2048/{mode}/{op.splitext(save_name)[0]}.pkl'
-                with open(save_dir, 'wb') as f:
-                    pickle.dump(
-                        [
-                            srcs[0].tensors[i].cpu().detach(),
-                            srcs[1].tensors[i].cpu().detach(),
-                            srcs[2].tensors[i].cpu().detach()
-                        ], f)
-
-        # # just debug
-        # with open(f'{root}/data/pickle/{args.setup}/s02+ketchup_grab_01+0+00434.pkl', 'rb') as f:
-        #     test = pickle.load(f)
-
-
-    # for assembly hands
-    elif args.dataset_file == 'AssemblyHands':
-        outputs = model(samples)
-        
-        # post-process output
-        out_key = extract_assembly_output(outputs, targets, cfg)[0]
-        B = out_key.size(0)
-
-        # store result
-        res = {}
-        for idx in range(B):
-            key = data_loader.dataset.coco.loadImgs(targets[idx]['image_id'].item())[0]['file_name']
-            value = out_key[idx]
-
-            res[key] = value
-            key = key.replace('/', '+')
-            key = key.replace('.jpg', '')
-            with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
-                pickle.dump(res, f)
-
-
-def make_arctic_environments(args):
-    check_dir = 'datasets/arctic/common/environments.py'
-    env_dir = op.join(args.coco_path, args.dataset_file)
-
-    with open(check_dir, 'w') as f:
-        f.write(
-            f"DATASET_ROOT = '{env_dir}'"
-        )
