@@ -31,12 +31,17 @@ from models.smoothnet import ArcticSmoother, SmoothCriterion
 
 from models import build_model
 from datasets import build_dataset
-from engine import train_pose, test_pose, train_smoothnet
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
+from engine import train_pose, test_pose, train_smoothnet, test_smoothnet
 from util.settings import (
     get_args_parser, load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
 )
+
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
+from models.actic_detr import WEIGHT_DICT
+ignore_list = ['loss_ce', 'class_error', 'cardinality_error']
+for ignore in ignore_list:
+    WEIGHT_DICT.pop(ignore)
 
 
 # main script
@@ -179,33 +184,41 @@ def main(args):
 
             # train smoothnet
             if args.train_smoothnet:
-                from models.actic_detr import WEIGHT_DICT
-                ignore_list = ['loss_ce', 'class_error', 'cardinality_error']
-                for ignore in ignore_list:
-                    WEIGHT_DICT.pop(ignore)
-
                 smoother = ArcticSmoother(args.window_size, args.window_size).to(device)
                 smoother_criterion = SmoothCriterion(WEIGHT_DICT)
                 optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)
 
                 train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
+                lr_scheduler.step()
+
+                utils.save_on_master({
+                    'model': smoother.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                }, f'{args.output_dir}/{epoch}.pth')
+
+                # evaluate
+                test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+
             # origin training
             else:
                 train_pose(
                     model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
                 )
-            lr_scheduler.step()
+                lr_scheduler.step()
 
-            utils.save_on_master({
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
-                'epoch': epoch,
-                'args': args,
-            }, f'{args.output_dir}/{epoch}.pth')
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                }, f'{args.output_dir}/{epoch}.pth')
 
-            # evaluate
-            test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                # evaluate
+                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -222,7 +235,7 @@ if __name__ == '__main__':
 
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    
+
     # check arctic env
     make_arctic_environments(args)
     from datasets import build_dataset
