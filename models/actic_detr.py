@@ -40,7 +40,7 @@ class DeformableDETR(nn.Module):
     """ This is the Deformable DETR module that performs object detection """
     def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, 
                  aux_loss=True, with_box_refine=False, two_stage=False, cfg=None,
-                 method=None, window_size=None):
+                 method=None, window_size=None, feature_type='local_fm'):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -58,6 +58,7 @@ class DeformableDETR(nn.Module):
         self.hidden_dim = transformer.d_model
         self.method = method
         self.window_size = window_size
+        self.feature_type = feature_type
 
         self.cls_embed = nn.Linear(self.hidden_dim, num_classes)
         self.mano_pose_embed = nn.Linear(self.hidden_dim, 48)
@@ -71,14 +72,11 @@ class DeformableDETR(nn.Module):
         self.cfg = cfg
 
         self.query_embed = nn.Embedding(num_queries, self.hidden_dim*2)
-        if self.method == 'arctic_sf':
+        if self.feature_type == 'origin':
             if num_feature_levels > 1:
                 num_backbone_outs = len(backbone.strides)
                 input_proj_list = []
                 for _ in range(num_backbone_outs):
-                    # if self.method == 'arctic_lstm':
-                    #     in_channels = 32
-                    # else:
                     in_channels = backbone.num_channels[_]
                     input_proj_list.append(nn.Sequential(
                         nn.Conv2d(in_channels, self.hidden_dim, kernel_size=1),
@@ -102,11 +100,8 @@ class DeformableDETR(nn.Module):
                 nn.init.constant_(proj[0].bias, 0)
             self.backbone = backbone
         else:
-            self.backbone = backbone[1]
-            self.gru = nn.GRU(
-                    input_size=self.hidden_dim, hidden_size=int(self.hidden_dim/2),
-                    num_layers=1, bidirectional=True, batch_first=True,
-                )
+            # only positional encoding
+            self.backbone = backbone[1]            
 
         self.aux_loss = aux_loss
         self.with_box_refine = with_box_refine
@@ -136,8 +131,6 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.cls_embed = self.cls_embed
 
         else:
-            if self.method == 'arctic_lstm':
-                self.gru = nn.ModuleList([self.gru for _ in range(num_pred)])
             self.cls_embed = nn.ModuleList([self.cls_embed for _ in range(num_pred)])
             self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
             self.mano_beta_embed = nn.ModuleList([self.mano_beta_embed for _ in range(num_pred)])
@@ -167,23 +160,7 @@ class DeformableDETR(nn.Module):
                                 dictionnaries containing the two above keys for each decoder layer.
         """
 
-        if self.method == 'arctic_lstm':
-            srcs = []
-            masks = []
-            pos = []
-            for i in range(self.num_feature_levels):
-                B, N, C, W, H = samples[i].shape
-                device = samples[i].device
-
-                src = samples[i].view(B*N, C, W, H)
-                # mask = torch.cuda.FloatTensor(B*N,W,H).uniform_() > 0.2
-                mask = torch.zeros(B*N,W,H).to(device).type(torch.bool)
-                pos_l = self.backbone(NestedTensor(src, mask)).to(src.dtype)
-
-                srcs.append(src)
-                masks.append(mask)
-                pos.append(pos_l)
-        else:
+        if self.feature_type == 'origin':
             ### backbone ###
             if not isinstance(samples, NestedTensor):
                 samples = nested_tensor_from_tensor_list(samples)
@@ -213,8 +190,22 @@ class DeformableDETR(nn.Module):
                     masks.append(mask)
                     pos.append(pos_l)
 
-        # if is_extract:
-        #     return srcs
+        else:
+            srcs = []
+            masks = []
+            pos = []
+            for i in range(self.num_feature_levels):
+                B, N, C, W, H = samples[i].shape
+                device = samples[i].device
+
+                src = samples[i].view(B*N, C, W, H)
+                # mask = torch.cuda.FloatTensor(B*N,W,H).uniform_() > 0.2
+                mask = torch.zeros(B*N,W,H).to(device).type(torch.bool)
+                pos_l = self.backbone(NestedTensor(src, mask)).to(src.dtype)
+
+                srcs.append(src)
+                masks.append(mask)
+                pos.append(pos_l)
 
         query_embeds = None
         query_embeds = self.query_embed.weight ############## two_stage
@@ -236,16 +227,7 @@ class DeformableDETR(nn.Module):
         outputs_obj_rotations = []
 
         for lvl in range(hs.shape[0]):
-            if self.method == 'arctic_sf':
-                hs_lvl = hs[lvl]
-            else:
-                Q, C = self.num_queries, self.hidden_dim
-                # time step을 고려하기 위해 GRU 통과
-                hs_lvl = hs[lvl]
-                hs_lvl = hs_lvl.reshape(B, N, Q, C) # split batch & frame
-                hs_lvl = hs_lvl.permute(0,2,1,3).reshape(-1, N, C) # B*Q, N, C
-                hs_lvl, _ = self.gru[lvl](hs_lvl) # GRU
-                hs_lvl = hs_lvl.reshape(B, Q, N, C).permute(0,2,1,3).reshape(B*N, Q, C) # B*N, Q, C
+            hs_lvl = hs[lvl]
             
             outputs_class = self.cls_embed[lvl](hs_lvl)
             out_mano_pose = self.mano_pose_embed[lvl](hs_lvl)
@@ -695,7 +677,8 @@ def build(args, cfg):
         two_stage=args.two_stage,
         cfg = cfg,
         method = args.method,
-        window_size= args.window_size
+        window_size= args.window_size,
+        feature_type=args.feature_type
     )
     matcher = build_matcher(args, cfg)
     # weight_dict = {

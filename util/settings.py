@@ -125,6 +125,8 @@ def get_args_parser():
     # for custom arctic
     parser.add_argument('--seq', default=None, type=str)
     parser.add_argument('--split_window', default=False, action='store_true')
+    parser.add_argument('--feature_type', default='local_fm', choices=['origin', 'global_fm', 'local_fm'])
+    parser.add_argument('--temporal_transformer', default=False, action='store_true')
 
     return parser
 

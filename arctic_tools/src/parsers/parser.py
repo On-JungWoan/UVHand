@@ -86,4 +86,7 @@ def construct_args(parser):
         args.log_every = 5
         args.window_size = 3
 
+    if args.feature_type == 'global_fm':
+        args.position_embedding == 'learned'
+
     return args

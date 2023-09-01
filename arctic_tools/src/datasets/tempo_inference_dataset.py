@@ -48,6 +48,7 @@ class TempoInferenceDataset(ArcticDataset):
 
         # load image features
         data_p = f"{root}/data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
+
         assert op.exists(
             data_p
         ), f"Not found {data_p}; NOTE: only use ArcticDataset for single-frame model to evaluate and extract."
@@ -94,6 +95,7 @@ class TempoInferenceDataset(ArcticDataset):
         windows = create_windows(self.imgnames, self.window_size)
         windows = dataset_utils.downsample(windows, split)
 
+        self.args = args
         self.root = op.join(args.coco_path, args.dataset_file)
         self.split = split
 
@@ -118,12 +120,14 @@ class TempoInferenceDataset(ArcticDataset):
             # too complicated if not load rgb in eval or other situations
             # thus: load both rgb and features
             
-            split = 'val' if 'val' in self.split else 'train'
-            name = '+'.join(imgname.split("/")[-4:])
-            with open(f"{self.root}/data/pickle/{self.args.setup}/{split}/{op.splitext(name)[0]}.pkl", 'rb') as f:
-                tmp = pickle.load(f)
-            img_feats.append(tmp)            
-            # img_feats.append(self.vec_dict[short_imgname])
+            if self.args.feature_type == 'local_fm':
+                split = 'val' if 'val' in self.split else 'train'
+                name = '+'.join(imgname.split("/")[-4:])
+                with open(f"{self.root}/data/pickle/{self.args.setup}/{split}/{op.splitext(name)[0]}.pkl", 'rb') as f:
+                    tmp = pickle.load(f)
+                img_feats.append(tmp)
+            else:
+                img_feats.append(self.vec_dict[short_imgname])
 
             inputs, targets, meta_info = self.getitem(imgname, load_rgb=load_rgb)
             inputs_list.append(inputs)
@@ -141,13 +145,15 @@ class TempoInferenceDataset(ArcticDataset):
         )
         meta_list = ld_utils.stack_dl(ld_utils.ld2dl(meta_list), dim=0, verbose=False)
 
-        # img_feats = torch.stack(img_feats, dim=0).float()
-        img_feats = [
-            torch.stack([feat[0] for feat in img_feats]),
-            torch.stack([feat[1] for feat in img_feats]),
-            torch.stack([feat[2] for feat in img_feats]),
-            torch.stack([feat[3] for feat in img_feats])
-        ]        
+        if self.args.feature_type == 'local_fm':
+            img_feats = [
+                torch.stack([feat[0] for feat in img_feats]),
+                torch.stack([feat[1] for feat in img_feats]),
+                torch.stack([feat[2] for feat in img_feats]),
+                torch.stack([feat[3] for feat in img_feats])
+            ]        
+        else:
+            img_feats = torch.stack(img_feats, dim=0).float()
         inputs_list["img"] = img_feats
 
         targets_list["is_valid"] = torch.FloatTensor(np.array(targets_list["is_valid"]))

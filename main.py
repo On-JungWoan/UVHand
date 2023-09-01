@@ -97,13 +97,13 @@ def main(args):
     #     [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
     #     [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
     # ]
+    # collate_fn(test_train)
     # test_val = [
     #     [dataset_val[13][0], dataset_val[13][1], dataset_val[13][2]],
     #     [dataset_val[1][0], dataset_val[1][1], dataset_val[1][2]],
     #     [dataset_val[2][0], dataset_val[2][1], dataset_val[2][2]],
     #     [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
     # ]    
-    # collate_fn(test_train)
     # collate_fn(test_val)
 
     if args.distributed:
