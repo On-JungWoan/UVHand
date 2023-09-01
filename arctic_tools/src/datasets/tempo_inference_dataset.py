@@ -63,16 +63,16 @@ class TempoInferenceDataset(ArcticDataset):
         self.vec_dict = vec_dict
         assert len(imgnames) == len(vec_dict.keys())
 
-        # all imgnames for this split
-        # override the original self.imgnames
-        imgnames = [
-            "/".join(imgname.split("/")[-4:])
-            for imgname in imgnames
-        ]        
+        # # all imgnames for this split
+        # # override the original self.imgnames
         # imgnames = [
-        #     imgname.replace("/data/arctic_data/", "/arctic_data/")
+        #     "/".join(imgname.split("/")[-4:])
         #     for imgname in imgnames
-        # ]
+        # ]        
+        # # imgnames = [
+        # #     imgname.replace("/data/arctic_data/", "/arctic_data/")
+        # #     for imgname in imgnames
+        # # ]
         self.imgnames = imgnames
         self.aug_data = False
         self.window_size = args.window_size
@@ -113,24 +113,25 @@ class TempoInferenceDataset(ArcticDataset):
         meta_list = []
         img_feats = []
         # load_rgb = not self.args.eval  # test.py do not load rgb
-        load_rgb = False
+        load_rgb = True if self.args.feature_type == 'origin' else False
         for imgname in imgnames:
             short_imgname = "/".join(imgname.split("/")[-4:])
             # always load rgb because in training, we need to visualize
             # too complicated if not load rgb in eval or other situations
             # thus: load both rgb and features
             
-            if self.args.feature_type == 'local_fm':
-                split = 'val' if 'val' in self.split else 'train'
-                name = '+'.join(imgname.split("/")[-4:])
-                with open(f"{self.root}/data/pickle/{self.args.setup}/{split}/{op.splitext(name)[0]}.pkl", 'rb') as f:
-                    tmp = pickle.load(f)
-                img_feats.append(tmp)
-            else:
-                img_feats.append(self.vec_dict[short_imgname])
+            if not load_rgb:
+                if self.args.feature_type == 'local_fm':
+                    split = 'val' if 'val' in self.split else 'train'
+                    name = '+'.join(imgname.split("/")[-4:])
+                    with open(f"{self.root}/data/pickle/{self.args.setup}/{split}/{op.splitext(name)[0]}.pkl", 'rb') as f:
+                        tmp = pickle.load(f)
+                    img_feats.append(tmp)
+                else:
+                    img_feats.append(self.vec_dict[short_imgname])
 
             inputs, targets, meta_info = self.getitem(imgname, load_rgb=load_rgb)
-            inputs_list.append(inputs)
+            inputs_list.append({'img':inputs})
             targets_list.append(targets)
             meta_list.append(meta_info)
 
@@ -140,21 +141,21 @@ class TempoInferenceDataset(ArcticDataset):
             )
         else:
             inputs_list = {}
+            if self.args.feature_type == 'local_fm':
+                img_feats = [
+                    torch.stack([feat[0] for feat in img_feats]),
+                    torch.stack([feat[1] for feat in img_feats]),
+                    torch.stack([feat[2] for feat in img_feats]),
+                    torch.stack([feat[3] for feat in img_feats])
+                ]        
+            else:
+                img_feats = torch.stack(img_feats, dim=0).float()
+            inputs_list["img"] = img_feats
+
         targets_list = ld_utils.stack_dl(
             ld_utils.ld2dl(targets_list), dim=0, verbose=False
         )
         meta_list = ld_utils.stack_dl(ld_utils.ld2dl(meta_list), dim=0, verbose=False)
-
-        if self.args.feature_type == 'local_fm':
-            img_feats = [
-                torch.stack([feat[0] for feat in img_feats]),
-                torch.stack([feat[1] for feat in img_feats]),
-                torch.stack([feat[2] for feat in img_feats]),
-                torch.stack([feat[3] for feat in img_feats])
-            ]        
-        else:
-            img_feats = torch.stack(img_feats, dim=0).float()
-        inputs_list["img"] = img_feats
 
         targets_list["is_valid"] = torch.FloatTensor(np.array(targets_list["is_valid"]))
         targets_list["left_valid"] = torch.FloatTensor(
