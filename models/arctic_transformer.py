@@ -468,7 +468,7 @@ class DeformableTransformerDecoder(nn.Module):
                 out_mano_pose = self.mano_pose_embed[lid](output)
                 out_mano_beta = self.mano_beta_embed[lid](output)
 
-                tmp = self.get_reference_point(bs, [out_mano_pose,out_mano_beta], class_indices, new_reference_points)
+                tmp = self.get_reference_point(bs, [out_mano_pose,out_mano_beta], class_indices, new_reference_points) # <- 이건 구현 해야 함
                 new_reference_points[hand_idx] += tmp[hand_idx]
                 # new_reference_points[hand_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[hand_idx][...,:2] 
 

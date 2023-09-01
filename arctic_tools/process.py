@@ -17,6 +17,46 @@ from arctic_tools.common.body_models import build_layers
 from arctic_tools.src.utils.eval_modules import eval_fn_dict
 from arctic_tools.src.utils.loss_modules import get_NN
 
+def get_arctic_item(outputs, cfg, device='cuda'):
+    out_logits = outputs['pred_logits']
+    hand_cam, obj_cam = outputs['pred_cams']
+    mano_pose, mano_shape = outputs['pred_mano_params']
+    out_obj_rad, out_obj_rot = outputs['pred_obj_params']
+    prob = out_logits.sigmoid()
+    bs, _, _ = prob.shape
+
+    # query index select
+    best_score = torch.zeros(bs).to(device)
+    # if dataset != 'AssemblyHands':
+    obj_idx = torch.zeros(bs).to(device).to(torch.long)
+    for i in range(1, cfg.hand_idx[0]):
+        score, idx = torch.max(prob[:,:,i], dim=-1)
+        obj_idx[best_score < score] = idx[best_score < score]
+        best_score[best_score < score] = score[best_score < score]
+
+    hand_idx = []
+    for i in cfg.hand_idx:
+        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
+    # hand_idx = torch.stack(hand_idx, dim=-1) 
+    left_hand_idx, right_hand_idx = hand_idx
+
+    # extract cam
+    root_r=root_l=root_o=mano_pose_l=mano_pose_r=mano_shape_l=mano_shape_r=obj_rot=obj_rad = torch.tensor([]).to(device)
+    for b in range(bs):
+        root_l = torch.cat([root_l, hand_cam[b, left_hand_idx[b], :].unsqueeze(0)])
+        root_r = torch.cat([root_r, hand_cam[b, right_hand_idx[b], :].unsqueeze(0)])
+        root_o = torch.cat([root_o, obj_cam[b, obj_idx[b], :].unsqueeze(0)])
+        # extract mano param
+        mano_pose_l = torch.cat([mano_pose_l, mano_pose[b, left_hand_idx[b], :].unsqueeze(0)])
+        mano_pose_r = torch.cat([mano_pose_r, mano_pose[b, right_hand_idx[b], :].unsqueeze(0)])
+        mano_shape_l = torch.cat([mano_shape_l, mano_shape[b, left_hand_idx[b], :].unsqueeze(0)])
+        mano_shape_r = torch.cat([mano_shape_r, mano_shape[b, right_hand_idx[b], :].unsqueeze(0)])
+        # extract rotation
+        obj_rot = torch.cat([obj_rot, out_obj_rot[b, obj_idx[b], :].unsqueeze(0)])
+        obj_rad = torch.cat([obj_rad, out_obj_rad[b, obj_idx[b], :].unsqueeze(0)])
+
+    return [root_l, root_r, root_o], [mano_pose_l, mano_pose_r], [mano_shape_l, mano_shape_r], [obj_rot, obj_rad]
+
 def arctic_pre_process(args, targets, meta_info):
     pre_process_models = {
         "mano_r": build_mano_aa(is_rhand=True).to(args.device),
@@ -41,50 +81,27 @@ def arctic_pre_process(args, targets, meta_info):
     return targets, meta_info
 
 def post_process_arctic_output(outputs, meta_info, args, cfg):
+    # variable settings
+    query_names = meta_info["query_names"]
+    K = meta_info["intrinsics"]
+
+    # select query
+    root, mano_pose, mano_shape, obj_angle = get_arctic_item(outputs, cfg, args.device)
+
+    # return output
+    output = make_output(args, root, mano_pose, mano_shape, obj_angle, query_names, K)
+    return output
+
+def make_output(args, root, mano_pose, mano_shape, obj_angle, query_names, K):
     # model settings
     mano_r_head = MANOHead(is_rhand=True, focal_length=args.focal_length, img_res=args.img_res).to(args.device)
     mano_l_head = MANOHead(is_rhand=False, focal_length=args.focal_length, img_res=args.img_res).to(args.device)
     arti_head = ArtiHead(focal_length=args.focal_length, img_res=args.img_res, device=args.device)
 
-    # variable settings
-    query_names = meta_info["query_names"]
-    out_logits = outputs['pred_logits']
-    hand_cam, obj_cam = outputs['pred_cams']
-    mano_pose, mano_shape = outputs['pred_mano_params']
-    out_obj_rad, out_obj_rot = outputs['pred_obj_params']
-    prob = out_logits.sigmoid()
-    B, num_queries, num_classes = prob.shape
-    K = meta_info["intrinsics"]
-
-    # query index select
-    best_score = torch.zeros(B).to(args.device)
-    # if dataset != 'AssemblyHands':
-    obj_idx = torch.zeros(B).to(args.device).to(torch.long)
-    for i in range(1, cfg.hand_idx[0]):
-        score, idx = torch.max(prob[:,:,i], dim=-1)
-        obj_idx[best_score < score] = idx[best_score < score]
-        best_score[best_score < score] = score[best_score < score]
-
-    hand_idx = []
-    for i in cfg.hand_idx:
-        hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
-    # hand_idx = torch.stack(hand_idx, dim=-1) 
-    left_hand_idx, right_hand_idx = hand_idx
-
-    # extract cam
-    root_r=root_l=root_o=mano_pose_l=mano_pose_r=mano_shape_l=mano_shape_r=obj_rot=obj_rad = torch.tensor([]).to(args.device)
-    for b in range(B):
-        root_l = torch.cat([root_l, hand_cam[b, left_hand_idx[b], :].unsqueeze(0)])
-        root_r = torch.cat([root_r, hand_cam[b, right_hand_idx[b], :].unsqueeze(0)])
-        root_o = torch.cat([root_o, obj_cam[b, obj_idx[b], :].unsqueeze(0)])
-        # extract mano param
-        mano_pose_l = torch.cat([mano_pose_l, mano_pose[b, left_hand_idx[b], :].unsqueeze(0)])
-        mano_pose_r = torch.cat([mano_pose_r, mano_pose[b, right_hand_idx[b], :].unsqueeze(0)])
-        mano_shape_l = torch.cat([mano_shape_l, mano_shape[b, left_hand_idx[b], :].unsqueeze(0)])
-        mano_shape_r = torch.cat([mano_shape_r, mano_shape[b, right_hand_idx[b], :].unsqueeze(0)])
-        # extract rotation
-        obj_rot = torch.cat([obj_rot, out_obj_rot[b, obj_idx[b], :].unsqueeze(0)])
-        obj_rad = torch.cat([obj_rad, out_obj_rad[b, obj_idx[b], :].unsqueeze(0)])
+    root_l, root_r, root_o = root
+    mano_pose_l, mano_pose_r = mano_pose
+    mano_shape_l, mano_shape_r = mano_shape
+    obj_rot, obj_rad = obj_angle
 
     mano_pose_r = axis_angle_to_matrix(mano_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
     mano_pose_l = axis_angle_to_matrix(mano_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
@@ -117,7 +134,7 @@ def post_process_arctic_output(outputs, meta_info, args, cfg):
     output.merge(mano_output_l)
     output.merge(arti_output)
 
-    return output
+    return output    
 
 def fk_params_batch(batch, layers, meta_info, device):
     mano_r = layers["right"]
@@ -217,11 +234,13 @@ def prepare_interfield(targets, max_dist):
     targets["idx.ol"] = dist_ol_idx
     return targets
 
-def prepare_data(args, outputs, targets, meta_info, cfg):
+def prepare_data(args, outputs, targets, meta_info, cfg, pred=None):
     targets = xdict(targets)
     meta_info = xdict(meta_info)
 
-    pred = post_process_arctic_output(outputs, meta_info, args, cfg)
+    if pred is None:
+        assert outputs is not None
+        pred = post_process_arctic_output(outputs, meta_info, args, cfg)
     keys = list(pred.keys())
     for key in keys:
         # denormalize 2d keypoints
