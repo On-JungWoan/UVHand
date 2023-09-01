@@ -379,7 +379,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 'loss' : loss_value,
                 'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
                 'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
-                # 'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
+                'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
                 'smooth_loss' : round(
                     loss_dict_reduced_scaled["loss/smooth/2d"].item() + \
                     loss_dict_reduced_scaled["loss/smooth/3d"].item(), 2
@@ -432,7 +432,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     'loss' : loss_value,
                     'ce_loss' : train_stat['loss_ce'],
                     'loss_CDev' : train_stat['loss/cd'],
-                    # 'loss_penetr' : train_stat['loss/penetr'],
+                    'loss_penetr' : train_stat['loss/penetr'],
                     'loss_smooth' : round(
                         train_stat["loss/smooth/2d"] + \
                         train_stat["loss/smooth/3d"], 2

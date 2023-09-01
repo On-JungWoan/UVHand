@@ -739,7 +739,7 @@ def build(args, cfg):
         "loss/object/radian":1.0,
         "loss/object/rot":1.0,
         "loss/object/transl":10.0,
-        # "loss/penetr": 0.1,
+        "loss/penetr": 0.1,
         "loss/smooth/2d": 1.0,
         "loss/smooth/3d": 1.0,
         # 'loss_cam': args.cls_loss_coef,
