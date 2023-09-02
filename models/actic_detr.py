@@ -722,11 +722,11 @@ def build(args, cfg):
         "loss/object/kp2d":1.0,
         "loss/object/kp3d":5.0,
         "loss/object/radian":1.0,
-        "loss/object/rot":1.0,
+        "loss/object/rot":10.0,
         "loss/object/transl":10.0,
-        "loss/penetr": 0.1,
-        "loss/smooth/2d": 1.0,
-        "loss/smooth/3d": 1.0,
+        "loss/penetr": 1.0,
+        "loss/smooth/2d": 10.0,
+        "loss/smooth/3d": 10.0,
         # 'loss_cam': args.cls_loss_coef,
         # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
         # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef

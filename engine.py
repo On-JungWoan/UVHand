@@ -169,11 +169,17 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
             base_out = get_arctic_item(outputs, cfg, args.device)
 
             # # base output test
+            # # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!반드시 수정!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # t_root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
+            # t_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
+            # t_beta = [targets['mano.beta.l'], targets['mano.beta.r']]
+            # t_obj = [targets["object.rot"], targets["object.radian"]]
+            # # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             # query_names = meta_info["query_names"]
             # K = meta_info["intrinsics"]
-            # arctic_out = make_output(args, base_out[0], base_out[1], base_out[2], base_out[3], query_names, K)
+            # arctic_out = make_output(args, base_out[0], base_out[1], base_out[2], t_obj, query_names, K)
             # base_data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
-            # visualize_arctic_result(args, base_data, 'targets')
+            # visualize_arctic_result(args, base_data, 'pred')
             # samples, targets, meta_info = prefetcher.next()
             # continue
 
