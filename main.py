@@ -38,10 +38,6 @@ from util.settings import (
 )
 
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
-from models.actic_detr import WEIGHT_DICT
-ignore_list = ['loss_ce', 'class_error', 'cardinality_error']
-for ignore in ignore_list:
-    WEIGHT_DICT.pop(ignore)
 
 
 # main script
@@ -186,6 +182,10 @@ def main(args):
             # train smoothnet
             if args.train_smoothnet:
                 smoother = ArcticSmoother(args.window_size, args.window_size).to(device)
+                WEIGHT_DICT = {
+                    "loss/smooth/2d": 1.0,
+                    "loss/smooth/3d": 1.0,
+                }
                 smoother_criterion = SmoothCriterion(WEIGHT_DICT)
                 optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)
 
