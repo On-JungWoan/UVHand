@@ -96,22 +96,24 @@ def main(args):
     else:
         collate_fn=utils.collate_fn
 
-    # def collate_test(dataset_train, dataset_val):
-    #     test_train = [
-    #         [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
-    #         [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
-    #         [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
-    #         [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
-    #     ]
-    #     tt = collate_fn(test_train)
-    #     test_val = [
-    #         [dataset_val[13][0], dataset_val[13][1], dataset_val[13][2]],
-    #         [dataset_val[1][0], dataset_val[1][1], dataset_val[1][2]],
-    #         [dataset_val[2][0], dataset_val[2][1], dataset_val[2][2]],
-    #         [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
-    #     ]    
-    #     tv = collate_fn(test_val)
-    # collate_test(dataset_train, dataset_val)
+    def collate_test(dataset_train=None, dataset_val=None):
+        if dataset_train is not None:
+            test_train = [
+                [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
+                [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
+                [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
+                [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
+            ]
+            tt = collate_fn(test_train)
+        if dataset_val is not None:
+            test_val = [
+                [dataset_val[13][0], dataset_val[13][1], dataset_val[13][2]],
+                [dataset_val[1][0], dataset_val[1][1], dataset_val[1][2]],
+                [dataset_val[2][0], dataset_val[2][1], dataset_val[2][2]],
+                [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
+            ]    
+            tv = collate_fn(test_val)
+    collate_test(dataset_val=dataset_val)
 
     if args.distributed:
         if args.cache_mode:
@@ -159,6 +161,16 @@ def main(args):
 
     # for evaluation
     if args.eval:
+        if args.train_smoothnet:
+            smoother = ArcticSmoother(args.window_size, args.window_size).to(device)
+            WEIGHT_DICT = {
+                "loss/smooth/2d": 1.0,
+                "loss/smooth/3d": 1.0,
+            }
+            smoother_criterion = SmoothCriterion(WEIGHT_DICT)
+            optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)            
+            test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+
         if args.resume_dir:
             assert not args.resume
             resume_list = glob(op.join(args.resume_dir,'*'))
