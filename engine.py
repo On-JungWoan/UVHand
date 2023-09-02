@@ -168,6 +168,15 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
             # select query
             base_out = get_arctic_item(outputs, cfg, args.device)
 
+            # # base output test
+            # query_names = meta_info["query_names"]
+            # K = meta_info["intrinsics"]
+            # arctic_out = make_output(args, base_out[0], base_out[1], base_out[2], base_out[3], query_names, K)
+            # base_data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+            # visualize_arctic_result(args, base_data, 'targets')
+            # samples, targets, meta_info = prefetcher.next()
+            # continue
+
             # smoothing
             sm_root, sm_pose, sm_shape, sm_angle = smoothnet(base_out)
 
