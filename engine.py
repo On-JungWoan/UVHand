@@ -66,14 +66,23 @@ def train_smoothnet(
             # select query
             base_out = get_arctic_item(outputs, cfg, args.device)
         
+        #
+        data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
+        pred_vl = data["pred.mano.v3d.cam.l"]
+        pred_vr = data["pred.mano.v3d.cam.r"]
+        pred_vo = data["pred.object.v.cam"]
+
         # smoothing
-        sm_root, sm_pose, sm_shape, sm_angle = smoothnet(base_out)
+        sm_l_v, sm_r_v, sm_o_v = smoothnet(pred_vl, pred_vr, pred_vo)
+        data.overwrite("pred.mano.v3d.cam.l", sm_l_v)
+        data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
+        data.overwrite("pred.object.v.cam", sm_o_v)
         
-        # post process
-        query_names = meta_info["query_names"]
-        K = meta_info["intrinsics"]
-        arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
-        data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+        # # post process
+        # query_names = meta_info["query_names"]
+        # K = meta_info["intrinsics"]
+        # arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
+        # data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
 
         # calc losses
         loss_dict = criterion(args, data, meta_info)
@@ -121,14 +130,14 @@ def train_smoothnet(
 
         # for debug
         pbar.set_postfix(
-            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, show_ce_loss=False)
+            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='smoothnet')
         )
         samples, targets, meta_info = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    result = create_arctic_loss_sum_dict(loss_value, train_stat, show_ce_loss=False)
+    result = create_arctic_loss_sum_dict(loss_value, train_stat, mode='smoothnet')
     print(result)
 
     # for wandb
@@ -182,15 +191,27 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
             # visualize_arctic_result(args, base_data, 'pred')
             # samples, targets, meta_info = prefetcher.next()
             # continue
+            
+            #
+            data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
+            pred_vl = data["pred.mano.v3d.cam.l"]
+            pred_vr = data["pred.mano.v3d.cam.r"]
+            pred_vo = data["pred.object.v.cam"]
 
             # smoothing
-            sm_root, sm_pose, sm_shape, sm_angle = smoothnet(base_out)
+            try:
+                sm_l_v, sm_r_v, sm_o_v = smoothnet(pred_vl, pred_vr, pred_vo)
+            except:
+                break
+            data.overwrite("pred.mano.v3d.cam.l", sm_l_v)
+            data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
+            data.overwrite("pred.object.v.cam", sm_o_v)
 
-            # post process
-            query_names = meta_info["query_names"]
-            K = meta_info["intrinsics"]
-            arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
-            data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+            # # post process
+            # query_names = meta_info["query_names"]
+            # K = meta_info["intrinsics"]
+            # arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
+            # data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
 
             # vis results
             if vis:
@@ -406,9 +427,8 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     return train_stat
 
 
-def test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False, epoch=None):
+def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle=False, epoch=None):
     model.eval()
-    criterion.eval()
 
     if args.dataset_file == 'arctic':
         prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)

@@ -65,9 +65,10 @@ def compute_acc_vel_loss(pred, gt, criterion, valid=None):
     acc_pred = vel_pred[..., 1:] - vel_pred[..., :-1]
     acc_gt = vel_gt[..., 1:] - vel_gt[..., :-1]
 
-    loss_vel = criterion(vel_pred, vel_gt).mean()
-    loss_acc = criterion(acc_pred, acc_gt).mean()
-    return 1.0 * loss_vel + 1.0 * loss_acc
+    loss_vel = criterion(vel_pred, vel_gt)
+    loss_acc = criterion(acc_pred, acc_gt)
+
+    return 1.0 * loss_vel.mean() + 1.0 * loss_acc.mean()
 
 
 def compute_penetration_loss(pred, gt, meta_info):

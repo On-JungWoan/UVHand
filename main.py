@@ -162,12 +162,13 @@ def main(args):
     # for evaluation
     if args.eval:
         if args.train_smoothnet:
-            smoother = ArcticSmoother(args.window_size, args.window_size).to(device)
+            smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
             WEIGHT_DICT = {
-                "loss/smooth/2d": 1.0,
-                "loss/smooth/3d": 1.0,
+                "loss_left": 1000.0,
+                "loss_right": 1000.0,
+                "loss_obj": 1000.0,
             }
-            smoother_criterion = SmoothCriterion(WEIGHT_DICT)
+            smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
             optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)            
             test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
 
@@ -180,9 +181,9 @@ def main(args):
                 args.resume = resume
                 load_resume(model_without_ddp, resume)
                 print(f"\n{'='*10} current epoch :{extract_epoch(args.resume)} {'='*10}")
-                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+                test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
         else:
-            test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+            test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
         sys.exit(0)
 
     # for training
@@ -193,12 +194,13 @@ def main(args):
 
             # train smoothnet
             if args.train_smoothnet:
-                smoother = ArcticSmoother(args.window_size, args.window_size).to(device)
+                smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
                 WEIGHT_DICT = {
-                    "loss/smooth/2d": 1.0,
-                    "loss/smooth/3d": 1.0,
+                    "loss_left": 1000.0,
+                    "loss_right": 1000.0,
+                    "loss_obj": 1000.0,
                 }
-                smoother_criterion = SmoothCriterion(WEIGHT_DICT)
+                smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
                 optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)
 
                 train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
@@ -231,7 +233,7 @@ def main(args):
                 }, f'{args.output_dir}/{epoch}.pth')
 
                 # evaluate
-                test_pose(model, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))

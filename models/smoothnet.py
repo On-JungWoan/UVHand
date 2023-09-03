@@ -1,7 +1,5 @@
 import torch
 from torch import nn
-from arctic_tools.process import make_output
-from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
 
 class SmootherResBlock(nn.Module):
     def __init__(self, in_channels, hidden_channels, dropout=0.5):
@@ -128,6 +126,27 @@ class ArcticSmoother(nn.Module):
     def __init__(self, batch_size, window_size):
         super().__init__()
 
+        self.hand_v_smoother = MotionSmoother(window_size, window_size)
+        self.obj_v_smoother = MotionSmoother(window_size, window_size)
+
+        self.batch_size = batch_size
+        self.window_size = window_size
+
+    def forward(self, pred_vl, pred_vr, pred_vo):
+        B = self.batch_size
+        T = self.window_size
+
+        sm_l_v = self.hand_v_smoother(pred_vl.view(B, T, -1)).reshape(B*T, -1, 3)
+        sm_r_v = self.hand_v_smoother(pred_vr.view(B, T, -1)).reshape(B*T, -1, 3)
+        sm_o_v = self.obj_v_smoother(pred_vo.view(B, T, -1)).reshape(B*T, -1, 3)
+
+        return sm_l_v, sm_r_v, sm_o_v
+
+
+class OldArcticSmoother(nn.Module):
+    def __init__(self, batch_size, window_size):
+        super().__init__()
+
         self.mano_pose_smoother = MotionSmoother(window_size, batch_size)
         self.mano_shape_smoother = MotionSmoother(window_size, batch_size)
         self.obj_rot_smoother = MotionSmoother(window_size, batch_size)
@@ -168,15 +187,117 @@ class ArcticSmoother(nn.Module):
 
 
 class SmoothCriterion(nn.Module):
-    def __init__(self, weight_dict):
+    def __init__(self, batch_size, window_size, weight_dict):
         super().__init__()
+        self.batch_size = batch_size
+        self.window_size = window_size
         self.weight_dict = weight_dict
+        self.losses = ['smooth']
+
+    def get_loss(self, loss, arctic_pred, arctic_gt, meta_info, args):
+        loss_map = {
+            'smooth': self.loss_smooth,
+        }
+        assert loss in loss_map, f'do you really want to compute {loss} loss?'
+        return loss_map[loss](arctic_pred, arctic_gt, meta_info, args)
+    
+    def pre_process_vertex(self, pred, targets):
+        gt_vo = targets["object.v.cam"]
+        gt_vr = targets["mano.v3d.cam.r"]
+        gt_vl = targets["mano.v3d.cam.l"]
+
+        pred_vo = pred["object.v.cam"]
+        pred_vr = pred["mano.v3d.cam.r"]
+        pred_vl = pred["mano.v3d.cam.l"]
+
+        # hand roots
+        pred_root_r = pred["mano.j3d.cam.r"][:, :1]
+        pred_root_l = pred["mano.j3d.cam.l"][:, :1]
+        gt_root_r = targets["mano.j3d.cam.r"][:, :1]
+        gt_root_l = targets["mano.j3d.cam.l"][:, :1]
+
+        # object roots
+        parts_ids = targets["object.parts_ids"]
+        bottom_idx = parts_ids[0] == 2
+        gt_root_o = gt_vo[:, bottom_idx].mean(dim=1)[:, None, :]
+        pred_root_o = pred_vo[:, bottom_idx].mean(dim=1)[:, None, :]
+
+        # root relative (num_frames, num_verts, 3)
+        gt_vr_ra = gt_vr - gt_root_r
+        gt_vl_ra = gt_vl - gt_root_l
+        gt_vo_ra = gt_vo - gt_root_o
+
+        # root relative (num_frames, num_verts, 3)
+        pred_vr_ra = pred_vr - pred_root_r
+        pred_vl_ra = pred_vl - pred_root_l
+        pred_vo_ra = pred_vo - pred_root_o
+
+        is_valid = targets["is_valid"]
+        left_valid = targets["left_valid"] * is_valid
+        right_valid = targets["right_valid"] * is_valid
+
+        return gt_vr_ra, gt_vl_ra, gt_vo_ra, \
+            pred_vr_ra, pred_vl_ra, pred_vo_ra, \
+            is_valid, left_valid, right_valid
+    
+    def compute_acc_vel_loss(self, pred, gt, criterion, valid):
+        _, V, D = pred.shape
+        valid = valid.unsqueeze(-1).unsqueeze(-1).repeat(1,V,D)
+        pred = pred * valid
+        gt = gt * valid
+
+        pred = pred.reshape(self.batch_size, self.window_size, -1)
+        gt = gt.reshape(self.batch_size, self.window_size, -1)
+
+        pred = pred.permute(0,2,1) # N, C, T
+        gt = gt.permute(0,2,1) # N, C, T
+
+        # velocity
+        vel_pred = pred[..., 1:] - pred[..., :-1]
+        vel_gt = gt[..., 1:] - gt[..., :-1]
+
+        # accel
+        acc_pred = vel_pred[..., 1:] - vel_pred[..., :-1]
+        acc_gt = vel_gt[..., 1:] - vel_gt[..., :-1]
+
+        loss_vel = criterion(vel_pred, vel_gt).mean()
+        loss_acc = criterion(acc_pred, acc_gt).mean()
+
+        return 1.0 * loss_vel + 1.0 * loss_acc
+
+    def loss_smooth(self, arctic_pred, arctic_gt, meta_info, args):
+        mse_loss = nn.MSELoss(reduction="none")
+
+        # not root aligned
+        gt_vo = arctic_gt["object.v.cam"]
+        gt_vr = arctic_gt["mano.v3d.cam.r"]
+        gt_vl = arctic_gt["mano.v3d.cam.l"]
+        pred_vo = arctic_pred["object.v.cam"]
+        pred_vr = arctic_pred["mano.v3d.cam.r"]
+        pred_vl = arctic_pred["mano.v3d.cam.l"]
+
+        # root aligned
+        gt_vr_ra, gt_vl_ra, gt_vo_ra, \
+        pred_vr_ra, pred_vl_ra, pred_vo_ra, \
+        is_valid, left_valid, right_valid = self.pre_process_vertex(arctic_pred, arctic_gt)
+
+        loss_right = self.compute_acc_vel_loss(pred_vr, gt_vr, mse_loss, right_valid)
+        loss_left = self.compute_acc_vel_loss(pred_vl, gt_vl, mse_loss, left_valid)
+        loss_obj = self.compute_acc_vel_loss(pred_vo, gt_vo, mse_loss, is_valid)        
+
+        losses = {}
+        losses['loss_left'] = loss_left
+        losses['loss_right'] = loss_right
+        losses['loss_obj'] = loss_obj
+        return losses
 
     def forward(self, args, data, meta_info):
         arctic_pred = data.search('pred.', replace_to='')
         arctic_gt = data.search('targets.', replace_to='')
 
         losses = {}
-        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
+        for loss in self.losses:
+            losses.update(self.get_loss(loss, arctic_pred, arctic_gt, meta_info, args))
+        # losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
 
         return losses
