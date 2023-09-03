@@ -136,8 +136,8 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
     # cdev loss
     cd_ro, cd_lo = compute_contact_devi_loss(pred, gt)
 
-    # penetraion loss
-    pl_or, pl_ol = compute_penetration_loss(pred, gt, meta_info)
+    # # penetraion loss
+    # pl_or, pl_ol = compute_penetration_loss(pred, gt, meta_info)
 
     # motion smooth loss
     smooth_2d_loss = compute_smooth_loss(args, 2,
@@ -172,7 +172,7 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         "loss/object/radian": loss_radian.to(device),
         "loss/object/rot": loss_rot.to(device),
         "loss/object/transl": loss_transl_o.to(device),
-        "loss/penetr": pl_or.to(device) + pl_ol.to(device),
+        # "loss/penetr": pl_or.to(device) + pl_ol.to(device),
         "loss/smooth/2d": smooth_2d_loss.to(device),
         "loss/smooth/3d": smooth_3d_loss.to(device),
     }
