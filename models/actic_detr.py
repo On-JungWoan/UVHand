@@ -681,28 +681,11 @@ def build(args, cfg):
         feature_type=args.feature_type
     )
     matcher = build_matcher(args, cfg)
-    # weight_dict = {
-    #     'loss_ce': args.cls_loss_coef,
-    #     'loss_cam': 1.0,
-    #     'loss_rad_rot' : 1.0,
-    #     'loss_mano_pose' : 10.0,
-    #     'loss_mano_beta' : 0.001,
-    #     "loss/mano/kp2d/r":5.0,
-    #     "loss/mano/kp3d/r":5.0,
-    #     "loss/mano/kp2d/l":5.0,
-    #     "loss/mano/kp3d/l":5.0,
-    #     # "loss/cd":1.0,
-    #     "loss/cd":2.0,
-    #     "loss/mano/transl/l":1.0,
-    #     "loss/object/kp2d":1.0,
-    #     "loss/object/kp3d":5.0,
-    #     "loss/object/transl":1.0,
-    # }
 
     # TODO this is a hack
     loss_weights = {
-        # 'loss_ce': args.cls_loss_coef,
-        'loss_ce': 1,
+        'loss_ce': args.cls_loss_coef,
+        # 'loss_ce': 1,
         'class_error':1,
         'cardinality_error':1,
         "loss/mano/cam_t/r":1.0,
@@ -723,13 +706,11 @@ def build(args, cfg):
         "loss/object/kp3d":5.0,
         "loss/object/radian":1.0,
         "loss/object/rot":10.0,
-        "loss/object/transl":10.0,
-        "loss/penetr": 1.0,
+        "loss/object/transl":1.0,
+        # "loss/object/transl":10.0,
+        # "loss/penetr": 0.1,
         "loss/smooth/2d": 10.0,
         "loss/smooth/3d": 10.0,
-        # 'loss_cam': args.cls_loss_coef,
-        # 'loss_mano_params': args.keypoint_loss_coef, 'loss_rad_rot': args.keypoint_loss_coef
-        # 'loss_mano_params': args.cls_loss_coef, 'loss_rad_rot': args.cls_loss_coef
     }
 
     if args.aux_loss:
