@@ -127,6 +127,7 @@ def get_args_parser():
     parser.add_argument('--split_window', default=False, action='store_true')
     parser.add_argument('--feature_type', default='local_fm', choices=['origin', 'global_fm', 'local_fm'])
     parser.add_argument('--train_smoothnet', default=False, action='store_true')
+    parser.add_argument('--iter', default=20, type=int)
 
     return parser
 
