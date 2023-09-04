@@ -8,6 +8,27 @@ import matplotlib.pyplot as plt
 from pytorch3d.ops.knn import knn_points
 
 
+def smoothing(target, count):
+    # batch_avg = target.mean(0)
+    B, _, _ =target.shape
+    target = target[None].view(1,B,-1).permute(0,2,1)
+
+    vel = target[..., 1:] - target[..., :-1]
+    # vel_batch_avg = vel[0].mean(0)
+    # vel_global_avg = vel_batch_avg.mean()
+
+    for cnt in range(count):
+        for i in range(vel.size(-1)):
+            # test_value = (target[..., i+1] - target[..., i]).mean()
+            # upper = vel_global_avg+thold
+            # lower = vel_global_avg-thold
+
+            # if (test_value > upper) or (test_value < lower):
+            target[..., i+1] = target[..., i] = (target[..., i+1] + target[..., i])/2
+
+    return target[0].reshape(-1,3,B).permute(2,0,1)
+
+
 def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='baseline'):
     if mode == 'baseline':
         return {

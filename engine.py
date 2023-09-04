@@ -31,6 +31,7 @@ from arctic_tools.process import arctic_pre_process, prepare_data, measure_error
 from util.tools import (
     extract_feature, visualize_assembly_result, eval_assembly_result, stat_round,
     create_arctic_loss_dict, create_arctic_loss_sum_dict, create_arctic_score_dict,
+    smoothing
 )
 from torch.cuda.amp import autocast
 # os.environ["CUB_HOME"] = os.getcwd() + '/cub-1.10.0'
@@ -481,8 +482,41 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
                         'MPJPE': stats['mpjpe'],
                         })                    
                 else:
+
+                    cnt = args.iter
+                    data.overwrite("pred.object.v.cam", smoothing(data["pred.object.v.cam"], cnt))
+                    data.overwrite("pred.mano.v3d.cam.r", smoothing(data["pred.mano.v3d.cam.r"], cnt))
+                    data.overwrite("pred.mano.v3d.cam.l", smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
+
+                    def test():
+                        import arctic_tools.common.torch_utils as torch_utils
+                        from arctic_tools.common.xdict import xdict
+                        from copy import deepcopy
+                        
+                        origin = measure_error(data, args.eval_metrics)
+                        origin_cdev = torch_utils.nanmean(torch.tensor(origin['cdev/ho']))
+
+                        cnt = 20
+                        test_data = deepcopy(data)
+                        test_data.overwrite("pred.object.v.cam", smoothing(test_data["pred.object.v.cam"], cnt))
+                        test_data.overwrite("pred.mano.v3d.cam.r", smoothing(test_data["pred.mano.v3d.cam.r"], cnt))
+                        test_data.overwrite("pred.mano.v3d.cam.l", smoothing(test_data["pred.mano.v3d.cam.l"], cnt))
+
+                        replace = measure_error(test_data, args.eval_metrics)
+                        replace_cdev = torch_utils.nanmean(torch.tensor(replace['cdev/ho']))
+                        print(replace_cdev)
+
+                        visualize_arctic_result(args, test_data, 'pred')
+                        samples, targets, meta_info = prefetcher.next()
+                        # continue
+
                     # measure error
-                    stats = measure_error(data, args.eval_metrics)
+                    try:
+                        stats = measure_error(data, args.eval_metrics)
+                    except:
+                        print('Fail to mesure the data of last iteration.')
+                        break
+                    
                     for k,v in stats.items():
                         not_non_idx = ~np.isnan(stats[k])
                         replace_value = float(stats[k][not_non_idx].mean())
@@ -519,6 +553,7 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
         if args.test_viewpoint is not None:
             f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
         f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+        f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
         for key, val in stats.items():
             f.write(f'{key:30} : {val}\n')
         f.write('\n\n')
