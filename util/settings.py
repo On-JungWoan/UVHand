@@ -10,7 +10,7 @@ def get_general_args_parser():
     parser = argparse.ArgumentParser('General args', add_help=False)
 
     # general
-    parser.add_argument('--modelname', type=str, required=True, choices=['deformable_detr', 'dn_detr'])    
+    parser.add_argument('--modelname', default='deformable_detr', choices=['deformable_detr', 'dn_detr'])    
     parser.add_argument('--dataset_file', default='arctic')
 
     # for eval
@@ -33,6 +33,7 @@ def get_general_args_parser():
     parser.add_argument('--not_use_params', default=[], nargs='+', help='The params, including this keywords, are ignored when the model imports the checkpoint.')
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
     parser.add_argument('--dist_backend', default=None, help='Choose backend of distribtion mode.')
+    parser.add_argument('--sgd', action='store_true')
 
     # for debug
     parser.add_argument('--debug', default=False, action='store_true')
@@ -44,6 +45,11 @@ def get_general_args_parser():
     parser.add_argument('--feature_type', default='local_fm', choices=['origin', 'global_fm', 'local_fm'])
     parser.add_argument('--train_smoothnet', default=False, action='store_true')
     parser.add_argument('--iter', default=20, type=int)
+
+    # for coco
+    parser.add_argument('--img_size', default=(960, 540), type=tuple)
+    parser.add_argument('--make_pickle', default=False, action='store_true')
+    parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
 
     return parser
 
@@ -62,9 +68,6 @@ def get_deformable_detr_args_parser(parser):
     parser.add_argument('--lr_drop_epochs', default=None, type=int, nargs='+')
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
-
-
-    parser.add_argument('--sgd', action='store_true')
 
     # Variants of Deformable DETR
     parser.add_argument('--with_box_refine', default=False, action='store_true')
@@ -135,9 +138,6 @@ def get_deformable_detr_args_parser(parser):
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=8, type=int)
-    parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
-    parser.add_argument('--img_size', default=(960, 540), type=tuple)
-    parser.add_argument('--make_pickle', default=False, action='store_true')
 
     return parser
 
@@ -320,26 +320,18 @@ def set_training_scheduler(args, model, general_lr=None):
         general_lr = args.lr
 
     param_dicts = [
+        {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
-            "params":
-                [p for n, p in model.named_parameters()
-                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
-            "lr": general_lr,
-        },
-        {
-            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
+            "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
             "lr": args.lr_backbone,
-        },
-        {
-            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
-            "lr": args.lr * args.lr_linear_proj_mult,
         }
     ]
+
     if args.sgd:
-        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
+        optimizer = torch.optim.SGD(param_dicts, lr=general_lr, momentum=0.9,
                                     weight_decay=args.weight_decay)
     else:
-        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+        optimizer = torch.optim.AdamW(param_dicts, lr=general_lr,
                                       weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 

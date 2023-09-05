@@ -47,6 +47,7 @@ class DABDeformableDETR(nn.Module):
                  use_dab=True, 
                  num_patterns=0,
                  random_refpoints_xy=False,
+                 window_size=None, feature_type='origin'
                  ):
         """ Initializes the model.
         Parameters:
@@ -74,6 +75,11 @@ class DABDeformableDETR(nn.Module):
         self.num_patterns = num_patterns
         self.random_refpoints_xy = random_refpoints_xy
         self.two_stage = two_stage
+
+        # custom
+        self.window_size = window_size
+        self.feature_type = feature_type        
+
         # dn label enc
         self.label_enc = nn.Embedding(num_classes + 1, hidden_dim - 1)  # # for indicator
         if not use_dab:
@@ -526,10 +532,8 @@ class MLP(nn.Module):
         return x
 
 
-def build_dab_dino_deformable_detr(args):
-    num_classes = 20 if args.dataset_file != 'coco' else 91
-    if args.dataset_file == "coco_panoptic":
-        num_classes = 250
+def build_dab_dino_deformable_detr(args, cfg):
+    num_classes = cfg.num_obj_classes
     device = torch.device(args.device)
 
     backbone = build_backbone(args)

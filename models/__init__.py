@@ -12,9 +12,15 @@ from .assembly_detr import build as build_assembly
 from .dn_dab_dino_deformable_detr import build_dab_dino_deformable_detr
 
 def build_model(args, cfg):
-    if args.dataset_file == 'arctic':
-        return build_arctic(args, cfg)
-    elif args.dataset_file == 'AssemblyHands':
-        return build_assembly(args, cfg)
+    # for dn-dino-deformable-detr
+    if args.modelname == 'dn_detr':
+        return build_dab_dino_deformable_detr(args, cfg)
+    
+    # for deformable detr
     else:
-        raise Exception('Not implemented!')
+        if args.dataset_file == 'arctic':
+            return build_arctic(args, cfg)
+        elif args.dataset_file == 'AssemblyHands':
+            return build_assembly(args, cfg)
+        else:
+            raise Exception('Not implemented!')

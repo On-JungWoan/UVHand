@@ -107,6 +107,9 @@ class Config:
             self.cam_param = [1395.749023, 1395.749268, 935.732544, 540.681030]
             self.object_model_path = os.path.join(args.coco_path, 'FPHA/Object_models')
 
+        else:
+            self.num_obj_classes = 91
+
 
 import json
 def open_json(path):

@@ -32,7 +32,7 @@ from models.smoothnet import ArcticSmoother, SmoothCriterion
 from models import build_model
 from datasets import build_dataset
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from engine import train_pose, test_pose, train_smoothnet, test_smoothnet
+from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, eval_dn
 from util.settings import (
     get_general_args_parser, get_deformable_detr_args_parser, get_dn_detr_args_parser,
     load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
@@ -77,7 +77,12 @@ def main(args):
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
 
-    model, criterion = build_model(args, cfg)
+    model_item = build_model(args, cfg)
+    if args.modelname == 'dn_detr':
+        model, criterion, postprocessors = model_item
+    else:
+        model, criterion = model_item
+
     model.to(device)
     model_without_ddp = model
 
@@ -114,7 +119,7 @@ def main(args):
                 [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
             ]    
             tv = collate_fn(test_val)
-    collate_test(dataset_val=dataset_val)
+    # collate_test(dataset_val=dataset_val)
 
     if args.distributed:
         if args.cache_mode:
@@ -162,6 +167,13 @@ def main(args):
 
     # for evaluation
     if args.eval:
+        wo_class_error = False
+
+        test_stats, coco_evaluator = eval_dn(model, criterion, postprocessors,
+                                              data_loader_val, dataset_val.coco, device, args.output_dir, wo_class_error=wo_class_error, args=args)
+
+        sys.exit(0)
+
         if args.train_smoothnet:
             smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
             WEIGHT_DICT = {
@@ -241,7 +253,6 @@ def main(args):
         print('Training time {}'.format(total_time_str))
 
 
-get_general_args_parser, get_deformable_detr_args_parser, get_dn_detr_args_parser,
 if __name__ == '__main__':
     # get general parser
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_general_args_parser()])
@@ -252,6 +263,7 @@ if __name__ == '__main__':
         parser = get_dn_detr_args_parser(parser)
     elif args.modelname == 'deformable_detr':
         parser = get_deformable_detr_args_parser(parser)
+    args = parser.parse_known_args()[0]
 
     # get arctic parser
     if args.dataset_file == 'arctic':
