@@ -147,10 +147,6 @@ def get_dn_detr_args_parser(parser):
     # about dn args
     parser.add_argument('--use_dn', action="store_true",
                         help="use denoising training.")
-    parser.add_argument('--scalar', default=5, type=int,
-                        help="number of dn groups")
-    parser.add_argument('--label_noise_scale', default=0.2, type=float,
-                        help="label noise ratio to flip")
     parser.add_argument('--box_noise_scale', default=0.4, type=float,
                         help="box noise scale to shift and scale")
     parser.add_argument('--contrastive', action="store_true",
@@ -211,17 +207,22 @@ def get_dn_detr_args_parser(parser):
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=300, type=int,
-                        help="Number of query slots")
-    parser.add_argument('--num_results', default=300, type=int,
-                        help="Number of detection results")
     parser.add_argument('--pre_norm', action='store_true', 
                         help="Using pre-norm in the Transformer blocks.")    
     parser.add_argument('--num_select', default=300, type=int, 
                         help='the number of predictions selected for evaluation')
-    parser.add_argument('--transformer_activation', default='prelu', type=str)
-    parser.add_argument('--num_patterns', default=0, type=int, 
-                        help='number of pattern embeddings. See Anchor DETR for more details.')
+    parser.add_argument('--num_results', default=300, type=int,help="Number of detection results")
+    # parser.add_argument('--transformer_activation', default='prelu', type=str)
+    # parser.add_argument('--num_patterns', default=0, type=int, help='number of pattern embeddings. See Anchor DETR for more details.')
+    # parser.add_argument('--num_queries', default=300, type=int,help="Number of query slots")
+    # parser.add_argument('--scalar', default=5, type=int,help="number of dn groups")
+    # parser.add_argument('--label_noise_scale', default=0.2, type=float,help="label noise ratio to flip")
+    parser.add_argument('--transformer_activation', default='relu', type=str)
+    parser.add_argument('--num_patterns', default=3, type=int, help='number of pattern embeddings. See Anchor DETR for more details.')
+    parser.add_argument('--num_queries', default=900, type=int,help="Number of query slots")
+    parser.add_argument('--scalar', default=200, type=int,help="number of dn groups")
+    parser.add_argument('--label_noise_scale', default=0.5, type=float,help="label noise ratio to flip")
+    
     parser.add_argument('--random_refpoints_xy', action='store_true', 
                         help="Random init the x,y of anchor boxes and freeze them.")
 
