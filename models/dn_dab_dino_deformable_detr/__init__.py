@@ -1,5 +1,9 @@
 # ------------------------------------------------------------------------
-# Deformable DETR
+# DAB-DETR
+# Copyright (c) 2022 IDEA. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# DModified from eformable DETR
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
@@ -7,14 +11,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
-from .actic_detr import build as build_arctic
-from .assembly_detr import build as build_assembly
-from .dn_dab_dino_deformable_detr import build_dab_dino_deformable_detr
+from .dab_deformable_detr import build_dab_dino_deformable_detr
 
-def build_model(args, cfg):
-    if args.dataset_file == 'arctic':
-        return build_arctic(args, cfg)
-    elif args.dataset_file == 'AssemblyHands':
-        return build_assembly(args, cfg)
-    else:
-        raise Exception('Not implemented!')
+
+

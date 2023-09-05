@@ -34,7 +34,8 @@ from datasets import build_dataset
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
 from engine import train_pose, test_pose, train_smoothnet, test_smoothnet
 from util.settings import (
-    get_args_parser, load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
+    get_general_args_parser, get_deformable_detr_args_parser, get_dn_detr_args_parser,
+    load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
 )
 
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
@@ -240,10 +241,19 @@ def main(args):
         print('Training time {}'.format(total_time_str))
 
 
+get_general_args_parser, get_deformable_detr_args_parser, get_dn_detr_args_parser,
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
+    # get general parser
+    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_general_args_parser()])
     args = parser.parse_known_args()[0]
 
+    # get model parser
+    if args.modelname == 'dn_detr':
+        parser = get_dn_detr_args_parser(parser)
+    elif args.modelname == 'deformable_detr':
+        parser = get_deformable_detr_args_parser(parser)
+
+    # get arctic parser
     if args.dataset_file == 'arctic':
         from arctic_tools.src.parsers.parser import construct_args
         args = construct_args(parser)
