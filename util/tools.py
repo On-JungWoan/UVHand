@@ -140,6 +140,47 @@ def create_arctic_score_dict(stats):
     }
 
 
+def test(meta_info, targets, data_loader):
+    from util.tools import cam2pixel
+    from PIL import Image
+    import cv2
+
+    B = 60
+    # testing_idx = 0
+    meta_info['intrinsics'][B]
+
+    fx = meta_info['intrinsics'][B][0,0]
+    fy = meta_info['intrinsics'][B][1,1]
+    cx = meta_info['intrinsics'][B][0,2]
+    cy = meta_info['intrinsics'][B][1,2]
+
+    f = [fx, fy]
+    c = [cx, cy]
+
+    imgname = meta_info['imgname'][B]
+    img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
+    img = np.array(img)
+
+    # test = targets['object.bbox3d.full.b'][B][testing_idx]
+    # test_bbox = cam2pixel(test, f, c).type(torch.uint8).cpu().numpy()
+
+    test = targets['mano.j3d.cam.r'][B]
+    # test[:, 0] *= 600
+    # test[:, 1] *= 840
+
+    p_test = cam2pixel(test, f, c)
+    for t in p_test:
+        # x = int(t[0] * 600)
+        # y = int(t[1] * 840)
+        x = int(t[0])
+        y = int(t[1])
+        cv2.line(img, (x, y), (x, y), (255,0,0), 3)
+    # plt.imshow(cv2.line(img, (test_bbox[0], test_bbox[1]), (test_bbox[0], test_bbox[1]), (255,0,0), 3))
+    # test_bbox = cam2pixel(targets['object.cam_t.wp'][B], f, c).type(torch.uint8).cpu().numpy()
+    # cam2pixel(targets['mano.j3d.cam.r'][B], f, c)
+
+    plt.imshow(img)
+
 
 def cam2pixel(cam_coord, f, c):
     x = cam_coord[..., 0] / (cam_coord[..., 2] + 1e-8) * f[0] + c[0]

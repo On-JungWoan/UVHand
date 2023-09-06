@@ -42,7 +42,7 @@ def get_general_args_parser():
     # for custom arctic
     parser.add_argument('--seq', default=None, type=str)
     parser.add_argument('--split_window', default=False, action='store_true')
-    parser.add_argument('--feature_type', default='local_fm', choices=['origin', 'global_fm', 'local_fm'])
+    parser.add_argument('--feature_type', default='origin', choices=['origin', 'global_fm', 'local_fm'])
     parser.add_argument('--train_smoothnet', default=False, action='store_true')
     parser.add_argument('--iter', default=20, type=int)
 
@@ -218,7 +218,7 @@ def get_dn_detr_args_parser(parser):
     # parser.add_argument('--scalar', default=5, type=int,help="number of dn groups")
     # parser.add_argument('--label_noise_scale', default=0.2, type=float,help="label noise ratio to flip")
     parser.add_argument('--transformer_activation', default='relu', type=str)
-    parser.add_argument('--num_patterns', default=3, type=int, help='number of pattern embeddings. See Anchor DETR for more details.')
+    parser.add_argument('--num_patterns', default=3, type=int, help='number of pattern embeddings. See Anchor DETR for more details.') # dino -> 3
     parser.add_argument('--num_queries', default=900, type=int,help="Number of query slots")
     parser.add_argument('--scalar', default=200, type=int,help="number of dn groups")
     parser.add_argument('--label_noise_scale', default=0.5, type=float,help="label noise ratio to flip")
@@ -301,7 +301,7 @@ def get_dn_detr_args_parser(parser):
     parser.add_argument('--rank', default=0, type=int,
                         help='number of distributed processes')
     parser.add_argument("--local_rank", type=int, help='local rank for DistributedDataParallel')
-    parser.add_argument('--amp', action='store_true',
+    parser.add_argument('--amp', default=True, action='store_true',
                         help="Train with mixed precision")
     return parser
 

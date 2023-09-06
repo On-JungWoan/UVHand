@@ -19,6 +19,8 @@ def to_cuda(samples, targets, metas, device):
     for k,v in targets.items():
         if k == 'labels':
             targets[k]=v
+        elif k == 'keypoints':
+            targets[k] = [key.to(device, non_blocking=True) for key in targets['keypoints']]
         else:
             targets[k] = v.to(device, non_blocking=True)
 
@@ -85,6 +87,10 @@ class data_prefetcher():
             if targets is not None:
                 for k, v in targets.items():
                     if k == 'labels':
+                        continue
+                    elif k == 'keypoints':
+                        for v in targets['keypoints']:
+                            v.record_stream(torch.cuda.current_stream())
                         continue
                     v.record_stream(torch.cuda.current_stream())
             if metas is not None:

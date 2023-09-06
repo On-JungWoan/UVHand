@@ -32,7 +32,7 @@ from models.smoothnet import ArcticSmoother, SmoothCriterion
 from models import build_model
 from datasets import build_dataset
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, eval_dn
+from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, train_dn, eval_dn
 from util.settings import (
     get_general_args_parser, get_deformable_detr_args_parser, get_dn_detr_args_parser,
     load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
@@ -170,7 +170,7 @@ def main(args):
         wo_class_error = False
 
         test_stats, coco_evaluator = eval_dn(model, criterion, postprocessors,
-                                              data_loader_val, dataset_val.coco, device, args.output_dir, wo_class_error=wo_class_error, args=args)
+                                              data_loader_val, device, wo_class_error=wo_class_error, args=args)
 
         sys.exit(0)
 
@@ -232,6 +232,23 @@ def main(args):
 
             # origin training
             else:
+                train_dn(
+                    model, criterion, data_loader_train, optimizer, device, epoch,
+                    args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
+                )
+
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                }, f'{args.output_dir}/{epoch}.pth')
+
+                eval_dn(model, criterion, postprocessors, data_loader_val, device, wo_class_error=False, args=args)
+
+                continue
+
                 train_pose(
                     model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
                 )

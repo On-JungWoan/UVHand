@@ -93,7 +93,7 @@ def collate_custom_fn(data_list):
             ]
 
     for key in _targets.keys():
-        if key not in ['labels']:
+        if key not in ['labels', 'keypoints']:
             out_targets[key] = torch.cat(out_targets[key], dim=0)
         else:
             out_targets[key] = sum(out_targets[key], [])

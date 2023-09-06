@@ -148,6 +148,26 @@ class ArcticDataset(Dataset):
             use_gt_k = True
             augm_dict["sc"] = 1.0
 
+        # visualization #
+        # import matplotlib.pyplot as plt
+        # import cv2
+        # cv_img = cv_img.astype(np.uint8)
+        # for bbox in bbox2d_t:
+        #     x = int(bbox[0])
+        #     y = int(bbox[1])
+        #     cv2.line(cv_img, (x, y), (x,y), (255,0,0), 3)
+
+        # for bbox in bbox2d_b:
+        #     x = int(bbox[0])
+        #     y = int(bbox[1])
+        #     cv2.line(cv_img, (x, y), (x,y), (0,255,0), 3)            
+        # plt.imshow(cv_img)
+        # from arctic_tools.common.data_utils import unnormalize_2d_kp
+        # test = unnormalize_2d_kp(bbox2d_t, args.img_res)
+        # test[:, 0] = (test[:, 0] * (840/224)).astype(np.int64)
+        # (test[:, 0] * (840/224)).astype(np.int64)
+
+
         joints2d_r = data_utils.j2d_processing(
             joints2d_r, center, scale, augm_dict, args.img_res
         )
@@ -167,6 +187,19 @@ class ArcticDataset(Dataset):
             bbox2d_t, center, scale, augm_dict, args.img_res
         )
         bbox2d = np.concatenate((bbox2d_t, bbox2d_b), axis=0)
+
+        # from arctic_tools.common.data_utils import unnormalize_2d_kp
+        # # test = unnormalize_2d_kp(targets['object.cam_t.wp'].cpu(), args.img_res)
+        # cv_img = cv_img.astype(np.int32)
+        # test = unnormalize_2d_kp(bbox2d, args.img_res)
+        # import cv2
+
+        # for i in range(16):
+        #     x = int((test[i][0]) / (224/840))
+        #     y = int((test[i][1]-32) / (224/840))
+        #     cv2.line(cv_img, (x, y), (x, y), (0,255,0), 10)     
+        # plt.imshow(cv_img)   
+
         kp2d = np.concatenate((kp2d_t, kp2d_b), axis=0)
 
         # data augmentation: image
@@ -282,6 +315,9 @@ class ArcticDataset(Dataset):
         targets["joints_valid_l"] = torch.ones(21) * targets["left_valid"]
 
         label = []
+        small_obj_idx = [idx for idx in range(32) if idx %3 != 0]
+        
+        keypoints = targets['object.kp2d.norm'][small_obj_idx].unsqueeze(0)
         obj2idx = cfg(args).obj2idx
         hand_idx = cfg(args).hand_idx
 
@@ -289,15 +325,22 @@ class ArcticDataset(Dataset):
         
         assert isinstance(left_valid, np.int64)
         assert isinstance(right_valid, np.int64)
+        # l hand
         if left_valid == 1:
             label.append(hand_idx[0])
+            keypoints = torch.cat([targets["mano.j2d.norm.l"].unsqueeze(0), keypoints])
+        # r hand
         if right_valid == 1:
             label.append(hand_idx[1])
+            keypoints = torch.cat([targets["mano.j2d.norm.r"].unsqueeze(0), keypoints])
+        keypoints = keypoints.view(-1, 42)
 
         if args.method == 'arctic_lstm':
             targets["labels"] = [(label)]
+            targets['keypoints'] = [keypoints]
         else:
             targets["labels"] = torch.tensor(label)
+            targets['keypoints'] = keypoints
         # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])
 
         return inputs, targets, meta_info
