@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from pytorch3d.ops.knn import knn_points
 
 
-def smoothing(target, count):
+def arctic_smoothing(target, count):
     # batch_avg = target.mean(0)
     B, _, _ =target.shape
     target = target[None].view(1,B,-1).permute(0,2,1)
@@ -29,172 +29,57 @@ def smoothing(target, count):
     return target[0].reshape(-1,3,B).permute(2,0,1)
 
 
-def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='baseline'):
+def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='baseline'):
+    loss_keys = {
+        # arctic
+        'loss_ce' : ['loss_ce'],
+        'loss_CDev' : ['loss/cd'],
+        'loss_smooth' : ['loss/smooth/2d', 'loss/smooth/3d'],
+        'loss_penetr' : ['loss/penetr'],
+        'loss_mano' : ['loss/mano/pose/r', 'loss/mano/beta/r', 'loss/mano/pose/l', 'loss/mano/beta/l'],
+        'loss_rot' : ['loss/object/radian', 'loss/object/rot'],
+        'loss_transl' : ['loss/mano/transl/l', 'loss/object/transl'],
+        'loss_kp' : [
+            'loss/mano/kp2d/r', 'loss/mano/kp3d/r', 'loss/mano/kp2d/l', 'loss/mano/kp3d/l',
+            'loss/object/kp2d', 'loss/object/kp3d'
+        ],
+        'loss_cam' : ['loss/mano/cam_t/r', 'loss/mano/cam_t/l', 'loss/object/cam_t'],
+
+        # as hands
+        'loss_left' : ['loss_left'],
+        'loss_right' : ['loss_right'],
+        'loss_obj' : ['loss_obj'],
+    }
+
+    # select item
     if mode == 'dino':
-        return {
-            'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
-            'loss' : loss_value,
-            'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
-            'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
-            'loss_mano' : round(
-                loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/pose/l"].item() + \
-                loss_dict_reduced_scaled["loss/mano/beta/l"].item(), 2
-            ),
-            'loss_rot' : round(
-                loss_dict_reduced_scaled["loss/object/radian"].item() + \
-                loss_dict_reduced_scaled["loss/object/rot"].item(), 2
-            ),
-            'loss_transl' : round(
-                loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/transl"].item(), 2
-            ),
-            'loss_kp' : round(
-                loss_dict_reduced_scaled["loss/mano/kp2d/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp3d/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp2d/l"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp3d/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/kp2d"].item() + \
-                loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
-            ),
-            'loss_cam' : round(
-                loss_dict_reduced_scaled["loss/mano/cam_t/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/cam_t/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/cam_t"].item(), 2
-            ),
-        }    
+        items = [
+            'loss_ce', 'loss_CDev', 'loss_penetr', 'loss_mano', 'loss_rot', 'loss_transl',
+            'loss_kp', 'loss_cam'
+        ]
     elif mode == 'baseline':
-        return {
-            'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
-            'loss' : loss_value,
-            'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
-            'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
-            'smooth_loss' : round(
-                loss_dict_reduced_scaled["loss/smooth/2d"].item() + \
-                loss_dict_reduced_scaled["loss/smooth/3d"].item(), 2
-            ),
-            'loss_mano' : round(
-                loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/pose/l"].item() + \
-                loss_dict_reduced_scaled["loss/mano/beta/l"].item(), 2
-            ),
-            'loss_rot' : round(
-                loss_dict_reduced_scaled["loss/object/radian"].item() + \
-                loss_dict_reduced_scaled["loss/object/rot"].item(), 2
-            ),
-            'loss_transl' : round(
-                loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/transl"].item(), 2
-            ),
-            'loss_kp' : round(
-                loss_dict_reduced_scaled["loss/mano/kp2d/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp3d/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp2d/l"].item() + \
-                loss_dict_reduced_scaled["loss/mano/kp3d/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/kp2d"].item() + \
-                loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
-            ),
-            'loss_cam' : round(
-                loss_dict_reduced_scaled["loss/mano/cam_t/r"].item() + \
-                loss_dict_reduced_scaled["loss/mano/cam_t/l"].item() + \
-                loss_dict_reduced_scaled["loss/object/cam_t"].item(), 2
-            ),
-        }
+        items = [
+            'loss_ce', 'loss_CDev', 'loss_penetr', 'loss_mano', 'loss_rot', 'loss_transl',
+            'loss_kp', 'loss_cam', 'loss_smooth'
+        ]
     elif mode == 'smoothnet':
-        return {
-            'loss' : loss_value,
-            'loss_left' : loss_dict_reduced_scaled['loss_left'].item(),
-            'loss_right' : loss_dict_reduced_scaled['loss_right'].item(),
-            'loss_obj' : loss_dict_reduced_scaled['loss_obj'].item(),
-        }
-    else:
-        raise Exception('Not existed mode')    
-
-
-def create_arctic_loss_sum_dict(loss_value, train_stat, mode='baseline'):
-    if mode == 'dino':
-        return {
-            'loss' : loss_value,
-            'ce_loss' : train_stat['loss_ce'],
-            'loss_CDev' : train_stat['loss/cd'],
-            'loss_penetr' : train_stat['loss/penetr'],
-            'loss_mano' : (
-                train_stat["loss/mano/pose/r"] + \
-                train_stat["loss/mano/beta/r"] + \
-                train_stat["loss/mano/pose/l"] + \
-                train_stat["loss/mano/beta/l"]
-            ),
-            'loss_rot' : (
-                train_stat["loss/object/radian"] + \
-                train_stat["loss/object/rot"]
-            ),
-            'loss_transl' : (
-                train_stat["loss/mano/transl/l"] + \
-                train_stat["loss/object/transl"]
-            ),
-            'loss_kp' : (
-                train_stat["loss/mano/kp2d/r"] + \
-                train_stat["loss/mano/kp3d/r"] + \
-                train_stat["loss/mano/kp2d/l"] + \
-                train_stat["loss/mano/kp3d/l"] + \
-                train_stat["loss/object/kp2d"] + \
-                train_stat["loss/object/kp3d"]
-            ),
-            'loss_cam' : (
-                train_stat["loss/mano/cam_t/r"] + \
-                train_stat["loss/mano/cam_t/l"] + \
-                train_stat["loss/object/cam_t"]
-            )
-        }        
-    elif mode == 'baseline':    
-        return {
-            'loss' : loss_value,
-            'ce_loss' : train_stat['loss_ce'],
-            'loss_CDev' : train_stat['loss/cd'],
-            'loss_penetr' : train_stat['loss/penetr'],
-            'loss_smooth' : round(
-                train_stat["loss/smooth/2d"] + \
-                train_stat["loss/smooth/3d"], 2
-            ),
-            'loss_mano' : (
-                train_stat["loss/mano/pose/r"] + \
-                train_stat["loss/mano/beta/r"] + \
-                train_stat["loss/mano/pose/l"] + \
-                train_stat["loss/mano/beta/l"]
-            ),
-            'loss_rot' : (
-                train_stat["loss/object/radian"] + \
-                train_stat["loss/object/rot"]
-            ),
-            'loss_transl' : (
-                train_stat["loss/mano/transl/l"] + \
-                train_stat["loss/object/transl"]
-            ),
-            'loss_kp' : (
-                train_stat["loss/mano/kp2d/r"] + \
-                train_stat["loss/mano/kp3d/r"] + \
-                train_stat["loss/mano/kp2d/l"] + \
-                train_stat["loss/mano/kp3d/l"] + \
-                train_stat["loss/object/kp2d"] + \
-                train_stat["loss/object/kp3d"]
-            ),
-            'loss_cam' : (
-                train_stat["loss/mano/cam_t/r"] + \
-                train_stat["loss/mano/cam_t/l"] + \
-                train_stat["loss/object/cam_t"]
-            )
-        }
-    elif mode == 'smoothnet':
-        return {
-            'loss' : loss_value,
-            'loss_left' : train_stat['loss_left'],
-            'loss_right' : train_stat['loss_right'],
-            'loss_obj' : train_stat['loss_obj'],
-        }
+        items = [
+            'loss_left', 'loss_right', 'loss_obj'
+        ]
     else:
         raise Exception('Not existed mode')
+    
+    # make results
+    res_dict = {'loss' : loss_value}
+    for item in items:
+        value = 0
+        for loss_key in loss_keys[item]:
+            value += float(loss_out[loss_key])
+        if round_value:
+            value = round(value, 2)
+        res_dict[f'{flag}_{item}'] = value
+    
+    return res_dict
 
 
 def create_arctic_score_dict(stats):

@@ -30,8 +30,7 @@ from arctic_tools.visualizer import visualize_arctic_result
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error, get_arctic_item, make_output
 from util.tools import (
     extract_feature, visualize_assembly_result, eval_assembly_result, stat_round,
-    create_arctic_loss_dict, create_arctic_loss_sum_dict, create_arctic_score_dict,
-    smoothing
+    create_loss_dict, create_arctic_score_dict, arctic_smoothing
 )
 from torch.cuda.amp import autocast
 # os.environ["CUB_HOME"] = os.getcwd() + '/cub-1.10.0'
@@ -141,7 +140,10 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
                 break
 
         pbar.set_postfix(
-            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='dino')
+            create_loss_dict(
+                loss_value, loss_dict_reduced_scaled,
+                round_value=True, mode='dino'
+            )
         )
         samples, targets, meta_info = prefetcher.next()        
 
@@ -149,7 +151,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    result = create_arctic_loss_sum_dict(loss_value, train_stat, mode='dino')
+    result = create_loss_dict(loss_value, train_stat, flag='train', mode='dino')
     print(result)
 
     # for wandb
@@ -172,69 +174,71 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def eval_dn(model, criterion, postprocessors, data_loader, device, wo_class_error=False, args=None, logger=None):
+def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, args=None, logger=None):
     try:
         need_tgt_for_training = args.use_dn
     except:
         need_tgt_for_training = False
 
+    # set model
     model.eval()
     criterion.eval()
 
+    # set prefetcher
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
     samples, targets, meta_info = prefetcher.next()
 
+    # set logger
     metric_logger = utils.MetricLogger(delimiter="  ")
     if not wo_class_error:
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Test:'
 
+    # start test
     pbar = tqdm(range(len(data_loader)))
     for _ in pbar:
         targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
-        # from arctic_tools.common.data_utils import unnormalize_2d_kp, denormalize_images, unormalize_kp2d
-        # from util.tools import cam2pixel
-        # B = 0
-
-        # test = unormalize_kp2d(targets['object.kp2d.norm'].cpu(), args.img_res)[B]
-        # test_r = unormalize_kp2d(targets['mano.j2d.norm.r'].cpu(), args.img_res)[B]
-        # test_l = unormalize_kp2d(targets['mano.j2d.norm.l'].cpu(), args.img_res)[B]
-
-        # # fx = meta_info['intrinsics'][B][0,0]
-        # # fy = meta_info['intrinsics'][B][1,1]
-        # # cx = meta_info['intrinsics'][B][0,2]
-        # # cy = meta_info['intrinsics'][B][1,2]
-        # # f = [fx, fy]
-        # # c = [cx, cy]
-
-        # from PIL import Image
-        # import cv2
-
-        # imgname = meta_info['imgname'][B]
-        # img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
-        # img = np.array(img)
-
-        # color = [(255,0,0), (0,255,0), (0,0,255)]
-        # for i, t in enumerate([test, test_l, test_r]):
-        #     for j in range(21):
-        #         x = int((t[j][0]) / (224/840))
-        #         y = int((t[j][1]-32) / (224/840))
-        #         cv2.line(img, (x, y), (x, y), color[i], 10)
-        # plt.imshow(img)
-
-        # samples, targets, meta_info = prefetcher.next()
-        # continue
-
+        # implement & calc loss
         with torch.cuda.amp.autocast(enabled=args.amp):
             if need_tgt_for_training:
                 outputs, _ = model(samples, targets=targets)
             else:
                 outputs = model(samples)
-            # outputs = model(samples)
-
             loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
+
+        # vis or measure error
+        data = prepare_data(args, outputs, targets, meta_info, cfg)
+        if args.visualization:
+            visualize_arctic_result(args, data, 'pred')
+        else:
+            # smoothing
+            cnt = args.iter
+            data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
+            data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
+            data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))
+
+            # measure error
+            try:
+                stats = measure_error(data, args.eval_metrics)
+            except:
+                print('Fail to mesure the data of last iteration.')
+                break
+            
+            # drop na
+            for k,v in stats.items():
+                not_non_idx = ~np.isnan(stats[k])
+                replace_value = float(stats[k][not_non_idx].mean())
+                # If all values are nan, drop that key.
+                if replace_value != replace_value:
+                    stats = stats.rm(k)
+                else:
+                    stats.overwrite(k, replace_value)
+            
+            # debug
+            pbar.set_postfix(stat_round(**stats))
+            metric_logger.update(**stats)
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
@@ -248,29 +252,73 @@ def eval_dn(model, criterion, postprocessors, data_loader, device, wo_class_erro
         if 'class_error' in loss_dict_reduced:
             metric_logger.update(class_error=loss_dict_reduced['class_error'])
 
-        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors['bbox'](outputs, orig_target_sizes)
-        res = {target['image_id'].item(): output for target, output in zip(targets, results)}
-
         _cnt += 1
         if args.debug:
             if _cnt % 15 == 0:
                 print("BREAK!"*5)
                 break
 
-    if args.save_results:
-        import os.path as osp
-        savepath = osp.join(args.output_dir, 'results-{}.pkl'.format(utils.get_rank()))
-        print("Saving res to {}".format(savepath))
-        torch.save(output_state_dict, savepath)
-
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-        
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items() if meter.count > 0}
 
+    if args.distributed:
+        if utils.get_local_rank() != 0:
+            return stats
+
+    # save results
+    save_dir = os.path.join(f'{args.output_dir}/results.txt')
+    epoch = extract_epoch(args.resume) if epoch is None else epoch
+    with open(save_dir, 'a') as f:
+        if args.test_viewpoint is not None:
+            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+        f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
+        for key, val in stats.items():
+            f.write(f'{key:30} : {val}\n')
+        f.write('\n\n')
+
+    if args is not None and args.wandb:
+        wandb.log(
+            create_arctic_score_dict(stats), step=epoch
+        )
     return stats
+
+
+# just testing
+def test_debug(args, targets, meta_info):
+    from arctic_tools.common.data_utils import unnormalize_2d_kp, denormalize_images, unormalize_kp2d
+    from util.tools import cam2pixel
+    B = 0
+
+    test = unormalize_kp2d(targets['object.kp2d.norm'].cpu(), args.img_res)[B]
+    test_r = unormalize_kp2d(targets['mano.j2d.norm.r'].cpu(), args.img_res)[B]
+    test_l = unormalize_kp2d(targets['mano.j2d.norm.l'].cpu(), args.img_res)[B]
+
+    # fx = meta_info['intrinsics'][B][0,0]
+    # fy = meta_info['intrinsics'][B][1,1]
+    # cx = meta_info['intrinsics'][B][0,2]
+    # cy = meta_info['intrinsics'][B][1,2]
+    # f = [fx, fy]
+    # c = [cx, cy]
+
+    from PIL import Image
+    import cv2
+
+    imgname = meta_info['imgname'][B]
+    img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
+    img = np.array(img)
+
+    color = [(255,0,0), (0,255,0), (0,0,255)]
+    for i, t in enumerate([test, test_l, test_r]):
+        for j in range(21):
+            x = int((t[j][0]) / (224/840))
+            y = int((t[j][1]-32) / (224/840))
+            cv2.line(img, (x, y), (x, y), color[i], 10)
+    plt.imshow(img)
+
+    # samples, targets, meta_info = prefetcher.next()
+    # continue
 
 
 def train_smoothnet(
@@ -368,14 +416,14 @@ def train_smoothnet(
 
         # for debug
         pbar.set_postfix(
-            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='smoothnet')
+            create_loss_dict(loss_value, loss_dict_reduced_scaled, round_value=True, mode='smoothnet')
         )
         samples, targets, meta_info = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    result = create_arctic_loss_sum_dict(loss_value, train_stat, mode='smoothnet')
+    result = create_loss_dict(loss_value, train_stat, mode='smoothnet')
     print(result)
 
     # for wandb
@@ -625,7 +673,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         # for debug
         if args.dataset_file == 'arctic':
             pbar.set_postfix(
-                create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled)
+                create_loss_dict(loss_value, loss_dict_reduced_scaled, round_value=True)
             )
             samples, targets, meta_info = prefetcher.next()
         elif args.dataset_file == 'AssemblyHands':
@@ -643,7 +691,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if args.dataset_file == 'arctic':
-        result = create_arctic_loss_sum_dict(loss_value, train_stat)
+        result = create_loss_dict(loss_value, train_stat)
         print(result)
 
     # for wandb
@@ -720,9 +768,9 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
                 else:
 
                     cnt = args.iter
-                    data.overwrite("pred.object.v.cam", smoothing(data["pred.object.v.cam"], cnt))
-                    data.overwrite("pred.mano.v3d.cam.r", smoothing(data["pred.mano.v3d.cam.r"], cnt))
-                    data.overwrite("pred.mano.v3d.cam.l", smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
+                    data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
+                    data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
+                    data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
 
                     def test():
                         import arctic_tools.common.torch_utils as torch_utils
@@ -734,9 +782,9 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
 
                         cnt = 20
                         test_data = deepcopy(data)
-                        test_data.overwrite("pred.object.v.cam", smoothing(test_data["pred.object.v.cam"], cnt))
-                        test_data.overwrite("pred.mano.v3d.cam.r", smoothing(test_data["pred.mano.v3d.cam.r"], cnt))
-                        test_data.overwrite("pred.mano.v3d.cam.l", smoothing(test_data["pred.mano.v3d.cam.l"], cnt))
+                        test_data.overwrite("pred.object.v.cam", arctic_smoothing(test_data["pred.object.v.cam"], cnt))
+                        test_data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(test_data["pred.mano.v3d.cam.r"], cnt))
+                        test_data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(test_data["pred.mano.v3d.cam.l"], cnt))
 
                         replace = measure_error(test_data, args.eval_metrics)
                         replace_cdev = torch_utils.nanmean(torch.tensor(replace['cdev/ho']))

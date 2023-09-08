@@ -280,7 +280,7 @@ def main(args):
                     'args': args,
                 }, f'{args.output_dir}/{epoch}.pth')
 
-                # eval_dn(model, criterion, postprocessors, data_loader_val, device, wo_class_error=False, args=args)
+                eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=False, args=args)
 
                 continue
 
