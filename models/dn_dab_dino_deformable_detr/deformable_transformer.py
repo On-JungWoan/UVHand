@@ -122,8 +122,9 @@ class DeformableTransformer(nn.Module):
 
             scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
             grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
-            wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)
-            proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+            # wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)
+            # proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+            proposal = grid.view(N_, -1, 2)
             proposals.append(proposal)
             _cur += (H_ * W_)
         output_proposals = torch.cat(proposals, 1)
@@ -190,13 +191,35 @@ class DeformableTransformer(nn.Module):
             # hack implementation for two-stage Deformable DETR
     
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
-            enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
+            # enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
+            enc_outputs_hand_coord_unact = self.decoder.key_embed[self.decoder.num_layers](output_memory)#.reshape(bs, _, 21, 3) + torch.cat([output_proposals, torch.zeros(bs, _, 1).cuda()], dim=-1).unsqueeze(2)
+            enc_outputs_obj_coord_unact = self.decoder.obj_key_embed[self.decoder.num_layers](output_memory)#.reshape(bs, _, 21, 3) + torch.cat([output_proposals, torch.zeros(bs, _, 1).cuda()], dim=-1).unsqueeze(2)
+            enc_outputs_hand_coord_unact[..., 0::2] += output_proposals[..., 0:1]
+            enc_outputs_hand_coord_unact[..., 1::2] += output_proposals[..., 1:2]
+            enc_outputs_obj_coord_unact[..., 0::2] += output_proposals[..., 0:1]
+            enc_outputs_obj_coord_unact[..., 1::2] += output_proposals[..., 1:2]
 
+            # topk = self.two_stage_num_proposals
+            # topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
+            # topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
+            # topk_coords_unact = topk_coords_unact.detach()
+            # reference_points = topk_coords_unact.sigmoid()
+
+            # hard coding for arctic
             topk = self.two_stage_num_proposals
-            topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
-            topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
-            topk_coords_unact = topk_coords_unact.detach()
+            topk_proposals_obj = torch.topk(enc_outputs_class[..., 0], topk//3, dim=1)[1] # TODO : 이 부분 검증해보기 : 너무 배경에서만 ref point를 잡는 게 아닌지?
+            topk_proposals_left = torch.topk(enc_outputs_class[..., 12], topk//3, dim=1)[1]
+            topk_proposals_right = torch.topk(enc_outputs_class[..., 13], topk//3, dim=1)[1]
+
+            obj_kp = torch.gather(enc_outputs_obj_coord_unact, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,42))
+            left_kp = torch.gather(enc_outputs_hand_coord_unact, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,42))
+            right_kp = torch.gather(enc_outputs_hand_coord_unact, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,42))
+
+            topk_coords_unact = torch.cat([obj_kp, left_kp, right_kp], dim=1).detach()
             reference_points = topk_coords_unact.sigmoid()
+            # ref_x = reference_points[...,0::2].mean(-1).unsqueeze(-1) ########################################################### one ref-point
+            # ref_y = reference_points[...,1::2].mean(-1).unsqueeze(-1)
+            # reference_points = torch.cat([ref_x, ref_y], dim=-1)
 
             # MQS is dab + mqs
             if self.use_mqs:
@@ -433,9 +456,10 @@ class DeformableTransformerDecoder(nn.Module):
         intermediate_reference_points = []
         for lid, layer in enumerate(self.layers):
             # import ipdb; ipdb.set_trace()
-            if reference_points.shape[-1] == 4:
-                reference_points_input = reference_points[:, :, None] \
-                                         * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None] # bs, nq, 4, 4
+            if reference_points.shape[-1] == 42:
+                reference_points_input = reference_points[:, :, None] * src_valid_ratios.repeat(1, 1, 21)[:, None]
+                # reference_points_input = reference_points[:, :, None] \
+                #                          * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None] # bs, nq, 4, 4
             else:
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
@@ -458,7 +482,7 @@ class DeformableTransformerDecoder(nn.Module):
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
                 tmp = self.bbox_embed[lid](output)
-                if reference_points.shape[-1] == 4:
+                if reference_points.shape[-1] == 42:
                     new_reference_points = tmp + inverse_sigmoid(reference_points)
                     new_reference_points = new_reference_points.sigmoid()
                 else:
@@ -472,7 +496,10 @@ class DeformableTransformerDecoder(nn.Module):
                 intermediate.append(output)
 
                 if self.use_look_forward_twice:
-                    intermediate_reference_points.append(new_reference_points)
+                    try:
+                        intermediate_reference_points.append(new_reference_points)
+                    except:
+                        intermediate_reference_points.append(reference_points)
                 else:
                     intermediate_reference_points.append(reference_points)
 
@@ -537,12 +564,21 @@ def gen_sineembed_for_position(pos_tensor):
     scale = 2 * math.pi
     dim_t = torch.arange(128, dtype=torch.float32, device=pos_tensor.device)
     dim_t = 10000 ** (2 * (dim_t // 2) / 128)
-    x_embed = pos_tensor[:, :, 0] * scale
-    y_embed = pos_tensor[:, :, 1] * scale
+
+    if pos_tensor.size(-1) == 2:
+        x_embed = pos_tensor[:, :, 0] * scale
+        y_embed = pos_tensor[:, :, 1] * scale
+    elif pos_tensor.size(-1) == 4:
+        x_embed = pos_tensor[:, :, 0::2].mean(-1) * scale
+        y_embed = pos_tensor[:, :, 1::2].mean(-1) * scale        
+    else:
+        raise ValueError("Unknown pos_tensor shape(-1):{}".format(pos_tensor.size(-1)))    
+
     pos_x = x_embed[:, :, None] / dim_t
     pos_y = y_embed[:, :, None] / dim_t
     pos_x = torch.stack((pos_x[:, :, 0::2].sin(), pos_x[:, :, 1::2].cos()), dim=3).flatten(2)
     pos_y = torch.stack((pos_y[:, :, 0::2].sin(), pos_y[:, :, 1::2].cos()), dim=3).flatten(2)
+    
     if pos_tensor.size(-1) == 2:
         pos = torch.cat((pos_y, pos_x), dim=2)
     elif pos_tensor.size(-1) == 4:

@@ -139,19 +139,19 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
     # penetraion loss
     pl_or, pl_ol = compute_penetration_loss(pred, gt, meta_info)
 
-    # motion smooth loss
-    smooth_2d_loss = compute_smooth_loss(args, 2,
-        pred_projected_keypoints_2d_r, gt_keypoints_2d_r,
-        pred_projected_keypoints_2d_l, gt_keypoints_2d_l,
-        pred_kp2d_o, gt_kp2d_o,
-        joints_valid_r, joints_valid_l, is_valid
-    )
-    smooth_3d_loss = compute_smooth_loss(args, 3,
-        pred_joints_r, gt_joints_r,
-        pred_joints_l, gt_joints_l,
-        pred_kp3d_o, gt_kp3d_o,
-        joints_valid_r, joints_valid_l, is_valid
-    )
+    # # motion smooth loss
+    # smooth_2d_loss = compute_smooth_loss(args, 2,
+    #     pred_projected_keypoints_2d_r, gt_keypoints_2d_r,
+    #     pred_projected_keypoints_2d_l, gt_keypoints_2d_l,
+    #     pred_kp2d_o, gt_kp2d_o,
+    #     joints_valid_r, joints_valid_l, is_valid
+    # )
+    # smooth_3d_loss = compute_smooth_loss(args, 3,
+    #     pred_joints_r, gt_joints_r,
+    #     pred_joints_l, gt_joints_l,
+    #     pred_kp3d_o, gt_kp3d_o,
+    #     joints_valid_r, joints_valid_l, is_valid
+    # )
 
     loss_dict = {
         "loss/mano/cam_t/r": loss_cam_t_r.to(device),
@@ -173,8 +173,8 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
         "loss/object/rot": loss_rot.to(device),
         "loss/object/transl": loss_transl_o.to(device),
         "loss/penetr": pl_or.to(device) + pl_ol.to(device),
-        "loss/smooth/2d": smooth_2d_loss.to(device),
-        "loss/smooth/3d": smooth_3d_loss.to(device),
+        # "loss/smooth/2d": smooth_2d_loss.to(device),
+        # "loss/smooth/3d": smooth_3d_loss.to(device),
     }
     
     return loss_dict

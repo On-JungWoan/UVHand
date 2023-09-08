@@ -31,6 +31,17 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
         """
     if training:
         targets, dn_number, label_noise_ratio, box_noise_scale = dn_args
+
+        new_targets = []        
+        tmp_label = [torch.tensor(l).cuda() for l in targets['labels']]
+        tmp_key = [key for key in targets['keypoints']]
+        for l, k in zip(tmp_label, tmp_key):
+            new_t = {}
+            new_t['labels'] = l
+            new_t['keys'] = k
+            new_targets.append(new_t)
+        targets = new_targets
+
         # positive and negative dn queries
         dn_number = dn_number * 2
         known = [(torch.ones_like(t['labels'])).cuda() for t in targets]
@@ -45,20 +56,20 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
                 dn_number = 1
         if dn_number == 0:
             dn_number = 1
-        unmask_bbox = unmask_label = torch.cat(known)
+        unmask_key = unmask_label = torch.cat(known)
         labels = torch.cat([t['labels'] for t in targets])
-        boxes = torch.cat([t['boxes'] for t in targets])
+        keys = torch.cat([t['keys'] for t in targets])
         batch_idx = torch.cat([torch.full_like(t['labels'].long(), i) for i, t in enumerate(targets)])
 
-        known_indice = torch.nonzero(unmask_label + unmask_bbox)
+        known_indice = torch.nonzero(unmask_label + unmask_key)
         known_indice = known_indice.view(-1)
 
         known_indice = known_indice.repeat(2 * dn_number, 1).view(-1)
         known_labels = labels.repeat(2 * dn_number, 1).view(-1)
         known_bid = batch_idx.repeat(2 * dn_number, 1).view(-1)
-        known_bboxs = boxes.repeat(2 * dn_number, 1)
+        known_keys = keys.repeat(2 * dn_number, 1)
         known_labels_expaned = known_labels.clone()
-        known_bbox_expand = known_bboxs.clone()
+        known_key_expand = known_keys.clone()
 
         if label_noise_ratio > 0:
             p = torch.rand_like(known_labels_expaned.float())
@@ -68,38 +79,40 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
         single_pad = int(max(known_num))
 
         pad_size = int(single_pad * 2 * dn_number)
-        positive_idx = torch.tensor(range(len(boxes))).long().cuda().unsqueeze(0).repeat(dn_number, 1)
-        positive_idx += (torch.tensor(range(dn_number)) * len(boxes) * 2).long().cuda().unsqueeze(1)
+        positive_idx = torch.tensor(range(len(keys))).long().cuda().unsqueeze(0).repeat(dn_number, 1)
+        positive_idx += (torch.tensor(range(dn_number)) * len(keys) * 2).long().cuda().unsqueeze(1)
         positive_idx = positive_idx.flatten()
-        negative_idx = positive_idx + len(boxes)
+        negative_idx = positive_idx + len(keys)
         if box_noise_scale > 0:
-            known_bbox_ = torch.zeros_like(known_bboxs)
-            known_bbox_[:, :2] = known_bboxs[:, :2] - known_bboxs[:, 2:] / 2
-            known_bbox_[:, 2:] = known_bboxs[:, :2] + known_bboxs[:, 2:] / 2
+            # known_bbox_ = torch.zeros_like(known_bboxs)
+            # known_bbox_[:, :2] = known_bboxs[:, :2] - known_bboxs[:, 2:] / 2
+            # known_bbox_[:, 2:] = known_bboxs[:, :2] + known_bboxs[:, 2:] / 2
 
-            diff = torch.zeros_like(known_bboxs)
-            diff[:, :2] = known_bboxs[:, 2:] / 2
-            diff[:, 2:] = known_bboxs[:, 2:] / 2
+            # diff = torch.zeros_like(known_bboxs)
+            # diff[:, :2] = known_bboxs[:, 2:] / 2
+            # diff[:, 2:] = known_bboxs[:, 2:] / 2
+            known_key_ = known_keys
+            diff = known_key_expand
 
-            rand_sign = torch.randint_like(known_bboxs, low=0, high=2, dtype=torch.float32) * 2.0 - 1.0
-            rand_part = torch.rand_like(known_bboxs)
+            rand_sign = torch.randint_like(known_keys, low=0, high=2, dtype=torch.float32) * 2.0 - 1.0
+            rand_part = torch.rand_like(known_keys)
             rand_part[negative_idx] += 1.0
             rand_part *= rand_sign
-            known_bbox_ = known_bbox_ + torch.mul(rand_part,
+            known_key_ = known_key_ + torch.mul(rand_part,
                                                   diff).cuda() * box_noise_scale
-            known_bbox_ = known_bbox_.clamp(min=0.0, max=1.0)
-            known_bbox_expand[:, :2] = (known_bbox_[:, :2] + known_bbox_[:, 2:]) / 2
-            known_bbox_expand[:, 2:] = known_bbox_[:, 2:] - known_bbox_[:, :2]
+            known_key_ = known_key_.clamp(min=0.0, max=1.0)
+            # known_key_expand[:, :2] = (known_key_[:, :2] + known_key_[:, 2:]) / 2
+            # known_key_expand[:, 2:] = known_key_[:, 2:] - known_key_[:, :2]
 
         m = known_labels_expaned.long().to('cuda')
         input_label_embed = label_enc(m)
-        input_bbox_embed = inverse_sigmoid(known_bbox_expand)
+        input_key_embed = inverse_sigmoid(known_key_expand)
 
         padding_label = torch.zeros(pad_size, hidden_dim).cuda()
-        padding_bbox = torch.zeros(pad_size, 4).cuda()
+        padding_key = torch.zeros(pad_size, 42).cuda()
 
         input_query_label = padding_label.repeat(batch_size, 1, 1)
-        input_query_bbox = padding_bbox.repeat(batch_size, 1, 1)
+        input_query_key = padding_key.repeat(batch_size, 1, 1)
 
         map_known_indice = torch.tensor([]).to('cuda')
         if len(known_num):
@@ -107,7 +120,7 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
             map_known_indice = torch.cat([map_known_indice + single_pad * i for i in range(2 * dn_number)]).long()
         if len(known_bid):
             input_query_label[(known_bid.long(), map_known_indice)] = input_label_embed
-            input_query_bbox[(known_bid.long(), map_known_indice)] = input_bbox_embed
+            input_query_key[(known_bid.long(), map_known_indice)] = input_key_embed
 
         tgt_size = pad_size + num_queries
         attn_mask = torch.ones(tgt_size, tgt_size).to('cuda') < 0
@@ -130,27 +143,60 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
     else:
 
         input_query_label = None
-        input_query_bbox = None
+        input_query_key = None
         attn_mask = None
         dn_meta = None
 
-    return input_query_label, input_query_bbox, attn_mask, dn_meta
+    return input_query_label, input_query_key, attn_mask, dn_meta
 
 
-def dn_post_process(outputs_class, outputs_coord, dn_meta, aux_loss, _set_aux_loss):
+def dn_post_process(
+        outputs_class, hand_coord, obj_coord, mano_param, cam_param, obj_param,
+        dn_meta, aux_loss, _set_aux_loss
+    ):
     """
         post process of dn after output from the transformer
         put the dn part in the dn_meta
     """
     if dn_meta and dn_meta['pad_size'] > 0:
         output_known_class = outputs_class[:, :, :dn_meta['pad_size'], :]
-        output_known_coord = outputs_coord[:, :, :dn_meta['pad_size'], :]
+        output_known_hand_coord = hand_coord[:, :, :dn_meta['pad_size'], :]
+        output_known_obj_coord = obj_coord[:, :, :dn_meta['pad_size'], :]
+        mano_known_param = [
+            mano_param[0][:, :, :dn_meta['pad_size'], :], mano_param[1][:, :, :dn_meta['pad_size'], :]
+        ]
+        cam_known_param = [
+            cam_param[0][:, :, :dn_meta['pad_size'], :], cam_param[1][:, :, :dn_meta['pad_size'], :]
+        ]
+        obj_known_param = [
+            obj_param[0][:, :, :dn_meta['pad_size'], :], obj_param[1][:, :, :dn_meta['pad_size'], :]
+        ]
+
         outputs_class = outputs_class[:, :, dn_meta['pad_size']:, :]
-        outputs_coord = outputs_coord[:, :, dn_meta['pad_size']:, :]
-        out = {'pred_logits': output_known_class[-1], 'pred_boxes': output_known_coord[-1]}
+        outputs_hand_coord = hand_coord[:, :, dn_meta['pad_size']:, :]
+        outputs_obj_coord = obj_coord[:, :, dn_meta['pad_size']:, :]
+        mano_param = [
+            mano_param[0][:, :, dn_meta['pad_size']:, :], mano_param[1][:, :, dn_meta['pad_size']:, :]
+        ]
+        cam_param = [
+            cam_param[0][:, :, dn_meta['pad_size']:, :], cam_param[1][:, :, dn_meta['pad_size']:, :]
+        ]
+        obj_param = [
+            obj_param[0][:, :, dn_meta['pad_size']:, :], obj_param[1][:, :, dn_meta['pad_size']:, :]
+        ]        
+
+        out = {
+            'pred_logits': output_known_class[-1], 'pred_hand_key': output_known_hand_coord[-1], 'pred_obj_key': output_known_obj_coord[-1],
+            'pred_mano_params': [mano_known_param[0][-1], mano_known_param[1][-1]],
+            'pred_cams': [cam_known_param[0][-1], cam_known_param[1][-1]],
+            'pred_obj_params': [obj_known_param[0][-1], obj_known_param[1][-1]],
+        }
         if aux_loss:
-            out['aux_outputs'] = _set_aux_loss(output_known_class, output_known_coord)
+            out['aux_outputs'] = _set_aux_loss(
+                output_known_class, output_known_hand_coord, output_known_obj_coord,
+                mano_known_param, cam_known_param, obj_known_param
+            )
         dn_meta['output_known_lbs_bboxes'] = out
-    return outputs_class, outputs_coord
+    return outputs_class, outputs_hand_coord, outputs_obj_coord, mano_param, cam_param, obj_param
 
 

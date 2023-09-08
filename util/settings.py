@@ -3,6 +3,7 @@ import pickle
 import argparse
 import numpy as np
 import os.path as op
+from util.slconfig import DictAction
 
 
 # general arguments
@@ -10,7 +11,7 @@ def get_general_args_parser():
     parser = argparse.ArgumentParser('General args', add_help=False)
 
     # general
-    parser.add_argument('--modelname', default='deformable_detr', choices=['deformable_detr', 'dn_detr'])    
+    parser.add_argument('--modelname', default='deformable_detr', choices=['deformable_detr', 'dn_detr', 'dino'])
     parser.add_argument('--dataset_file', default='arctic')
 
     # for eval
@@ -140,6 +141,57 @@ def get_deformable_detr_args_parser(parser):
     parser.add_argument('--num_workers', default=8, type=int)
 
     return parser
+
+
+def get_dino_arg_parser(parser):
+    parser.add_argument('--config_file', '-c', type=str, required=True)
+    parser.add_argument('--options',
+        nargs='+',
+        action=DictAction,
+        help='override some settings in the used config, the key-value pair '
+        'in xxx=yyy format will be merged into config file.')
+
+    # dataset parameters
+    parser.add_argument('--coco_path', type=str, default='/comp_robot/cv_public_dataset/COCO2017/')
+    parser.add_argument('--coco_panoptic_path', type=str)
+    parser.add_argument('--remove_difficult', action='store_true')
+    parser.add_argument('--fix_size', action='store_true')
+
+    # training parameters
+    parser.add_argument('--output_dir', default='',
+                        help='path where to save, empty for no saving')
+    parser.add_argument('--note', default='',
+                        help='add some notes to the experiment')
+    parser.add_argument('--device', default='cuda',
+                        help='device to use for training / testing')
+    parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--pretrain_model_path', help='load from other checkpoint')
+    parser.add_argument('--finetune_ignore', type=str, nargs='+')
+    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
+                        help='start epoch')
+    parser.add_argument('--num_workers', default=10, type=int)
+    parser.add_argument('--test', action='store_true')
+    parser.add_argument('--find_unused_params', action='store_true')
+
+    parser.add_argument('--save_results', action='store_true')
+    parser.add_argument('--save_log', action='store_true')
+
+    # distributed training parameters
+    parser.add_argument('--world_size', default=1, type=int,
+                        help='number of distributed processes')
+    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument('--rank', default=0, type=int,
+                        help='number of distributed processes')
+    parser.add_argument("--local_rank", type=int, help='local rank for DistributedDataParallel')
+    parser.add_argument('--amp', action='store_true',
+                        help="Train with mixed precision")
+    
+    #
+    parser.add_argument('--epochs', default=50, type=int)
+    parser.add_argument('--batch_size', default=50, type=int)
+    
+    return parser
+    
 
 
 # dn detr arguments

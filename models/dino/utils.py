@@ -39,12 +39,12 @@ def gen_encoder_output_proposals(memory:Tensor, memory_padding_mask:Tensor, spat
         scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
         grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
 
-        if learnedwh is not None:
-            wh = torch.ones_like(grid) * learnedwh.sigmoid() * (2.0 ** lvl)
-        else:
-            wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)
-
-        proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+        # if learnedwh is not None:
+        #     wh = torch.ones_like(grid) * learnedwh.sigmoid() * (2.0 ** lvl)
+        # else:
+        #     wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)
+        # proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+        proposal = grid.view(N_, -1, 2).repeat(1,1,21)
         proposals.append(proposal)
         _cur += (H_ * W_)
 
@@ -141,24 +141,26 @@ def gen_sineembed_for_position(pos_tensor):
     scale = 2 * math.pi
     dim_t = torch.arange(128, dtype=torch.float32, device=pos_tensor.device)
     dim_t = 10000 ** (2 * (dim_t // 2) / 128)
-    x_embed = pos_tensor[:, :, 0] * scale
-    y_embed = pos_tensor[:, :, 1] * scale
+    x_embed = pos_tensor[:, :, 0::2].mean(-1) * scale
+    y_embed = pos_tensor[:, :, 1::2].mean(-1) * scale
     pos_x = x_embed[:, :, None] / dim_t
     pos_y = y_embed[:, :, None] / dim_t
     pos_x = torch.stack((pos_x[:, :, 0::2].sin(), pos_x[:, :, 1::2].cos()), dim=3).flatten(2)
     pos_y = torch.stack((pos_y[:, :, 0::2].sin(), pos_y[:, :, 1::2].cos()), dim=3).flatten(2)
-    if pos_tensor.size(-1) == 2:
-        pos = torch.cat((pos_y, pos_x), dim=2)
-    elif pos_tensor.size(-1) == 4:
-        w_embed = pos_tensor[:, :, 2] * scale
-        pos_w = w_embed[:, :, None] / dim_t
-        pos_w = torch.stack((pos_w[:, :, 0::2].sin(), pos_w[:, :, 1::2].cos()), dim=3).flatten(2)
 
-        h_embed = pos_tensor[:, :, 3] * scale
-        pos_h = h_embed[:, :, None] / dim_t
-        pos_h = torch.stack((pos_h[:, :, 0::2].sin(), pos_h[:, :, 1::2].cos()), dim=3).flatten(2)
+    # if pos_tensor.size(-1) == 2:
+    #     pos = torch.cat((pos_y, pos_x), dim=2)
+    # elif pos_tensor.size(-1) == 4:
+    #     w_embed = pos_tensor[:, :, 2] * scale
+    #     pos_w = w_embed[:, :, None] / dim_t
+    #     pos_w = torch.stack((pos_w[:, :, 0::2].sin(), pos_w[:, :, 1::2].cos()), dim=3).flatten(2)
 
-        pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
-    else:
-        raise ValueError("Unknown pos_tensor shape(-1):{}".format(pos_tensor.size(-1)))
+    #     h_embed = pos_tensor[:, :, 3] * scale
+    #     pos_h = h_embed[:, :, None] / dim_t
+    #     pos_h = torch.stack((pos_h[:, :, 0::2].sin(), pos_h[:, :, 1::2].cos()), dim=3).flatten(2)
+
+    #     pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
+    # else:
+    #     raise ValueError("Unknown pos_tensor shape(-1):{}".format(pos_tensor.size(-1)))
+    pos = torch.cat((pos_y, pos_x), dim=2)
     return pos

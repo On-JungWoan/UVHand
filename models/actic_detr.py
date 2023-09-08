@@ -639,9 +639,11 @@ class SetArcticCriterion(nn.Module):
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
-                    l_dict.update(compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args))
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
+                l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
+                losses.update(l_dict)
         return losses
 
 

@@ -103,9 +103,20 @@ class MSDeformAttn(nn.Module):
             offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
             sampling_locations = reference_points[:, :, None, :, None, :] \
                                  + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
-        elif reference_points.shape[-1] == 4:
-            sampling_locations = reference_points[:, :, None, :, None, :2] \
-                                 + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+        elif reference_points.shape[-1] == 42:
+            # sampling_locations = reference_points[:, :, None, :, None, :2] \
+            #                      + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+            offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+            x1 = reference_points[:, :, :, 0::2].min(dim=-1, keepdim=True)[0]
+            y1 = reference_points[:, :, :, 1::2].min(dim=-1, keepdim=True)[0]
+            x2 = reference_points[:, :, :, 0::2].max(dim=-1, keepdim=True)[0]
+            y2 = reference_points[:, :, :, 1::2].max(dim=-1, keepdim=True)[0]
+
+            ref_x = reference_points[:, :, None, :, None, 0::2].mean(-1).unsqueeze(-1)
+            ref_y = reference_points[:, :, None, :, None, 1::2].mean(-1).unsqueeze(-1)
+
+            sampling_locations = torch.cat([ref_x, ref_y], dim=-1) \
+                                 + sampling_offsets / offset_normalizer[None, None, None, :, None, :] #self.n_points # * wh * 0.5
         else:
             raise ValueError(
                 'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
@@ -118,7 +129,6 @@ class MSDeformAttn(nn.Module):
             output = output.to(torch.float16)
             output = self.output_proj(output)
             return output
-
 
         output = MSDeformAttnFunction.apply(
             value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)

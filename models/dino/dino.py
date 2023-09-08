@@ -32,8 +32,10 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
                            dice_loss)
 from .deformable_transformer import build_deformable_transformer
 from .utils import sigmoid_focal_loss, MLP
+from arctic_tools.process import prepare_data
+from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
 
-from ..registry import MODULE_BUILD_FUNCS
+# from ..registry import MODULE_BUILD_FUNCS
 from .dn_components import prepare_for_cdn,dn_post_process
 class DINO(nn.Module):
     """ This is the Cross-Attention Detector module that performs object detection """
@@ -130,26 +132,68 @@ class DINO(nn.Module):
         self.dec_pred_bbox_embed_share = dec_pred_bbox_embed_share
         # prepare class & box embed
         _class_embed = nn.Linear(hidden_dim, num_classes)
-        _bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        # _bbox_embed = MLP(hidden_dim, hidden_dim, 42, 3)
+        _key_embed = MLP(hidden_dim, hidden_dim, 42, 3)
+        _obj_key_embed = MLP(hidden_dim, hidden_dim, 42, 3)
+        _mano_pose_embed = nn.Linear(hidden_dim, 48)
+        _mano_beta_embed = nn.Linear(hidden_dim, 10)
+        _hand_cam = nn.Linear(hidden_dim, 3)
+        _obj_cam = nn.Linear(hidden_dim, 3)
+        _obj_rot = nn.Linear(hidden_dim, 3)
+        _obj_rad = nn.Linear(hidden_dim, 1)        
+
         # init the two embed layers
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         _class_embed.bias.data = torch.ones(self.num_classes) * bias_value
-        nn.init.constant_(_bbox_embed.layers[-1].weight.data, 0)
-        nn.init.constant_(_bbox_embed.layers[-1].bias.data, 0)
+        nn.init.constant_(_key_embed.layers[-1].weight.data, 0)
+        nn.init.constant_(_key_embed.layers[-1].bias.data, 0)
+        nn.init.constant_(_obj_key_embed.layers[-1].weight.data, 0)
+        nn.init.constant_(_obj_key_embed.layers[-1].bias.data, 0)
+
+        # custom
+        nn.init.xavier_uniform_(_mano_pose_embed.weight, gain=1)
+        nn.init.constant_(_mano_pose_embed.bias.data, 0)
+        nn.init.xavier_uniform_(_mano_beta_embed.weight, gain=1)
+        nn.init.constant_(_mano_beta_embed.bias.data, 0)
+        nn.init.xavier_uniform_(_hand_cam.weight, gain=1)
+        nn.init.constant_(_hand_cam.bias.data, 0)
+        nn.init.xavier_uniform_(_obj_cam.weight, gain=1)
+        nn.init.constant_(_obj_cam.bias.data, 0)
+        nn.init.xavier_uniform_(_obj_rot.weight, gain=1)
+        nn.init.constant_(_obj_rot.bias.data, 0)                                        
+        nn.init.xavier_uniform_(_obj_rad.weight, gain=1)
+        nn.init.constant_(_obj_rad.bias.data, 0)    
 
         if dec_pred_bbox_embed_share:
-            box_embed_layerlist = [_bbox_embed for i in range(transformer.num_decoder_layers)]
+            key_embed_layerlist = [_key_embed for i in range(transformer.num_decoder_layers)]
+            obj_key_embed_layerlist = [_obj_key_embed for i in range(transformer.num_decoder_layers)]
         else:
-            box_embed_layerlist = [copy.deepcopy(_bbox_embed) for i in range(transformer.num_decoder_layers)]
+            key_embed_layerlist = [copy.deepcopy(_key_embed) for i in range(transformer.num_decoder_layers)]
+            obj_key_embed_layerlist = [copy.deepcopy(_obj_key_embed) for i in range(transformer.num_decoder_layers)]
         if dec_pred_class_embed_share:
             class_embed_layerlist = [_class_embed for i in range(transformer.num_decoder_layers)]
+            mano_pose_embed_layerlist = [_mano_pose_embed for i in range(transformer.num_decoder_layers)]
+            mano_beta_embed_layerlist = [_mano_beta_embed for i in range(transformer.num_decoder_layers)]
+            hand_cam_layerlist = [_hand_cam for i in range(transformer.num_decoder_layers)]
+            obj_cam_layerlist = [_obj_cam for i in range(transformer.num_decoder_layers)]
+            obj_rot_layerlist = [_obj_rot for i in range(transformer.num_decoder_layers)]
+            obj_rad_layerlist = [_obj_rad for i in range(transformer.num_decoder_layers)]
         else:
+            raise Exception('Not implemented.')
             class_embed_layerlist = [copy.deepcopy(_class_embed) for i in range(transformer.num_decoder_layers)]
-        self.bbox_embed = nn.ModuleList(box_embed_layerlist)
         self.class_embed = nn.ModuleList(class_embed_layerlist)
-        self.transformer.decoder.bbox_embed = self.bbox_embed
+        self.key_embed = nn.ModuleList(key_embed_layerlist)
+        self.obj_key_embed = nn.ModuleList(obj_key_embed_layerlist)
+        self.mano_pose_embed = nn.ModuleList(mano_pose_embed_layerlist)
+        self.mano_beta_embed = nn.ModuleList(mano_beta_embed_layerlist)
+        self.hand_cam = nn.ModuleList(hand_cam_layerlist)
+        self.obj_cam = nn.ModuleList(obj_cam_layerlist)
+        self.obj_rot = nn.ModuleList(obj_rot_layerlist)
+        self.obj_rad = nn.ModuleList(obj_rad_layerlist)
         self.transformer.decoder.class_embed = self.class_embed
+        self.transformer.decoder.key_embed = self.key_embed
+        self.transformer.decoder.obj_key_embed = self.obj_key_embed
 
         # two stage
         self.two_stage_type = two_stage_type
@@ -158,10 +202,11 @@ class DINO(nn.Module):
         if two_stage_type != 'no':
             if two_stage_bbox_embed_share:
                 assert dec_pred_class_embed_share and dec_pred_bbox_embed_share
-                self.transformer.enc_out_bbox_embed = _bbox_embed
+                self.transformer.enc_out_key_embed = _key_embed
+                self.transformer.enc_out_obj_key_embed = _obj_key_embed
             else:
-                self.transformer.enc_out_bbox_embed = copy.deepcopy(_bbox_embed)
-    
+                self.transformer.enc_out_key_embed = copy.deepcopy(_key_embed)
+                self.transformer.enc_out_obj_key_embed = copy.deepcopy(_obj_key_embed)
             if two_stage_class_embed_share:
                 assert dec_pred_class_embed_share and dec_pred_bbox_embed_share
                 self.transformer.enc_out_class_embed = _class_embed
@@ -273,32 +318,61 @@ class DINO(nn.Module):
 
         # deformable-detr-like anchor update
         # reference_before_sigmoid = inverse_sigmoid(reference[:-1]) # n_dec, bs, nq, 4
-        outputs_coord_list = []
-        for dec_lid, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(zip(reference[:-1], self.bbox_embed, hs)):
-            layer_delta_unsig = layer_bbox_embed(layer_hs)
-            layer_outputs_unsig = layer_delta_unsig  + inverse_sigmoid(layer_ref_sig)
-            layer_outputs_unsig = layer_outputs_unsig.sigmoid()
-            outputs_coord_list.append(layer_outputs_unsig)
-        outputs_coord_list = torch.stack(outputs_coord_list)        
+        outputs_hand_coord_list = []
+        outputs_obj_coord_list = []
+        for dec_lid, (layer_ref_sig, key_embed, obj_key_embed, layer_hs) in enumerate(zip(reference[:-1], self.key_embed, self.obj_key_embed, hs)):
+            layer_key_delta_unsig = key_embed(layer_hs)
+            layer_obj_delta_unsig = obj_key_embed(layer_hs)
 
-        outputs_class = torch.stack([layer_cls_embed(layer_hs) for
-                                     layer_cls_embed, layer_hs in zip(self.class_embed, hs)])
+            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()*2 - 0.5
+            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()*2 - 0.5
+
+            outputs_hand_coord_list.append(layer_key_outputs_unsig)
+            outputs_obj_coord_list.append(layer_obj_outputs_unsig)
+        outputs_hand_coord_list = torch.stack(outputs_hand_coord_list)
+        outputs_obj_coord_list = torch.stack(outputs_obj_coord_list)
+
+        outputs_class = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.class_embed, hs)])
+        outputs_mano_pose = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.mano_pose_embed, hs)])
+        outputs_mano_beta = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.mano_beta_embed, hs)])
+        outputs_hand_cam = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.hand_cam, hs)])
+        outputs_obj_cam = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.obj_cam, hs)])
+        outputs_obj_rot = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.obj_rot, hs)])
+        outputs_obj_rad = torch.stack([embed(layer_hs) for embed, layer_hs in zip(self.obj_rad, hs)])
+
+        outputs_mano_param = [outputs_mano_pose, outputs_mano_beta]
+        outputs_cam_param = [outputs_hand_cam, outputs_obj_cam]
+        outputs_obj_param = [outputs_obj_rad, outputs_obj_rot]
+
         if self.dn_number > 0 and dn_meta is not None:
-            outputs_class, outputs_coord_list = \
-                dn_post_process(outputs_class, outputs_coord_list,
-                                dn_meta,self.aux_loss,self._set_aux_loss)
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord_list[-1]}
+            outputs_class, outputs_hand_coord, outputs_obj_coord, mano_param, cam_param, obj_param = \
+                dn_post_process(
+                    outputs_class, outputs_hand_coord_list, outputs_obj_coord_list,
+                    outputs_mano_param, outputs_cam_param, outputs_obj_param,
+                    dn_meta,self.aux_loss,self._set_aux_loss
+                )
+        out = {
+            'pred_logits': outputs_class[-1], 'pred_hand_key': outputs_hand_coord[-1], 'pred_obj_key': outputs_obj_coord[-1],
+            'pred_mano_params': [mano_param[0][-1], mano_param[1][-1]],
+            'pred_cams': [cam_param[0][-1], cam_param[1][-1]],
+            'pred_obj_params': [obj_param[0][-1], obj_param[1][-1]],
+        }
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord_list)
-
+            out['aux_outputs'] = self._set_aux_loss(
+                outputs_class, outputs_hand_coord, outputs_obj_coord,
+                mano_param, obj_param, cam_param
+            )
 
         # for encoder output
         if hs_enc is not None:
             # prepare intermediate outputs
-            interm_coord = ref_enc[-1]
+            # interm_coord = ref_enc[-1]
             interm_class = self.transformer.enc_out_class_embed(hs_enc[-1])
-            out['interm_outputs'] = {'pred_logits': interm_class, 'pred_boxes': interm_coord}
-            out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
+            # out['interm_outputs'] = {'pred_logits': interm_class, 'pred_boxes': interm_coord}
+            # out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
+            out['interm_outputs'] = {'pred_logits': interm_class}
+            out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class}
+
 
             # prepare enc outputs
             if hs_enc.shape[0] > 1:
@@ -320,14 +394,31 @@ class DINO(nn.Module):
         out['dn_meta'] = dn_meta
 
         return out
-
+    
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
-        # this is a workaround to make torchscript happy, as torchscript
-        # doesn't support dictionary with non-homogeneous values, such
-        # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+    def _set_aux_loss(self, outputs_class, hand_coord, obj_coord,
+                      outputs_mano_params, outputs_obj_params, outputs_cams): 
+        return [
+                {
+                    'pred_logits': c, 'pred_hand_key': hk, 'pred_obj_key': ok,
+                    'pred_mano_params': [s, p], 'pred_obj_params': [ra, ro], 'pred_cams': [hc, oc]
+                } \
+                for c, hk, ok, s, p, ra, ro, hc, oc in \
+                    zip(
+                        outputs_class[:-1], hand_coord[:-1], obj_coord[:-1],
+                        outputs_mano_params[0][:-1], outputs_mano_params[1][:-1],
+                        outputs_obj_params[0][:-1], outputs_obj_params[1][:-1],
+                        outputs_cams[0][:-1], outputs_cams[1][:-1]
+                    )
+            ]     
+
+    # @torch.jit.unused
+    # def _set_aux_loss(self, outputs_class, outputs_coord):
+    #     # this is a workaround to make torchscript happy, as torchscript
+    #     # doesn't support dictionary with non-homogeneous values, such
+    #     # as a dict having both a Tensor and a list.
+    #     return [{'pred_logits': a, 'pred_boxes': b}
+    #             for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
 
 class SetCriterion(nn.Module):
@@ -336,7 +427,7 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
-    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses):
+    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, cfg):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -351,6 +442,7 @@ class SetCriterion(nn.Module):
         self.weight_dict = weight_dict
         self.losses = losses
         self.focal_alpha = focal_alpha
+        self.cfg = cfg
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -360,7 +452,8 @@ class SetCriterion(nn.Module):
         src_logits = outputs['pred_logits']
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        # target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat([torch.tensor(t).cuda()[J] for t, (_, J) in zip(targets['labels'], indices)])
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -385,7 +478,8 @@ class SetCriterion(nn.Module):
         """
         pred_logits = outputs['pred_logits']
         device = pred_logits.device
-        tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        # tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        tgt_lengths = torch.as_tensor([len(l) for l in targets['labels']], device=device)
         # Count the number of predictions that are NOT "no-object" (which is the last class)
         card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
@@ -471,7 +565,7 @@ class SetCriterion(nn.Module):
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
-    def forward(self, outputs, targets, return_indices=False):
+    def forward(self, outputs, targets, args, meta_info, return_indices=False):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -490,7 +584,8 @@ class SetCriterion(nn.Module):
             indices_list = []
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
-        num_boxes = sum(len(t["labels"]) for t in targets)
+        # num_boxes = sum(len(t["labels"]) for t in targets)
+        num_boxes = len(sum(targets['labels'], []))
         num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes)
@@ -507,27 +602,41 @@ class SetCriterion(nn.Module):
 
             dn_pos_idx = []
             dn_neg_idx = []
-            for i in range(len(targets)):
-                if len(targets[i]['labels']) > 0:
-                    t = torch.range(0, len(targets[i]['labels']) - 1).long().cuda()
-                    t = t.unsqueeze(0).repeat(scalar, 1)
-                    tgt_idx = t.flatten()
-                    output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
-                    output_idx = output_idx.flatten()
-                else:
-                    output_idx = tgt_idx = torch.tensor([]).long().cuda()
+
+            for i in range(len(targets['labels'])):
+                t = torch.range(0, len(targets['labels'][i]) - 1).long().cuda()
+                t = t.unsqueeze(0).repeat(scalar, 1)
+                tgt_idx = t.flatten()
+                output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
+                output_idx = output_idx.flatten()
 
                 dn_pos_idx.append((output_idx, tgt_idx))
                 dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
+            # for i in range(len(targets)):
+            #     if len(targets[i]['labels']) > 0:
+            #         t = torch.range(0, len(targets[i]['labels']) - 1).long().cuda()
+            #         t = t.unsqueeze(0).repeat(scalar, 1)
+            #         tgt_idx = t.flatten()
+            #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
+            #         output_idx = output_idx.flatten()
+            #     else:
+            #         output_idx = tgt_idx = torch.tensor([]).long().cuda()
+
+            #     dn_pos_idx.append((output_idx, tgt_idx))
+            #     dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
 
             output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
+            dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
+            dn_arctic_pred = dn_data.search('pred.', replace_to='')
+            dn_arctic_gt = dn_data.search('targets.', replace_to='')
+
             l_dict = {}
             for loss in self.losses:
                 kwargs = {}
                 if 'labels' in loss:
                     kwargs = {'log': False}
                 l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
-
+            l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
             l_dict = {k + f'_dn': v for k, v in l_dict.items()}
             losses.update(l_dict)
         else:
@@ -542,11 +651,20 @@ class SetCriterion(nn.Module):
 
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
+        data = prepare_data(args, outputs, targets, meta_info, self.cfg)
+        arctic_pred = data.search('pred.', replace_to='')
+        arctic_gt = data.search('targets.', replace_to='')
+        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))           
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
             for idx, aux_outputs in enumerate(outputs['aux_outputs']):
                 indices = self.matcher(aux_outputs, targets)
+
+                aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
+                aux_arctic_pred = aux_data.search('pred.', replace_to='')
+                aux_arctic_gt = aux_data.search('targets.', replace_to='')
+
                 if return_indices:
                     indices_list.append(indices)
                 for loss in self.losses:
@@ -560,6 +678,9 @@ class SetCriterion(nn.Module):
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
                     l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
+                l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
+                losses.update(l_dict)
 
                 if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
                     aux_outputs_known = output_known_lbs_bboxes['aux_outputs'][idx]
@@ -585,41 +706,41 @@ class SetCriterion(nn.Module):
                     l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
-        # interm_outputs loss
-        if 'interm_outputs' in outputs:
-            interm_outputs = outputs['interm_outputs']
-            indices = self.matcher(interm_outputs, targets)
-            if return_indices:
-                indices_list.append(indices)
-            for loss in self.losses:
-                if loss == 'masks':
-                    # Intermediate masks losses are too costly to compute, we ignore them.
-                    continue
-                kwargs = {}
-                if loss == 'labels':
-                    # Logging is enabled only for the last layer
-                    kwargs = {'log': False}
-                l_dict = self.get_loss(loss, interm_outputs, targets, indices, num_boxes, **kwargs)
-                l_dict = {k + f'_interm': v for k, v in l_dict.items()}
-                losses.update(l_dict)
+        # # interm_outputs loss
+        # if 'interm_outputs' in outputs:
+        #     interm_outputs = outputs['interm_outputs']
+        #     indices = self.matcher(interm_outputs, targets)
+        #     if return_indices:
+        #         indices_list.append(indices)
+        #     for loss in self.losses:
+        #         if loss == 'masks':
+        #             # Intermediate masks losses are too costly to compute, we ignore them.
+        #             continue
+        #         kwargs = {}
+        #         if loss == 'labels':
+        #             # Logging is enabled only for the last layer
+        #             kwargs = {'log': False}
+        #         l_dict = self.get_loss(loss, interm_outputs, targets, indices, num_boxes, **kwargs)
+        #         l_dict = {k + f'_interm': v for k, v in l_dict.items()}
+        #         losses.update(l_dict)
 
-        # enc output loss
-        if 'enc_outputs' in outputs:
-            for i, enc_outputs in enumerate(outputs['enc_outputs']):
-                indices = self.matcher(enc_outputs, targets)
-                if return_indices:
-                    indices_list.append(indices)
-                for loss in self.losses:
-                    if loss == 'masks':
-                        # Intermediate masks losses are too costly to compute, we ignore them.
-                        continue
-                    kwargs = {}
-                    if loss == 'labels':
-                        # Logging is enabled only for the last layer
-                        kwargs = {'log': False}
-                    l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
-                    l_dict = {k + f'_enc_{i}': v for k, v in l_dict.items()}
-                    losses.update(l_dict)
+        # # enc output loss
+        # if 'enc_outputs' in outputs:
+        #     for i, enc_outputs in enumerate(outputs['enc_outputs']):
+        #         indices = self.matcher(enc_outputs, targets)
+        #         if return_indices:
+        #             indices_list.append(indices)
+        #         for loss in self.losses:
+        #             if loss == 'masks':
+        #                 # Intermediate masks losses are too costly to compute, we ignore them.
+        #                 continue
+        #             kwargs = {}
+        #             if loss == 'labels':
+        #                 # Logging is enabled only for the last layer
+        #                 kwargs = {'log': False}
+        #             l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
+        #             l_dict = {k + f'_enc_{i}': v for k, v in l_dict.items()}
+        #             losses.update(l_dict)
 
         if return_indices:
             indices_list.append(indices0_copy)
@@ -688,8 +809,8 @@ class PostProcess(nn.Module):
         return results
 
 
-@MODULE_BUILD_FUNCS.registe_with_name(module_name='dino')
-def build_dino(args):
+# @MODULE_BUILD_FUNCS.registe_with_name(module_name='dino')
+def build_dino(args, cfg):
     # the `num_classes` naming here is somewhat misleading.
     # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
     # is the maximum id for a class in your dataset. For example,
@@ -761,8 +882,38 @@ def build_dino(args):
     matcher = build_matcher(args)
 
     # prepare weight dict
-    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
-    weight_dict['loss_giou'] = args.giou_loss_coef
+    # weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
+    # weight_dict['loss_giou'] = args.giou_loss_coef
+    weight_dict = {
+        'loss_ce': args.cls_loss_coef,
+        # 'loss_ce': 1,
+        # 'class_error':1,
+        # 'cardinality_error':1,
+        "loss/mano/cam_t/r":1.0,
+        "loss/mano/cam_t/l":1.0,
+        "loss/object/cam_t":1.0,
+        "loss/mano/kp2d/r":5.0,
+        "loss/mano/kp3d/r":5.0,
+        "loss/mano/pose/r":10.0,
+        "loss/mano/beta/r":0.001,
+        "loss/mano/kp2d/l":5.0,
+        "loss/mano/kp3d/l":5.0,
+        "loss/mano/pose/l":10.0,
+        # "loss/cd":1.0,
+        "loss/cd":10.0,
+        "loss/mano/transl/l":10.0,
+        "loss/mano/beta/l":0.001,
+        "loss/object/kp2d":1.0,
+        "loss/object/kp3d":5.0,
+        "loss/object/radian":1.0,
+        "loss/object/rot":10.0,
+        "loss/object/transl":1.0,
+        # "loss/object/transl":10.0,
+        # "loss/penetr": 0.1,
+        "loss/penetr": 0.05,
+        # "loss/smooth/2d": 10.0,
+        # "loss/smooth/3d": 10.0,
+    }    
     clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     
@@ -799,14 +950,15 @@ def build_dino(args):
             interm_loss_coef = args.interm_loss_coef
         except:
             interm_loss_coef = 1.0
-        interm_weight_dict.update({k + f'_interm': v * interm_loss_coef * _coeff_weight_dict[k] for k, v in clean_weight_dict_wo_dn.items()})
+        interm_weight_dict.update({k + f'_interm': v * interm_loss_coef * _coeff_weight_dict[k] for k, v in clean_weight_dict_wo_dn.items() if k in _coeff_weight_dict})
         weight_dict.update(interm_weight_dict)
 
-    losses = ['labels', 'boxes', 'cardinality']
+    # losses = ['labels', 'boxes', 'cardinality']
+    losses = ['labels', 'cardinality']
     if args.masks:
         losses += ["masks"]
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                             focal_alpha=args.focal_alpha, losses=losses,
+                             focal_alpha=args.focal_alpha, losses=losses, cfg=cfg
                              )
     criterion.to(device)
     postprocessors = {'bbox': PostProcess(num_select=args.num_select, nms_iou_threshold=args.nms_iou_threshold)}

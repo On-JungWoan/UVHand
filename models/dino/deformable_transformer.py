@@ -337,17 +337,40 @@ class DeformableTransformer(nn.Module):
                 output_proposals = torch.cat((output_proposals, refpoint_embed), dim=1)
 
             enc_outputs_class_unselected = self.enc_out_class_embed(output_memory)
-            enc_outputs_coord_unselected = self.enc_out_bbox_embed(output_memory) + output_proposals # (bs, \sum{hw}, 4) unsigmoid
+            # enc_outputs_coord_unselected = self.enc_out_bbox_embed(output_memory) + output_proposals # (bs, \sum{hw}, 4) unsigmoid
+            enc_outputs_hand_coord_unselected = self.enc_out_key_embed(output_memory)
+            enc_outputs_obj_coord_unselected = self.enc_out_obj_key_embed(output_memory)
+            enc_outputs_hand_coord_unselected[..., 0::2] += output_proposals[..., 0::2]
+            enc_outputs_hand_coord_unselected[..., 1::2] += output_proposals[..., 1::2]
+            enc_outputs_obj_coord_unselected[..., 0::2] += output_proposals[..., 0::2]
+            enc_outputs_obj_coord_unselected[..., 1::2] += output_proposals[..., 1::2]
+
             topk = self.num_queries
-            topk_proposals = torch.topk(enc_outputs_class_unselected.max(-1)[0], topk, dim=1)[1] # bs, nq
+            topk_proposals_obj = torch.topk(enc_outputs_class_unselected[..., :12].max(-1)[0], topk//3, dim=1)[1] # bs, nq
+            topk_proposals_left = torch.topk(enc_outputs_class_unselected[..., 12], topk//3, dim=1)[1]
+            topk_proposals_right = torch.topk(enc_outputs_class_unselected[..., 13], topk//3, dim=1)[1]
 
             # gather boxes
-            refpoint_embed_undetach = torch.gather(enc_outputs_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)) # unsigmoid
+            obj_kp = torch.gather(enc_outputs_obj_coord_unselected, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,42))
+            left_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,42))
+            right_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,42))
+            # refpoint_embed_undetach = torch.gather(enc_outputs_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)) # unsigmoid
+
+            refpoint_embed_undetach = torch.cat([obj_kp, left_kp, right_kp], dim=1)
             refpoint_embed_ = refpoint_embed_undetach.detach()
-            init_box_proposal = torch.gather(output_proposals, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)).sigmoid() # sigmoid
+
+            init_obj_proposal = torch.gather(output_proposals, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,42))
+            init_left_proposal = torch.gather(output_proposals, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,42))
+            init_right_proposal = torch.gather(output_proposals, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,42))
+            init_box_proposal = torch.cat([init_obj_proposal, init_left_proposal, init_right_proposal], dim=1).sigmoid()
 
             # gather tgt
-            tgt_undetach = torch.gather(output_memory, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, self.d_model))
+            # tgt_undetach = torch.gather(output_memory, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, self.d_model))
+            tgt_obj = torch.gather(output_memory, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,self.d_model))
+            tgt_left = torch.gather(output_memory, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,self.d_model))
+            tgt_right = torch.gather(output_memory, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,self.d_model))
+            tgt_undetach = torch.cat([tgt_obj, tgt_left, tgt_right], dim=1)
+
             if self.embed_init_tgt:
                 tgt_ = self.tgt_embed.weight[:, None, :].repeat(1, bs, 1).transpose(0, 1) # nq, bs, d_model
             else:
@@ -606,7 +629,8 @@ class TransformerDecoder(nn.Module):
         self.use_detached_boxes_dec_out = use_detached_boxes_dec_out
 
         
-        self.ref_point_head = MLP(query_dim // 2 * d_model, d_model, d_model, 2)
+        # self.ref_point_head = MLP(query_dim // 2 * d_model, d_model, d_model, 2)
+        self.ref_point_head = MLP(d_model, d_model, d_model, 2)
         if not deformable_decoder:
             self.query_pos_sine_scale = MLP(d_model, d_model, d_model, 2)
         else:
@@ -679,9 +703,10 @@ class TransformerDecoder(nn.Module):
                 reference_points = self.decoder_query_perturber(reference_points)
 
             if self.deformable_decoder:
-                if reference_points.shape[-1] == 4:
-                    reference_points_input = reference_points[:, :, None] \
-                                            * torch.cat([valid_ratios, valid_ratios], -1)[None, :] # nq, bs, nlevel, 4
+                if reference_points.shape[-1] == 42:
+                    reference_points_input = reference_points[:, :, None] * valid_ratios.unsqueeze(0).repeat(1,1,1,21)
+                    # reference_points_input = reference_points[:, :, None] \
+                    #                         * torch.cat([valid_ratios, valid_ratios], -1)[None, :] # nq, bs, nlevel, 4(x) -> 42(o)
                 else:
                     assert reference_points.shape[-1] == 2
                     reference_points_input = reference_points[:, :, None] * valid_ratios[None, :]
@@ -728,20 +753,34 @@ class TransformerDecoder(nn.Module):
                 )
 
             # iter update
-            if self.bbox_embed is not None:
-                reference_before_sigmoid = inverse_sigmoid(reference_points)
-                delta_unsig = self.bbox_embed[layer_id](output)
-                outputs_unsig = delta_unsig + reference_before_sigmoid
+            if self.key_embed is not None:
+                cls_out = self.class_embed[layer_id](output)
+                class_indices = cls_out.argmax(dim=-1)
+
+                obj_idx = torch.ones_like(class_indices, dtype=torch.bool)
+                hand_idx = torch.zeros_like(class_indices, dtype=torch.bool)
+                for idx in [0] + [12, 13]:
+                    obj_idx &= (class_indices != idx)
+                    if idx != 0:
+                        hand_idx |= (class_indices == idx)
+
+                delta_key_unsig = self.key_embed[layer_id](output)
+                delta_obj_key_unsig = self.obj_key_embed[layer_id](output)
+
+                outputs_unsig = inverse_sigmoid(reference_points)
+                outputs_unsig[obj_idx] += delta_obj_key_unsig[obj_idx]
+                outputs_unsig[hand_idx] += delta_key_unsig[hand_idx]
                 new_reference_points = outputs_unsig.sigmoid()
 
                 # select # ref points
                 if self.dec_layer_number is not None and layer_id != self.num_layers - 1:
-                    nq_now = new_reference_points.shape[0]
-                    select_number = self.dec_layer_number[layer_id + 1]
-                    if nq_now != select_number:
-                        class_unselected = self.class_embed[layer_id](output) # nq, bs, 91
-                        topk_proposals = torch.topk(class_unselected.max(-1)[0], select_number, dim=0)[1] # new_nq, bs
-                        new_reference_points = torch.gather(new_reference_points, 0, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)) # unsigmoid
+                    raise Exception('Not implemented')
+                    # nq_now = new_reference_points.shape[0]
+                    # select_number = self.dec_layer_number[layer_id + 1]
+                    # if nq_now != select_number:
+                    #     class_unselected = self.class_embed[layer_id](output) # nq, bs, 91
+                    #     topk_proposals = torch.topk(class_unselected.max(-1)[0], select_number, dim=0)[1] # new_nq, bs
+                    #     new_reference_points = torch.gather(new_reference_points, 0, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)) # unsigmoid
 
                 if self.rm_detach and 'dec' in self.rm_detach:
                     reference_points = new_reference_points

@@ -47,7 +47,7 @@ class DABDeformableDETR(nn.Module):
                  use_dab=True, 
                  num_patterns=0,
                  random_refpoints_xy=False,
-                 window_size=None, feature_type='origin'
+                 cfg=None, window_size=None, feature_type='local_fm'
                  ):
         """ Initializes the model.
         Parameters:
@@ -68,8 +68,6 @@ class DABDeformableDETR(nn.Module):
         self.transformer = transformer
         self.hidden_dim = hidden_dim = transformer.d_model
         self.num_classes = num_classes
-        self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.num_feature_levels = num_feature_levels
         self.use_dab = use_dab
         self.num_patterns = num_patterns
@@ -78,7 +76,19 @@ class DABDeformableDETR(nn.Module):
 
         # custom
         self.window_size = window_size
-        self.feature_type = feature_type        
+        self.feature_type = feature_type
+        self.cfg = cfg
+
+        # enc
+        self.class_embed = nn.Linear(hidden_dim, num_classes)
+        self.key_embed = MLP(hidden_dim, hidden_dim, 42, 3)
+        self.obj_key_embed = MLP(hidden_dim, hidden_dim, 42, 3)
+        self.mano_pose_embed = nn.Linear(self.hidden_dim, 48)
+        self.mano_beta_embed = nn.Linear(self.hidden_dim, 10)
+        self.hand_cam = nn.Linear(self.hidden_dim, 3)
+        self.obj_cam = nn.Linear(self.hidden_dim, 3)
+        self.obj_rot = nn.Linear(self.hidden_dim, 3)
+        self.obj_rad = nn.Linear(self.hidden_dim, 1)        
 
         # dn label enc
         self.label_enc = nn.Embedding(num_classes + 1, hidden_dim - 1)  # # for indicator
@@ -127,31 +137,61 @@ class DABDeformableDETR(nn.Module):
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         self.class_embed.bias.data = torch.ones(num_classes) * bias_value
-        nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
-        nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        # nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
+        # nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        nn.init.constant_(self.key_embed.layers[-1].weight.data, 0)
+        nn.init.constant_(self.key_embed.layers[-1].bias.data, 0)
+        nn.init.constant_(self.obj_key_embed.layers[-1].weight.data, 0)
+        nn.init.constant_(self.obj_key_embed.layers[-1].bias.data, 0)
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
+
+        # custom
+        nn.init.xavier_uniform_(self.mano_pose_embed.weight, gain=1)
+        nn.init.constant_(self.mano_pose_embed.bias.data, 0)
+        nn.init.xavier_uniform_(self.mano_beta_embed.weight, gain=1)
+        nn.init.constant_(self.mano_beta_embed.bias.data, 0)
+        nn.init.xavier_uniform_(self.hand_cam.weight, gain=1)
+        nn.init.constant_(self.hand_cam.bias.data, 0)
+        nn.init.xavier_uniform_(self.obj_cam.weight, gain=1)
+        nn.init.constant_(self.obj_cam.bias.data, 0)
+        nn.init.xavier_uniform_(self.obj_rot.weight, gain=1)
+        nn.init.constant_(self.obj_rot.bias.data, 0)                                        
+        nn.init.xavier_uniform_(self.obj_rad.weight, gain=1)
+        nn.init.constant_(self.obj_rad.bias.data, 0)
 
         # if two-stage, the last class_embed and bbox_embed is for region proposal generation
         num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
 
         if with_box_refine:
             self.class_embed = _get_clones(self.class_embed, num_pred)
-            self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
-            nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
+            self.key_embed = _get_clones(self.key_embed, num_pred)
+            self.obj_key_embed = _get_clones(self.obj_key_embed, num_pred)
+            # nn.init.constant_(self.key_embed[0].layers[-1].bias.data[2:], -2.0)
+            # nn.init.constant_(self.obj_key_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
-            self.transformer.decoder.bbox_embed = self.bbox_embed
+            self.transformer.decoder.key_embed = self.key_embed
+            self.transformer.decoder.obj_key_embed = self.obj_key_embed
         else:
-            nn.init.constant_(self.bbox_embed.layers[-1].bias.data[2:], -2.0)
+            # nn.init.constant_(self.key_embed.layers[-1].bias.data[2:], -2.0)
             self.class_embed = nn.ModuleList([self.class_embed for _ in range(num_pred)])
-            self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred)])
-            self.transformer.decoder.bbox_embed = None
+            self.key_embed = nn.ModuleList([self.key_embed for _ in range(num_pred)])
+            self.obj_key_embed = nn.ModuleList([self.obj_key_embed for _ in range(num_pred)])
+            self.transformer.decoder.key_embed = None
+            self.transformer.decoder.obj_key_embed = None
+
+            self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
+            self.mano_beta_embed = nn.ModuleList([self.mano_beta_embed for _ in range(num_pred)])
+            self.hand_cam = nn.ModuleList([self.hand_cam for _ in range(num_pred)])
+            self.obj_cam = nn.ModuleList([self.obj_cam for _ in range(num_pred)])
+            self.obj_rot = nn.ModuleList([self.obj_rot for _ in range(num_pred)])
+            self.obj_rad = nn.ModuleList([self.obj_rad for _ in range(num_pred)])            
         if two_stage:
             # hack implementation for two-stage
             self.transformer.decoder.class_embed = self.class_embed
-            for box_embed in self.bbox_embed:
-                nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
+            # for key_embed in self.key_embed:
+            #     nn.init.constant_(key_embed.layers[-1].bias.data[2:], 0.0)
 
     def forward(self, samples: NestedTensor, dn_args=None):
         """ The forward expects a NestedTensor, which consists of:
@@ -229,30 +269,60 @@ class DABDeformableDETR(nn.Module):
         levels = hs.shape[0]
 
         outputs_classes = []
-        outputs_coords = []
+        # outputs_coords = []
+        outputs_mano_pose = []
+        outputs_mano_beta = []
+        outputs_hand_cams = []
+        outputs_obj_cams = []
+        outputs_obj_radians = []
+        outputs_obj_rotations = []
+        
         #for lvl in range(hs.shape[0]):
         for lvl in range(levels):
-            if lvl == 0:
-                reference = init_reference
-            else:
-                reference = inter_references[lvl - 1]
-            reference = inverse_sigmoid(reference)
+            # if lvl == 0:
+            #     reference = init_reference
+            # else:
+            #     reference = inter_references[lvl - 1]
+            # reference = inverse_sigmoid(reference)
             outputs_class = self.class_embed[lvl](hs[lvl])
-            tmp = self.bbox_embed[lvl](hs[lvl])
-            if reference.shape[-1] == 4:
-                tmp += reference
-            else:
-                assert reference.shape[-1] == 2
-                tmp[..., :2] += reference
-            outputs_coord = tmp.sigmoid()
+            # tmp = self.bbox_embed[lvl](hs[lvl])
+            # if reference.shape[-1] == 4:
+            #     tmp += reference
+            # else:
+            #     assert reference.shape[-1] == 2
+            #     tmp[..., :2] += reference
+            # outputs_coord = tmp.sigmoid()
+            out_mano_pose = self.mano_pose_embed[lvl](hs[lvl])
+            out_mano_beta = self.mano_beta_embed[lvl](hs[lvl])
+            out_hand_cam = self.hand_cam[lvl](hs[lvl])
+            out_obj_cam = self.obj_cam[lvl](hs[lvl])
+            out_obj_rot = self.obj_rot[lvl](hs[lvl])
+            out_obj_rad = self.obj_rad[lvl](hs[lvl])
+
             outputs_classes.append(outputs_class)
-            outputs_coords.append(outputs_coord)
+            # outputs_coords.append(outputs_coord)
+            outputs_mano_pose.append(out_mano_pose)
+            outputs_mano_beta.append(out_mano_beta)
+            outputs_hand_cams.append(out_hand_cam)
+            outputs_obj_cams.append(out_obj_cam)
+            outputs_obj_radians.append(out_obj_rad)
+            outputs_obj_rotations.append(out_obj_rot)
+
         outputs_class = torch.stack(outputs_classes)
-        outputs_coord = torch.stack(outputs_coords)
+        # outputs_coord = torch.stack(outputs_coords)
+        outputs_mano_params = [torch.stack(outputs_mano_pose), torch.stack(outputs_mano_beta)]
+        outputs_obj_params = [torch.stack(outputs_obj_radians), torch.stack(outputs_obj_rotations)]
+        outputs_cams = [torch.stack(outputs_hand_cams), torch.stack(outputs_obj_cams)]
+
         # dn post process
         outputs_class, outputs_coord = dn_post_process(outputs_class, outputs_coord, mask_dict)
 
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        out = {
+            'pred_logits': outputs_class[-1],
+            'pred_mano_params': [outputs_mano_params[0][-1], outputs_mano_params[1][-1]],
+            'pred_obj_params': [outputs_obj_params[0][-1], outputs_obj_params[1][-1]],
+            'pred_cams': [outputs_cams[0][-1], outputs_cams[1][-1]]            
+        }
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
@@ -264,12 +334,29 @@ class DABDeformableDETR(nn.Module):
         return out, mask_dict
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
+    def _set_aux_loss(
+            self, outputs_class, outputs_coord,
+            outputs_mano_params, outputs_obj_params, outputs_cams
+        ):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        return [
+                {
+                    'pred_logits': c,
+                    'pred_mano_params': [s, p], 'pred_obj_params': [ra, ro], 'pred_cams': [hc, oc]
+                } \
+                for c, s, p, ra, ro, hc, oc in \
+                    zip(
+                        outputs_class[:-1],
+                        outputs_mano_params[0][:-1], outputs_mano_params[1][:-1],
+                        outputs_obj_params[0][:-1], outputs_obj_params[1][:-1],
+                        outputs_cams[0][:-1], outputs_cams[1][:-1]
+                    )
+            ]    
+        # return [{'pred_logits': a, 'pred_boxes': b}
+        #         for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+    
 
 
 class SetCriterion(nn.Module):

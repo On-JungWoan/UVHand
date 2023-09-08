@@ -325,7 +325,7 @@ def project2d_batch(K, pts_cam):
     assert pts_cam.shape[2] == 3
     assert len(pts_cam.shape) == 3
     pts2d_homo = torch.bmm(K, pts_cam.permute(0, 2, 1)).permute(0, 2, 1)
-    pts2d = to_xy_batch(pts2d_homo)
+    pts2d = to_xy_batch(pts2d_homo.to(torch.float32))
     return pts2d
 
 
