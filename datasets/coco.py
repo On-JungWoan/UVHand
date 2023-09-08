@@ -168,12 +168,88 @@ class ConvertCocoPolysToMask(object):
         return image, target
 
 
-import json
-def open_json(path):
-    with open(path, 'r') as f:
-        res = json.load(f)
-    return res
+import os
+def origin_coco_transforms(image_set, fix_size=False, strong_aug=False, args=None):
 
+    normalize = T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    # config the params for data aug
+    scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
+    max_size = 1333
+    scales2_resize = [400, 500, 600]
+    scales2_crop = [384, 600]
+        
+
+    if image_set == 'train':
+        if fix_size:
+            return T.Compose([
+                T.RandomHorizontalFlip(),
+                T.RandomResize([(max_size, max(scales))]),
+                normalize,
+            ])
+
+        if strong_aug:
+            import datasets.sltransform as SLT
+            
+            return T.Compose([
+                T.RandomHorizontalFlip(),
+                T.RandomSelect(
+                    T.RandomResize(scales, max_size=max_size),
+                    T.Compose([
+                        T.RandomResize(scales2_resize),
+                        T.RandomSizeCrop(*scales2_crop),
+                        T.RandomResize(scales, max_size=max_size),
+                    ])
+                ),
+                SLT.RandomSelectMulti([
+                    SLT.RandomCrop(),
+                    # SLT.Rotate(10),
+                    SLT.LightingNoise(),
+                    SLT.AdjustBrightness(2),
+                    SLT.AdjustContrast(2),
+                ]),              
+                # # for debug only  
+                # SLT.RandomCrop(),
+                # SLT.LightingNoise(),
+                # SLT.AdjustBrightness(2),
+                # SLT.AdjustContrast(2),
+                # SLT.Rotate(10),
+                normalize,
+            ])
+        
+        return T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomSelect(
+                T.RandomResize(scales, max_size=max_size),
+                T.Compose([
+                    T.RandomResize(scales2_resize),
+                    T.RandomSizeCrop(*scales2_crop),
+                    T.RandomResize(scales, max_size=max_size),
+                ])
+            ),
+            normalize,
+        ])
+
+    if image_set in ['val', 'test']:
+
+        if os.environ.get("GFLOPS_DEBUG_SHILONG", False) == 'INFO':
+            print("Under debug mode for flops calculation only!!!!!!!!!!!!!!!!")
+            return T.Compose([
+                T.ResizeDebug((1280, 800)),
+                normalize,
+            ])   
+
+        return T.Compose([
+            T.RandomResize([max(scales)], max_size=max_size),
+            normalize,
+        ])
+
+
+
+    raise ValueError(f'unknown {image_set}')
 
 def make_coco_transforms(image_set, img_size, make_pickle):
     normalize = T.Compose([
@@ -198,24 +274,44 @@ def build(image_set, args):
     root = Path(args.coco_path) / args.dataset_file
     assert root.exists(), f'provided COCO path {root} does not exist'
 
-    if args.dataset_file == 'H2O':
-        PATHS = {
-            "train": (root , root /  'H2O_pose_train.json'),
-            "val": (root , root / 'H2O_pose_val.json'),
-            "test": (root, root / 'H2O_pose_test.json')
-        }      
-    elif args.dataset_file == 'FPHA':
-        PATHS = {
-            "train": (root , root /  'FPHA_train.json'),
-            "val": (root , root / 'FPHA_val.json'),
-        }
+    # ARCTIC
+    if args.dataset_file == 'arctic':
+        return fetch_dataloader(args, image_set, seq=args.seq)
+    # AssemblyHands
     elif args.dataset_file == 'AssemblyHands':
         PATHS = {
             "train": (root , root / 'annotations/train.json'),
             "val": (root , root / 'annotations/val.json'),
         }
-    elif args.dataset_file == 'arctic':
-        return fetch_dataloader(args, image_set, seq=args.seq)
+    # H2O
+    elif args.dataset_file == 'H2O':
+        PATHS = {
+            "train": (root , root /  'H2O_pose_train.json'),
+            "val": (root , root / 'H2O_pose_val.json'),
+            "test": (root, root / 'H2O_pose_test.json')
+        }
+    # FPHA
+    elif args.dataset_file == 'FPHA':
+        PATHS = {
+            "train": (root , root /  'FPHA_train.json'),
+            "val": (root , root / 'FPHA_val.json'),
+        }
+    # COCO
+    else:
+        mode = 'instances'
+        PATHS = {
+            "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
+            "train_reg": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
+            "val": (root / "val2017", root / "annotations" / f'{mode}_val2017.json'),
+            "eval_debug": (root / "val2017", root / "annotations" / f'{mode}_val2017.json'),
+            "test": (root / "test2017", root / "annotations" / 'image_info_test-dev2017.json' ),
+        }
+        img_folder, ann_file = PATHS[image_set]
+        from .coco_test import CocoDetection as DnCocoDectection
+        dataset = DnCocoDectection(img_folder, ann_file,
+                transforms=origin_coco_transforms(image_set, fix_size=False, strong_aug=False, args=args), 
+                return_masks=args.masks, aux_target_hacks=None)
+        return dataset
 
     img_folder, ann_file = PATHS[image_set]
     dataset = CocoDetection(img_folder, ann_file, args.dataset_file, transforms=make_coco_transforms(image_set, args.img_size, args.make_pickle),

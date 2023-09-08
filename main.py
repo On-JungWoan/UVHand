@@ -7,6 +7,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
+import os
 import sys
 sys.path = ["./arctic_tools"] + sys.path
 
@@ -21,20 +22,23 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch.backends.cudnn as cudnn
 
+import json
 import wandb
 from glob import glob
 from cfg import Config
 import util.misc as utils
 import datasets.samplers as samplers
 from torch.utils.data import DataLoader
+from util.slconfig import SLConfig
 from models.smoothnet import ArcticSmoother, SmoothCriterion
 
 from models import build_model
 from datasets import build_dataset
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from engine import train_pose, test_pose, train_smoothnet, test_smoothnet
+from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, train_dn, eval_dn, eval_coco
 from util.settings import (
-    get_args_parser, load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
+    get_general_args_parser, get_deformable_detr_args_parser, get_dino_arg_parser,
+    load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
 )
 
 #GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
@@ -44,6 +48,34 @@ from util.settings import (
 def main(args):
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
+
+    # load cfg file and update the args
+    print("Loading config file from {}".format(args.config_file))
+    time.sleep(args.rank * 0.02)
+    cfg = SLConfig.fromfile(args.config_file)
+    if args.options is not None:
+        cfg.merge_from_dict(args.options)
+    if args.rank == 0:
+        save_cfg_path = os.path.join(args.output_dir, "config_cfg.py")
+        cfg.dump(save_cfg_path)
+        save_json_path = os.path.join(args.output_dir, "config_args_raw.json")
+        with open(save_json_path, 'w') as f:
+            json.dump(vars(args), f, indent=2)
+    cfg_dict = cfg._cfg_dict.to_dict()
+    args_vars = vars(args)
+    print('\n\n')
+    for k,v in cfg_dict.items():
+        if k not in args_vars:
+            setattr(args, k, v)
+        else:
+            print("Key {} can used by args only".format(k))
+            # raise ValueError("Key {} can used by args only".format(k))
+    print('\n\n')
+    # update some new args temporally
+    if not getattr(args, 'use_ema', None):
+        args.use_ema = False
+    if not getattr(args, 'debug', None):
+        args.debug = False    
 
     if args.wandb:
         if args.distributed and utils.get_local_rank() != 0:
@@ -76,7 +108,12 @@ def main(args):
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
 
-    model, criterion = build_model(args, cfg)
+    model_item = build_model(args, cfg)
+    if args.modelname == 'dino':
+        model, criterion, postprocessors = model_item
+    else:
+        model, criterion = model_item
+
     model.to(device)
     model_without_ddp = model
 
@@ -113,7 +150,7 @@ def main(args):
                 [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
             ]    
             tv = collate_fn(test_val)
-    collate_test(dataset_val=dataset_val)
+    # collate_test(dataset_val=dataset_val)
 
     if args.distributed:
         if args.cache_mode:
@@ -161,6 +198,17 @@ def main(args):
 
     # for evaluation
     if args.eval:
+        wo_class_error = False
+
+        if args.dataset_file == 'COCO':
+            eval_coco(model, criterion, postprocessors,
+                                              data_loader_val, device, args.output_dir, wo_class_error=False, args=args)
+        else:
+            eval_dn(model, criterion, postprocessors,
+                                                data_loader_val, device, wo_class_error=wo_class_error, args=args)
+
+        sys.exit(0)
+
         if args.train_smoothnet:
             smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
             WEIGHT_DICT = {
@@ -219,6 +267,23 @@ def main(args):
 
             # origin training
             else:
+                train_dn(
+                    model, criterion, data_loader_train, optimizer, device, epoch,
+                    args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
+                )
+
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                }, f'{args.output_dir}/{epoch}.pth')
+
+                # eval_dn(model, criterion, postprocessors, data_loader_val, device, wo_class_error=False, args=args)
+
+                continue
+
                 train_pose(
                     model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
                 )
@@ -241,9 +306,22 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
+    # get general parser
+    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_general_args_parser()])
     args = parser.parse_known_args()[0]
 
+    # get model parser
+    # if args.modelname == 'dn_detr':
+        # parser = get_dn_detr_args_parser(parser)
+    if args.modelname == 'dino':
+        parser = get_dino_arg_parser(parser)
+    elif args.modelname == 'deformable_detr':
+        parser = get_deformable_detr_args_parser(parser)
+    else:
+        raise Exception('Please be specific model names.')
+    args = parser.parse_known_args()[0]
+
+    # get arctic parser
     if args.dataset_file == 'arctic':
         from arctic_tools.src.parsers.parser import construct_args
         args = construct_args(parser)

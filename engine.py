@@ -36,6 +36,242 @@ from util.tools import (
 from torch.cuda.amp import autocast
 # os.environ["CUB_HOME"] = os.getcwd() + '/cub-1.10.0'
 
+from datasets.coco_eval import CocoEvaluator
+
+def to_device(item, device):
+    if isinstance(item, torch.Tensor):
+        return item.to(device)
+    elif isinstance(item, list):
+        return [to_device(i, device) for i in item]
+    elif isinstance(item, dict):
+        return {k: to_device(v, device) for k,v in item.items()}
+    else:
+        raise NotImplementedError("Call Shilong if you use other containers! type: {}".format(type(item)))
+
+
+def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
+                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
+                    device: torch.device, epoch: int, max_norm: float = 0, 
+                    wo_class_error=False, lr_scheduler=None, args=None, logger=None, ema_m=None):
+    scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
+
+    try:
+        need_tgt_for_training = args.use_dn
+    except:
+        need_tgt_for_training = False
+
+    model.train()
+    criterion.train()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    if not wo_class_error:
+        metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    header = 'Epoch: [{}]'.format(epoch)
+    print(header)
+    print_freq = 10
+
+    _cnt = 0
+
+    prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
+    samples, targets, meta_info = prefetcher.next()
+    pbar = tqdm(range(len(data_loader)))
+
+    for _ in pbar:
+        targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+        with torch.cuda.amp.autocast(enabled=args.amp):
+            if need_tgt_for_training:
+                outputs = model(samples, targets=targets) 
+                loss_dict = criterion(outputs, targets, args, meta_info)
+            else:
+                raise Exception('Not implemented!')
+                outputs = model(samples)
+                data = prepare_data(args, outputs, targets, meta_info, cfg)
+                loss_dict = criterion(outputs, targets)
+            weight_dict = criterion.weight_dict
+            losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+
+        # for arctic
+        for k, v in loss_dict.items():
+            if len(v.shape) == 1:
+                loss_dict[k] = v[0]
+
+        # reduce losses over all GPUs for logging purposes
+        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                      for k, v in loss_dict_reduced.items()}
+        loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
+        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+
+        loss_value = losses_reduced_scaled.item()
+
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            print(loss_dict_reduced)
+            sys.exit(1)
+
+
+        # amp backward function
+        if args.amp:
+            optimizer.zero_grad()
+            scaler.scale(losses).backward()
+            if max_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # original backward function
+            optimizer.zero_grad()
+            losses.backward()
+            if max_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            optimizer.step()
+
+        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+        if 'class_error' in loss_dict_reduced:
+            metric_logger.update(class_error=loss_dict_reduced['class_error'])
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        
+        _cnt += 1
+        if args.debug:
+            if _cnt == args.num_debug:
+                print("BREAK!"*5)
+                break
+
+        pbar.set_postfix(
+            create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='dino')
+        )
+        samples, targets, meta_info = prefetcher.next()        
+
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    result = create_arctic_loss_sum_dict(loss_value, train_stat, mode='dino')
+    print(result)
+
+    # for wandb
+    if args is not None and args.wandb:
+        if args.distributed:
+            if utils.get_local_rank() != 0:
+                return train_stat
+        
+        # check dataset
+        if args.dataset_file == 'arctic':
+            wandb.log(result, step=epoch)
+        elif args.dataset_file == 'AssemblyHands':
+            wandb.log({
+                'loss' : loss_value,
+                'ce_loss' : train_stat['loss_ce'],
+                'hand': train_stat['loss_hand_keypoint'], 
+            }, step=epoch)    
+
+    return train_stat
+
+
+@torch.no_grad()
+def eval_dn(model, criterion, postprocessors, data_loader, device, wo_class_error=False, args=None, logger=None):
+    try:
+        need_tgt_for_training = args.use_dn
+    except:
+        need_tgt_for_training = False
+
+    model.eval()
+    criterion.eval()
+
+    prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
+    samples, targets, meta_info = prefetcher.next()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    if not wo_class_error:
+        metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    header = 'Test:'
+
+    pbar = tqdm(range(len(data_loader)))
+    for _ in pbar:
+        targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+        # from arctic_tools.common.data_utils import unnormalize_2d_kp, denormalize_images, unormalize_kp2d
+        # from util.tools import cam2pixel
+        # B = 0
+
+        # test = unormalize_kp2d(targets['object.kp2d.norm'].cpu(), args.img_res)[B]
+        # test_r = unormalize_kp2d(targets['mano.j2d.norm.r'].cpu(), args.img_res)[B]
+        # test_l = unormalize_kp2d(targets['mano.j2d.norm.l'].cpu(), args.img_res)[B]
+
+        # # fx = meta_info['intrinsics'][B][0,0]
+        # # fy = meta_info['intrinsics'][B][1,1]
+        # # cx = meta_info['intrinsics'][B][0,2]
+        # # cy = meta_info['intrinsics'][B][1,2]
+        # # f = [fx, fy]
+        # # c = [cx, cy]
+
+        # from PIL import Image
+        # import cv2
+
+        # imgname = meta_info['imgname'][B]
+        # img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
+        # img = np.array(img)
+
+        # color = [(255,0,0), (0,255,0), (0,0,255)]
+        # for i, t in enumerate([test, test_l, test_r]):
+        #     for j in range(21):
+        #         x = int((t[j][0]) / (224/840))
+        #         y = int((t[j][1]-32) / (224/840))
+        #         cv2.line(img, (x, y), (x, y), color[i], 10)
+        # plt.imshow(img)
+
+        # samples, targets, meta_info = prefetcher.next()
+        # continue
+
+        with torch.cuda.amp.autocast(enabled=args.amp):
+            if need_tgt_for_training:
+                outputs, _ = model(samples, targets=targets)
+            else:
+                outputs = model(samples)
+            # outputs = model(samples)
+
+            loss_dict = criterion(outputs, targets)
+        weight_dict = criterion.weight_dict
+
+        # reduce losses over all GPUs for logging purposes
+        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                      for k, v in loss_dict_reduced.items()}
+        metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
+                             **loss_dict_reduced_scaled,
+                             **loss_dict_reduced_unscaled)
+        if 'class_error' in loss_dict_reduced:
+            metric_logger.update(class_error=loss_dict_reduced['class_error'])
+
+        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        results = postprocessors['bbox'](outputs, orig_target_sizes)
+        res = {target['image_id'].item(): output for target, output in zip(targets, results)}
+
+        _cnt += 1
+        if args.debug:
+            if _cnt % 15 == 0:
+                print("BREAK!"*5)
+                break
+
+    if args.save_results:
+        import os.path as osp
+        savepath = osp.join(args.output_dir, 'results-{}.pkl'.format(utils.get_rank()))
+        print("Saving res to {}".format(savepath))
+        torch.save(output_state_dict, savepath)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+        
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items() if meter.count > 0}
+
+    return stats
+
 
 def train_smoothnet(
         base_model, smoothnet, criterion, data_loader, optimizer, device, epoch, max_norm=0, args=None, cfg=None
@@ -570,3 +806,151 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
                 }, step=epoch
             )            
     return stats
+
+
+def eval_coco(model, criterion, postprocessors, data_loader, device, output_dir, wo_class_error=False, args=None, logger=None):
+    try:
+        need_tgt_for_training = args.use_dn
+    except:
+        need_tgt_for_training = False
+
+    model.eval()
+    criterion.eval()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    if not wo_class_error:
+        metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    header = 'Test:'
+
+    iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
+    useCats = True
+    try:
+        useCats = args.useCats
+    except:
+        useCats = True
+    if not useCats:
+        print("useCats: {} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!".format(useCats))
+    coco_evaluator = CocoEvaluator(data_loader.dataset.coco, iou_types, useCats=useCats)
+    # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
+
+    _cnt = 0
+    output_state_dict = {} # for debug only
+    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+        samples = samples.to(device)
+
+        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [{k: to_device(v, device) for k, v in t.items()} for t in targets]
+
+        with torch.cuda.amp.autocast(enabled=args.amp):
+            if need_tgt_for_training:
+                outputs = model(samples, targets)
+            else:
+                outputs = model(samples)
+            # outputs = model(samples)
+
+            loss_dict = criterion(outputs, targets)
+        weight_dict = criterion.weight_dict
+
+        # reduce losses over all GPUs for logging purposes
+        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                      for k, v in loss_dict_reduced.items()}
+        metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
+                             **loss_dict_reduced_scaled,
+                             **loss_dict_reduced_unscaled)
+        if 'class_error' in loss_dict_reduced:
+            metric_logger.update(class_error=loss_dict_reduced['class_error'])
+
+        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        results = postprocessors['bbox'](outputs, orig_target_sizes)
+        # [scores: [100], labels: [100], boxes: [100, 4]] x B
+        if 'segm' in postprocessors.keys():
+            target_sizes = torch.stack([t["size"] for t in targets], dim=0)
+            results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
+        res = {target['image_id'].item(): output for target, output in zip(targets, results)}
+
+        if coco_evaluator is not None:
+            coco_evaluator.update(res)
+        
+        if args.save_results:
+            # res_score = outputs['res_score']
+            # res_label = outputs['res_label']
+            # res_bbox = outputs['res_bbox']
+            # res_idx = outputs['res_idx']
+
+
+            for i, (tgt, res, outbbox) in enumerate(zip(targets, results, outputs['pred_boxes'])):
+                """
+                pred vars:
+                    K: number of bbox pred
+                    score: Tensor(K),
+                    label: list(len: K),
+                    bbox: Tensor(K, 4)
+                    idx: list(len: K)
+                tgt: dict.
+
+                """
+                # compare gt and res (after postprocess)
+                gt_bbox = tgt['boxes']
+                gt_label = tgt['labels']
+                gt_info = torch.cat((gt_bbox, gt_label.unsqueeze(-1)), 1)
+                
+                # img_h, img_w = tgt['orig_size'].unbind()
+                # scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=0)
+                # _res_bbox = res['boxes'] / scale_fct
+                _res_bbox = outbbox
+                _res_prob = res['scores']
+                _res_label = res['labels']
+                res_info = torch.cat((_res_bbox, _res_prob.unsqueeze(-1), _res_label.unsqueeze(-1)), 1)
+                # import ipdb;ipdb.set_trace()
+
+                if 'gt_info' not in output_state_dict:
+                    output_state_dict['gt_info'] = []
+                output_state_dict['gt_info'].append(gt_info.cpu())
+
+                if 'res_info' not in output_state_dict:
+                    output_state_dict['res_info'] = []
+                output_state_dict['res_info'].append(res_info.cpu())
+
+            # # for debug only
+            # import random
+            # if random.random() > 0.7:
+            #     print("Now let's break")
+            #     break
+
+        _cnt += 1
+        if args.debug:
+            if _cnt % 15 == 0:
+                print("BREAK!"*5)
+                break
+
+    if args.save_results:
+        import os.path as osp
+        
+        # output_state_dict['gt_info'] = torch.cat(output_state_dict['gt_info'])
+        # output_state_dict['res_info'] = torch.cat(output_state_dict['res_info'])
+        savepath = osp.join(args.output_dir, 'results-{}.pkl'.format(utils.get_rank()))
+        print("Saving res to {}".format(savepath))
+        torch.save(output_state_dict, savepath)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    if coco_evaluator is not None:
+        coco_evaluator.synchronize_between_processes()
+
+    # accumulate predictions from all images
+    if coco_evaluator is not None:
+        coco_evaluator.accumulate()
+        coco_evaluator.summarize()
+        
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items() if meter.count > 0}
+    if coco_evaluator is not None:
+        if 'bbox' in postprocessors.keys():
+            stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+        if 'segm' in postprocessors.keys():
+            stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+
+    return stats, coco_evaluator

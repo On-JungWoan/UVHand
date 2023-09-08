@@ -30,7 +30,41 @@ def smoothing(target, count):
 
 
 def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='baseline'):
-    if mode == 'baseline':
+    if mode == 'dino':
+        return {
+            'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
+            'loss' : loss_value,
+            'CDev' : loss_dict_reduced_scaled['loss/cd'].item(),
+            'penetr_loss' : loss_dict_reduced_scaled['loss/penetr'].item(),
+            'loss_mano' : round(
+                loss_dict_reduced_scaled["loss/mano/pose/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/beta/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/pose/l"].item() + \
+                loss_dict_reduced_scaled["loss/mano/beta/l"].item(), 2
+            ),
+            'loss_rot' : round(
+                loss_dict_reduced_scaled["loss/object/radian"].item() + \
+                loss_dict_reduced_scaled["loss/object/rot"].item(), 2
+            ),
+            'loss_transl' : round(
+                loss_dict_reduced_scaled["loss/mano/transl/l"].item() + \
+                loss_dict_reduced_scaled["loss/object/transl"].item(), 2
+            ),
+            'loss_kp' : round(
+                loss_dict_reduced_scaled["loss/mano/kp2d/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/kp3d/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/kp2d/l"].item() + \
+                loss_dict_reduced_scaled["loss/mano/kp3d/l"].item() + \
+                loss_dict_reduced_scaled["loss/object/kp2d"].item() + \
+                loss_dict_reduced_scaled["loss/object/kp3d"].item(), 2
+            ),
+            'loss_cam' : round(
+                loss_dict_reduced_scaled["loss/mano/cam_t/r"].item() + \
+                loss_dict_reduced_scaled["loss/mano/cam_t/l"].item() + \
+                loss_dict_reduced_scaled["loss/object/cam_t"].item(), 2
+            ),
+        }    
+    elif mode == 'baseline':
         return {
             'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
             'loss' : loss_value,
@@ -80,7 +114,41 @@ def create_arctic_loss_dict(loss_value, loss_dict_reduced_scaled, mode='baseline
 
 
 def create_arctic_loss_sum_dict(loss_value, train_stat, mode='baseline'):
-    if mode == 'baseline':    
+    if mode == 'dino':
+        return {
+            'loss' : loss_value,
+            'ce_loss' : train_stat['loss_ce'],
+            'loss_CDev' : train_stat['loss/cd'],
+            'loss_penetr' : train_stat['loss/penetr'],
+            'loss_mano' : (
+                train_stat["loss/mano/pose/r"] + \
+                train_stat["loss/mano/beta/r"] + \
+                train_stat["loss/mano/pose/l"] + \
+                train_stat["loss/mano/beta/l"]
+            ),
+            'loss_rot' : (
+                train_stat["loss/object/radian"] + \
+                train_stat["loss/object/rot"]
+            ),
+            'loss_transl' : (
+                train_stat["loss/mano/transl/l"] + \
+                train_stat["loss/object/transl"]
+            ),
+            'loss_kp' : (
+                train_stat["loss/mano/kp2d/r"] + \
+                train_stat["loss/mano/kp3d/r"] + \
+                train_stat["loss/mano/kp2d/l"] + \
+                train_stat["loss/mano/kp3d/l"] + \
+                train_stat["loss/object/kp2d"] + \
+                train_stat["loss/object/kp3d"]
+            ),
+            'loss_cam' : (
+                train_stat["loss/mano/cam_t/r"] + \
+                train_stat["loss/mano/cam_t/l"] + \
+                train_stat["loss/object/cam_t"]
+            )
+        }        
+    elif mode == 'baseline':    
         return {
             'loss' : loss_value,
             'ce_loss' : train_stat['loss_ce'],
@@ -139,6 +207,47 @@ def create_arctic_score_dict(stats):
         'score_S_R_0.05' : stats['success_rate/0.05'],
     }
 
+
+def test(meta_info, targets, data_loader):
+    from util.tools import cam2pixel
+    from PIL import Image
+    import cv2
+
+    B = 60
+    # testing_idx = 0
+    meta_info['intrinsics'][B]
+
+    fx = meta_info['intrinsics'][B][0,0]
+    fy = meta_info['intrinsics'][B][1,1]
+    cx = meta_info['intrinsics'][B][0,2]
+    cy = meta_info['intrinsics'][B][1,2]
+
+    f = [fx, fy]
+    c = [cx, cy]
+
+    imgname = meta_info['imgname'][B]
+    img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
+    img = np.array(img)
+
+    # test = targets['object.bbox3d.full.b'][B][testing_idx]
+    # test_bbox = cam2pixel(test, f, c).type(torch.uint8).cpu().numpy()
+
+    test = targets['mano.j3d.cam.r'][B]
+    # test[:, 0] *= 600
+    # test[:, 1] *= 840
+
+    p_test = cam2pixel(test, f, c)
+    for t in p_test:
+        # x = int(t[0] * 600)
+        # y = int(t[1] * 840)
+        x = int(t[0])
+        y = int(t[1])
+        cv2.line(img, (x, y), (x, y), (255,0,0), 3)
+    # plt.imshow(cv2.line(img, (test_bbox[0], test_bbox[1]), (test_bbox[0], test_bbox[1]), (255,0,0), 3))
+    # test_bbox = cam2pixel(targets['object.cam_t.wp'][B], f, c).type(torch.uint8).cpu().numpy()
+    # cam2pixel(targets['mano.j3d.cam.r'][B], f, c)
+
+    plt.imshow(img)
 
 
 def cam2pixel(cam_coord, f, c):

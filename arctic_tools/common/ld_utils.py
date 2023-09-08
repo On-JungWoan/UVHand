@@ -51,7 +51,10 @@ def stack_dl(out_list, dim, verbose=True, squeeze=True):
     out = {}
     for key, val in out_list.items():
         if isinstance(val[0], torch.Tensor):
-            out[key] = torch.stack(val, dim=dim)
+            if key == 'keypoints':
+                out[key] = torch.cat(val, dim=dim)
+            else:
+                out[key] = torch.stack(val, dim=dim)
             if squeeze:
                 out[key] = out[key].squeeze()
         elif isinstance(val[0], np.ndarray):

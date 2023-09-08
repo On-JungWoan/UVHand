@@ -25,8 +25,9 @@ def get_coco_api_from_dataset(dataset):
 
 
 def build_dataset(image_set, args):
-    if args.train_stage == 'pose':
-        return build_coco(image_set, args)
-    else:
-        return build_vid_coco(image_set, args)
+    return build_coco(image_set, args)
+    # if args.train_stage == 'pose':
+    #     return build_coco(image_set, args)
+    # else:
+    #     return build_vid_coco(image_set, args)
     
