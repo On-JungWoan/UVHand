@@ -39,9 +39,8 @@ from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, train
 from util.settings import (
     get_general_args_parser, get_deformable_detr_args_parser, get_dino_arg_parser,
     load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
+    set_dino_args
 )
-
-#GPUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./configs/r50_deformable_detr.sh
 
 
 # main script
@@ -49,33 +48,8 @@ def main(args):
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
-    # load cfg file and update the args
-    print("Loading config file from {}".format(args.config_file))
-    time.sleep(args.rank * 0.02)
-    cfg = SLConfig.fromfile(args.config_file)
-    if args.options is not None:
-        cfg.merge_from_dict(args.options)
-    if args.rank == 0:
-        save_cfg_path = os.path.join(args.output_dir, "config_cfg.py")
-        cfg.dump(save_cfg_path)
-        save_json_path = os.path.join(args.output_dir, "config_args_raw.json")
-        with open(save_json_path, 'w') as f:
-            json.dump(vars(args), f, indent=2)
-    cfg_dict = cfg._cfg_dict.to_dict()
-    args_vars = vars(args)
-    print('\n\n')
-    for k,v in cfg_dict.items():
-        if k not in args_vars:
-            setattr(args, k, v)
-        else:
-            print("Key {} can used by args only".format(k))
-            # raise ValueError("Key {} can used by args only".format(k))
-    print('\n\n')
-    # update some new args temporally
-    if not getattr(args, 'use_ema', None):
-        args.use_ema = False
-    if not getattr(args, 'debug', None):
-        args.debug = False    
+    if args.modelname == 'dino':
+        set_dino_args(args)
 
     if args.wandb:
         if args.distributed and utils.get_local_rank() != 0:
@@ -108,12 +82,7 @@ def main(args):
         dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
 
-    model_item = build_model(args, cfg)
-    if args.modelname == 'dino':
-        model, criterion, postprocessors = model_item
-    else:
-        model, criterion = model_item
-
+    model, criterion = build_model(args, cfg)
     model.to(device)
     model_without_ddp = model
 
@@ -198,17 +167,7 @@ def main(args):
 
     # for evaluation
     if args.eval:
-        wo_class_error = False
-
-        if args.dataset_file == 'COCO':
-            eval_coco(model, criterion, postprocessors,
-                                              data_loader_val, device, args.output_dir, wo_class_error=False, args=args)
-        else:
-            eval_dn(model, criterion, postprocessors,
-                                                data_loader_val, device, wo_class_error=wo_class_error, args=args)
-
-        sys.exit(0)
-
+        # train smooth net
         if args.train_smoothnet:
             smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
             WEIGHT_DICT = {
@@ -219,9 +178,12 @@ def main(args):
             smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
             optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)            
             test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
+            sys.exit(0)
 
+        # multiple evaluation
         if args.resume_dir:
             assert not args.resume
+            assert args.modelname == 'dino' and args.dataset_file == 'arctic', 'Not implemented yet.'
             resume_list = glob(op.join(args.resume_dir,'*'))
             resume_list.sort(key=extract_epoch)
 
@@ -229,9 +191,19 @@ def main(args):
                 args.resume = resume
                 load_resume(model_without_ddp, resume)
                 print(f"\n{'='*10} current epoch :{extract_epoch(args.resume)} {'='*10}")
-                test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
+                eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=False, args=args)
+            sys.exit(0)
+
+        # evaluation script
+        wo_class_error = False
+        if args.dataset_file == 'COCO':
+            # If you want to evaluate coco dataset, replace None to postprocessor.
+            eval_coco(model, criterion, None, data_loader_val, device, args.output_dir, wo_class_error=False, args=args)
         else:
-            test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
+            if args.modelname == 'dino':
+                eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=wo_class_error, args=args)
+            else:
+                test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
         sys.exit(0)
 
     # for training
@@ -262,43 +234,44 @@ def main(args):
                     'args': args,
                 }, f'{args.output_dir}/{epoch}.pth')
 
-                # evaluate
                 test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
 
             # origin training
             else:
-                train_dn(
-                    model, criterion, data_loader_train, optimizer, device, epoch,
-                    args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
-                )
+                # for dino
+                if args.modelname == 'dino':
+                    train_dn(
+                        model, criterion, data_loader_train, optimizer, device, epoch,
+                        args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
+                    )
 
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, f'{args.output_dir}/{epoch}.pth')
+                    utils.save_on_master({
+                        'model': model_without_ddp.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch,
+                        'args': args,
+                    }, f'{args.output_dir}/{epoch}.pth')
 
-                eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=False, args=args)
+                    eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=False, args=args)
 
-                continue
+                # for deformable detr
+                else:
+                    train_pose(
+                        model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
+                    )
+                    lr_scheduler.step()
 
-                train_pose(
-                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
-                )
-                lr_scheduler.step()
+                    utils.save_on_master({
+                        'model': model_without_ddp.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch,
+                        'args': args,
+                    }, f'{args.output_dir}/{epoch}.pth')
 
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, f'{args.output_dir}/{epoch}.pth')
-
-                # evaluate
-                test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                    # evaluate
+                    test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))

@@ -857,6 +857,8 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
 
 
 def eval_coco(model, criterion, postprocessors, data_loader, device, output_dir, wo_class_error=False, args=None, logger=None):
+    assert postprocessors is not None, "If you want to evaluate coco dataset, replace None to postprocessors."
+
     try:
         need_tgt_for_training = args.use_dn
     except:
@@ -870,7 +872,6 @@ def eval_coco(model, criterion, postprocessors, data_loader, device, output_dir,
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Test:'
 
-    iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
     useCats = True
     try:
         useCats = args.useCats
@@ -878,7 +879,7 @@ def eval_coco(model, criterion, postprocessors, data_loader, device, output_dir,
         useCats = True
     if not useCats:
         print("useCats: {} !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!".format(useCats))
-    coco_evaluator = CocoEvaluator(data_loader.dataset.coco, iou_types, useCats=useCats)
+    coco_evaluator = CocoEvaluator(data_loader.dataset.coco, 'bbox', useCats=useCats)
     # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
     _cnt = 0
@@ -914,9 +915,6 @@ def eval_coco(model, criterion, postprocessors, data_loader, device, output_dir,
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = postprocessors['bbox'](outputs, orig_target_sizes)
         # [scores: [100], labels: [100], boxes: [100, 4]] x B
-        if 'segm' in postprocessors.keys():
-            target_sizes = torch.stack([t["size"] for t in targets], dim=0)
-            results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
         res = {target['image_id'].item(): output for target, output in zip(targets, results)}
 
         if coco_evaluator is not None:

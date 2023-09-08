@@ -961,11 +961,12 @@ def build_dino(args, cfg):
                              focal_alpha=args.focal_alpha, losses=losses, cfg=cfg
                              )
     criterion.to(device)
-    postprocessors = {'bbox': PostProcess(num_select=args.num_select, nms_iou_threshold=args.nms_iou_threshold)}
-    if args.masks:
-        postprocessors['segm'] = PostProcessSegm()
-        if args.dataset_file == "coco_panoptic":
-            is_thing_map = {i: i <= 90 for i in range(201)}
-            postprocessors["panoptic"] = PostProcessPanoptic(is_thing_map, threshold=0.85)
+    # postprocessors = {'bbox': PostProcess(num_select=args.num_select, nms_iou_threshold=args.nms_iou_threshold)}
+    # if args.masks:
+    #     postprocessors['segm'] = PostProcessSegm()
+    #     if args.dataset_file == "coco_panoptic":
+    #         is_thing_map = {i: i <= 90 for i in range(201)}
+    #         postprocessors["panoptic"] = PostProcessPanoptic(is_thing_map, threshold=0.85)
 
-    return model, criterion, postprocessors
+    return model, criterion
+    # return model, criterion, postprocessors
