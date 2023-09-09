@@ -404,9 +404,11 @@ def load_resume(args, model, resume):
     missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
     unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
     if len(missing_keys) > 0:
-        print('Missing Keys: {}'.format(missing_keys))
+        for key in missing_keys:
+            print(f'missing_keys : {key}')
     if len(unexpected_keys) > 0:
-        print('Unexpected Keys: {}'.format(unexpected_keys))
+        for key in unexpected_keys:
+            print(f'unexpected_keys : {key}')
     
     return model
 
@@ -426,3 +428,43 @@ def make_arctic_environments(args):
         f.write(
             f"DATASET_ROOT = '{env_dir}'"
         )
+
+
+import os
+import time
+import json
+from util.slconfig import SLConfig
+
+def set_dino_args(args):
+    # load cfg file and update the args
+    print("Loading config file from {}".format(args.config_file))
+    time.sleep(args.rank * 0.02)
+    cfg = SLConfig.fromfile(args.config_file)
+
+    if args.options is not None:
+        cfg.merge_from_dict(args.options)
+    if args.rank == 0:
+        save_cfg_path = os.path.join(args.output_dir, "config_cfg.py")
+        cfg.dump(save_cfg_path)
+        save_json_path = os.path.join(args.output_dir, "config_args_raw.json")
+        with open(save_json_path, 'w') as f:
+            json.dump(vars(args), f, indent=2)
+    cfg_dict = cfg._cfg_dict.to_dict()
+    args_vars = vars(args)
+
+    print('\n\n')
+    for k,v in cfg_dict.items():
+        if k not in args_vars:
+            setattr(args, k, v)
+        else:
+            print("Key {} can used by args only".format(k))
+            # raise ValueError("Key {} can used by args only".format(k))
+    print('\n\n')
+
+    # update some new args temporally
+    if not getattr(args, 'use_ema', None):
+        args.use_ema = False
+    if not getattr(args, 'debug', None):
+        args.debug = False
+
+    return args
