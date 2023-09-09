@@ -452,7 +452,11 @@ class DeformableTransformer(nn.Module):
 
             else:
                 hs_enc = tgt_undetach.unsqueeze(0)
-                ref_enc = refpoint_embed_undetach.sigmoid().unsqueeze(0)
+                # ref_enc = refpoint_embed_undetach.sigmoid().unsqueeze(0)
+                ref_enc = [
+                    obj_kp.sigmoid().unsqueeze(0),
+                    hand_kp.sigmoid().unsqueeze(0),
+                ]
         else:
             hs_enc = ref_enc = None
         #########################################################

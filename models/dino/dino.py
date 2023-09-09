@@ -366,10 +366,11 @@ class DINO(nn.Module):
         # for encoder output
         if hs_enc is not None:
             # prepare intermediate outputs
-            interm_coord = ref_enc[-1]
+            # interm_coord = ref_enc[-1]
+            interm_obj, interm_hand = ref_enc
             interm_class = self.transformer.enc_out_class_embed(hs_enc[-1])
-            out['interm_outputs'] = {'pred_logits': interm_class, 'pred_boxes': interm_coord}
-            out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
+            out['interm_outputs'] = {'pred_logits': interm_class, 'pred_hand_key': interm_obj[-1], 'pred_obj_key': interm_hand[-1]}
+            # out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
 
             # prepare enc outputs
             if hs_enc.shape[0] > 1:
@@ -488,26 +489,23 @@ class SetCriterion(nn.Module):
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
         """
-        assert 'pred_boxes' in outputs
+        assert 'pred_hand_key' in outputs and 'pred_obj_key' in outputs
         idx = self._get_src_permutation_idx(indices)
-        src_boxes = outputs['pred_boxes'][idx]
-        target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        src_hand_key = outputs['pred_hand_key'][idx]
+        src_obj_key = outputs['pred_obj_key'][idx]
+        target_keypoints = torch.cat([t[i] for t, (_, i) in zip(targets['keypoints'], indices)], dim=0)
+        target_labels = torch.cat([torch.tensor(t).cuda()[i] for t, (_, i) in zip(targets['labels'], indices)], dim=0)
 
-        loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
+        #
+        hand_cal_idx = (target_labels == 12) + (target_labels == 13)
+        obj_cal_idx = ~hand_cal_idx
+        
+        loss_handkey = F.l1_loss(src_hand_key[hand_cal_idx], target_keypoints[hand_cal_idx], reduction='none')
+        loss_objkey = F.l1_loss(src_obj_key[obj_cal_idx], target_keypoints[obj_cal_idx], reduction='none')
 
         losses = {}
-        losses['loss_bbox'] = loss_bbox.sum() / num_boxes
-
-        loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
-            box_ops.box_cxcywh_to_xyxy(src_boxes),
-            box_ops.box_cxcywh_to_xyxy(target_boxes)))
-        losses['loss_giou'] = loss_giou.sum() / num_boxes
-
-        # calculate the x,y and h,w loss
-        with torch.no_grad():
-            losses['loss_xy'] = loss_bbox[..., :2].sum() / num_boxes
-            losses['loss_hw'] = loss_bbox[..., 2:].sum() / num_boxes
-
+        losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
+        losses['loss_obj_keypoint'] = (loss_objkey.sum() / obj_cal_idx.sum().item()) / 21
 
         return losses
 
@@ -622,10 +620,10 @@ class SetCriterion(nn.Module):
             #     dn_pos_idx.append((output_idx, tgt_idx))
             #     dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
 
-            output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
-            dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
-            dn_arctic_pred = dn_data.search('pred.', replace_to='')
-            dn_arctic_gt = dn_data.search('targets.', replace_to='')
+            # output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
+            # dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
+            # dn_arctic_pred = dn_data.search('pred.', replace_to='')
+            # dn_arctic_gt = dn_data.search('targets.', replace_to='')
 
             l_dict = {}
             for loss in self.losses:
@@ -633,7 +631,7 @@ class SetCriterion(nn.Module):
                 if 'labels' in loss:
                     kwargs = {'log': False}
                 l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
-            l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
+            # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
             l_dict = {k + f'_dn': v for k, v in l_dict.items()}
             losses.update(l_dict)
         else:
@@ -703,41 +701,41 @@ class SetCriterion(nn.Module):
                     l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
-        # # interm_outputs loss
-        # if 'interm_outputs' in outputs:
-        #     interm_outputs = outputs['interm_outputs']
-        #     indices = self.matcher(interm_outputs, targets)
-        #     if return_indices:
-        #         indices_list.append(indices)
-        #     for loss in self.losses:
-        #         if loss == 'masks':
-        #             # Intermediate masks losses are too costly to compute, we ignore them.
-        #             continue
-        #         kwargs = {}
-        #         if loss == 'labels':
-        #             # Logging is enabled only for the last layer
-        #             kwargs = {'log': False}
-        #         l_dict = self.get_loss(loss, interm_outputs, targets, indices, num_boxes, **kwargs)
-        #         l_dict = {k + f'_interm': v for k, v in l_dict.items()}
-        #         losses.update(l_dict)
+        # interm_outputs loss
+        if 'interm_outputs' in outputs:
+            interm_outputs = outputs['interm_outputs']
+            indices = self.matcher(interm_outputs, targets)
+            if return_indices:
+                indices_list.append(indices)
+            for loss in self.losses:
+                if loss == 'masks':
+                    # Intermediate masks losses are too costly to compute, we ignore them.
+                    continue
+                kwargs = {}
+                if loss == 'labels':
+                    # Logging is enabled only for the last layer
+                    kwargs = {'log': False}
+                l_dict = self.get_loss(loss, interm_outputs, targets, indices, num_boxes, **kwargs)
+                l_dict = {k + f'_interm': v for k, v in l_dict.items()}
+                losses.update(l_dict)
 
-        # # enc output loss
-        # if 'enc_outputs' in outputs:
-        #     for i, enc_outputs in enumerate(outputs['enc_outputs']):
-        #         indices = self.matcher(enc_outputs, targets)
-        #         if return_indices:
-        #             indices_list.append(indices)
-        #         for loss in self.losses:
-        #             if loss == 'masks':
-        #                 # Intermediate masks losses are too costly to compute, we ignore them.
-        #                 continue
-        #             kwargs = {}
-        #             if loss == 'labels':
-        #                 # Logging is enabled only for the last layer
-        #                 kwargs = {'log': False}
-        #             l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
-        #             l_dict = {k + f'_enc_{i}': v for k, v in l_dict.items()}
-        #             losses.update(l_dict)
+        # enc output loss
+        if 'enc_outputs' in outputs:
+            for i, enc_outputs in enumerate(outputs['enc_outputs']):
+                indices = self.matcher(enc_outputs, targets)
+                if return_indices:
+                    indices_list.append(indices)
+                for loss in self.losses:
+                    if loss == 'masks':
+                        # Intermediate masks losses are too costly to compute, we ignore them.
+                        continue
+                    kwargs = {}
+                    if loss == 'labels':
+                        # Logging is enabled only for the last layer
+                        kwargs = {'log': False}
+                    l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
+                    l_dict = {k + f'_enc_{i}': v for k, v in l_dict.items()}
+                    losses.update(l_dict)
 
         if return_indices:
             indices_list.append(indices0_copy)
@@ -883,6 +881,8 @@ def build_dino(args, cfg):
     # weight_dict['loss_giou'] = args.giou_loss_coef
     weight_dict = {
         'loss_ce': args.cls_loss_coef,
+        'loss_hand_keypoint': args.bbox_loss_coef,
+        'loss_obj_keypoint': args.bbox_loss_coef,
         # 'loss_ce': 1,
         # 'class_error':1,
         # 'cardinality_error':1,
@@ -917,7 +917,8 @@ def build_dino(args, cfg):
     # for DN training
     if args.use_dn:
         weight_dict['loss_ce_dn'] = args.cls_loss_coef
-        weight_dict['loss_bbox_dn'] = args.bbox_loss_coef
+        weight_dict['loss_hand_keypoint_dn'] = args.bbox_loss_coef
+        weight_dict['loss_obj_keypoint_dn'] = args.bbox_loss_coef
         weight_dict['loss_giou_dn'] = args.giou_loss_coef
 
     if args.masks:
@@ -940,7 +941,8 @@ def build_dino(args, cfg):
             no_interm_box_loss = False
         _coeff_weight_dict = {
             'loss_ce': 1.0,
-            'loss_bbox': 1.0 if not no_interm_box_loss else 0.0,
+            'loss_hand_keypoint': 1.0 if not no_interm_box_loss else 0.0,
+            'loss_obj_keypoint': 1.0 if not no_interm_box_loss else 0.0,
             'loss_giou': 1.0 if not no_interm_box_loss else 0.0,
         }
         try:
@@ -950,8 +952,8 @@ def build_dino(args, cfg):
         interm_weight_dict.update({k + f'_interm': v * interm_loss_coef * _coeff_weight_dict[k] for k, v in clean_weight_dict_wo_dn.items() if k in _coeff_weight_dict})
         weight_dict.update(interm_weight_dict)
 
-    # losses = ['labels', 'boxes', 'cardinality']
-    losses = ['labels', 'cardinality']
+    losses = ['labels', 'boxes', 'cardinality']
+    # losses = ['labels', 'cardinality']
     if args.masks:
         losses += ["masks"]
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
