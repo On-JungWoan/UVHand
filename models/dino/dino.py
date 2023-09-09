@@ -345,22 +345,22 @@ class DINO(nn.Module):
         outputs_obj_param = [outputs_obj_rad, outputs_obj_rot]
 
         if self.dn_number > 0 and dn_meta is not None:
-            outputs_class, outputs_hand_coord, outputs_obj_coord, mano_param, cam_param, obj_param = \
+            outputs_class, outputs_hand_coord_list, outputs_obj_coord_list, outputs_mano_param, outputs_cam_param, outputs_obj_param = \
                 dn_post_process(
                     outputs_class, outputs_hand_coord_list, outputs_obj_coord_list,
                     outputs_mano_param, outputs_cam_param, outputs_obj_param,
                     dn_meta,self.aux_loss,self._set_aux_loss
                 )
         out = {
-            'pred_logits': outputs_class[-1], 'pred_hand_key': outputs_hand_coord[-1], 'pred_obj_key': outputs_obj_coord[-1],
-            'pred_mano_params': [mano_param[0][-1], mano_param[1][-1]],
-            'pred_cams': [cam_param[0][-1], cam_param[1][-1]],
-            'pred_obj_params': [obj_param[0][-1], obj_param[1][-1]],
+            'pred_logits': outputs_class[-1], 'pred_hand_key': outputs_hand_coord_list[-1], 'pred_obj_key': outputs_obj_coord_list[-1],
+            'pred_mano_params': [outputs_mano_param[0][-1], outputs_mano_param[1][-1]],
+            'pred_cams': [outputs_cam_param[0][-1], outputs_cam_param[1][-1]],
+            'pred_obj_params': [outputs_obj_param[0][-1], outputs_obj_param[1][-1]],
         }
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(
-                outputs_class, outputs_hand_coord, outputs_obj_coord,
-                mano_param, obj_param, cam_param
+                outputs_class, outputs_hand_coord_list, outputs_obj_coord_list,
+                outputs_mano_param, outputs_obj_param, outputs_cam_param
             )
 
         # for encoder output

@@ -45,7 +45,7 @@ def get_general_args_parser():
     parser.add_argument('--split_window', default=False, action='store_true')
     parser.add_argument('--feature_type', default='origin', choices=['origin', 'global_fm', 'local_fm'])
     parser.add_argument('--train_smoothnet', default=False, action='store_true')
-    parser.add_argument('--iter', default=20, type=int)
+    parser.add_argument('--iter', default=0, type=int, help='Number of iteration of frame smoothing.')
 
     # for coco
     parser.add_argument('--img_size', default=(960, 540), type=tuple)

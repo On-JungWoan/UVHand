@@ -67,9 +67,6 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print(header)
-    print_freq = 10
-
-    _cnt = 0
 
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
     samples, targets, meta_info = prefetcher.next()
@@ -77,6 +74,10 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
 
     for _ in pbar:
         targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+        # test_debug(targets, meta_info, B=19, h=400, w=300)
+        # samples, targets, meta_info = prefetcher.next()
+        # continue
 
         with torch.cuda.amp.autocast(enabled=args.amp):
             if need_tgt_for_training:
@@ -133,9 +134,8 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
             metric_logger.update(class_error=loss_dict_reduced['class_error'])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         
-        _cnt += 1
         if args.debug:
-            if _cnt == args.num_debug:
+            if _ == args.num_debug:
                 print("BREAK!"*5)
                 break
 
@@ -174,7 +174,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, args=None, logger=None):
+def eval_dn(model, cfg, data_loader, device, wo_class_error=False, args=None, vis=None, epoch=None):
     try:
         need_tgt_for_training = args.use_dn
     except:
@@ -182,7 +182,6 @@ def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, ar
 
     # set model
     model.eval()
-    criterion.eval()
 
     # set prefetcher
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
@@ -193,6 +192,7 @@ def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, ar
     if not wo_class_error:
         metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Test:'
+    print(header)
 
     # start test
     pbar = tqdm(range(len(data_loader)))
@@ -202,22 +202,21 @@ def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, ar
         # implement & calc loss
         with torch.cuda.amp.autocast(enabled=args.amp):
             if need_tgt_for_training:
-                outputs, _ = model(samples, targets=targets)
+                outputs = model(samples, targets=targets)
             else:
                 outputs = model(samples)
-            loss_dict = criterion(outputs, targets)
-        weight_dict = criterion.weight_dict
 
         # vis or measure error
         data = prepare_data(args, outputs, targets, meta_info, cfg)
-        if args.visualization:
+        if vis:
             visualize_arctic_result(args, data, 'pred')
         else:
             # smoothing
-            cnt = args.iter
-            data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
-            data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
-            data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))
+            if args.iter > 0:
+                cnt = args.iter
+                data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
+                data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
+                data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))
 
             # measure error
             try:
@@ -240,23 +239,11 @@ def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, ar
             pbar.set_postfix(stat_round(**stats))
             metric_logger.update(**stats)
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
-        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                      for k, v in loss_dict_reduced.items()}
-        metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
-                             **loss_dict_reduced_scaled,
-                             **loss_dict_reduced_unscaled)
-        if 'class_error' in loss_dict_reduced:
-            metric_logger.update(class_error=loss_dict_reduced['class_error'])
-
-        _cnt += 1
         if args.debug:
-            if _cnt % 15 == 0:
+            if _ == args.num_debug:
                 print("BREAK!"*5)
                 break
+        samples, targets, meta_info = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -269,15 +256,19 @@ def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, ar
     # save results
     save_dir = os.path.join(f'{args.output_dir}/results.txt')
     epoch = extract_epoch(args.resume) if epoch is None else epoch
+
     with open(save_dir, 'a') as f:
         if args.test_viewpoint is not None:
             f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+
         f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
         f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
+
         for key, val in stats.items():
             f.write(f'{key:30} : {val}\n')
         f.write('\n\n')
 
+    # save wandb
     if args is not None and args.wandb:
         wandb.log(
             create_arctic_score_dict(stats), step=epoch
@@ -286,35 +277,23 @@ def eval_dn(model, criterion, cfg, data_loader, device, wo_class_error=False, ar
 
 
 # just testing
-def test_debug(args, targets, meta_info):
-    from arctic_tools.common.data_utils import unnormalize_2d_kp, denormalize_images, unormalize_kp2d
-    from util.tools import cam2pixel
-    B = 0
-
-    test = unormalize_kp2d(targets['object.kp2d.norm'].cpu(), args.img_res)[B]
-    test_r = unormalize_kp2d(targets['mano.j2d.norm.r'].cpu(), args.img_res)[B]
-    test_l = unormalize_kp2d(targets['mano.j2d.norm.l'].cpu(), args.img_res)[B]
-
-    # fx = meta_info['intrinsics'][B][0,0]
-    # fy = meta_info['intrinsics'][B][1,1]
-    # cx = meta_info['intrinsics'][B][0,2]
-    # cy = meta_info['intrinsics'][B][1,2]
-    # f = [fx, fy]
-    # c = [cx, cy]
-
+def test_debug(targets, meta_info, B=0, h=224, w=224):
     from PIL import Image
     import cv2
 
+    test = targets['keypoints'][B].view(-1, 21, 2)
+
     imgname = meta_info['imgname'][B]
     img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
+    img = img.resize((w,h))
     img = np.array(img)
 
     color = [(255,0,0), (0,255,0), (0,0,255)]
-    for i, t in enumerate([test, test_l, test_r]):
+    for i, t in enumerate(test):
         for j in range(21):
-            x = int((t[j][0]) / (224/840))
-            y = int((t[j][1]-32) / (224/840))
-            cv2.line(img, (x, y), (x, y), color[i], 10)
+            x = int( t[j][0] * w )
+            y = int( t[j][1] * h )
+            cv2.line(img, (x, y), (x, y), color[i], 5)
     plt.imshow(img)
 
     # samples, targets, meta_info = prefetcher.next()
@@ -968,7 +947,7 @@ def eval_coco(model, criterion, postprocessors, data_loader, device, output_dir,
 
         _cnt += 1
         if args.debug:
-            if _cnt % 15 == 0:
+            if _ == args.num_debug:
                 print("BREAK!"*5)
                 break
 
