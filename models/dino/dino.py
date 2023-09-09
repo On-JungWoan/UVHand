@@ -324,8 +324,8 @@ class DINO(nn.Module):
             layer_key_delta_unsig = key_embed(layer_hs)
             layer_obj_delta_unsig = obj_key_embed(layer_hs)
 
-            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()*2 - 0.5
-            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()*2 - 0.5
+            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()
+            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()
 
             outputs_hand_coord_list.append(layer_key_outputs_unsig)
             outputs_obj_coord_list.append(layer_obj_outputs_unsig)
