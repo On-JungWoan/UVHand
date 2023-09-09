@@ -346,30 +346,45 @@ class DeformableTransformer(nn.Module):
             enc_outputs_obj_coord_unselected[..., 1::2] += output_proposals[..., 1::2]
 
             topk = self.num_queries
-            topk_proposals_obj = torch.topk(enc_outputs_class_unselected[..., :12].max(-1)[0], topk//3, dim=1)[1] # bs, nq
-            topk_proposals_left = torch.topk(enc_outputs_class_unselected[..., 12], topk//3, dim=1)[1]
-            topk_proposals_right = torch.topk(enc_outputs_class_unselected[..., 13], topk//3, dim=1)[1]
-
+            topk_proposals = torch.topk(enc_outputs_class_unselected.max(-1)[0], topk, dim=1)[1] # bs, nq
+            # topk_proposals_obj = torch.topk(enc_outputs_class_unselected[..., :12].max(-1)[0], topk//3, dim=1)[1] # bs, nq
+            # topk_proposals_left = torch.topk(enc_outputs_class_unselected[..., 12], topk//3, dim=1)[1]
+            # topk_proposals_right = torch.topk(enc_outputs_class_unselected[..., 13], topk//3, dim=1)[1]
+            class_indices = torch.gather(enc_outputs_class_unselected.argmax(dim=-1), 1, topk_proposals)
+            hand_idx = ((class_indices == 12) + (class_indices == 13))
+            obj_idx = ~hand_idx * (class_indices != 0)
+            
             # gather boxes
-            obj_kp = torch.gather(enc_outputs_obj_coord_unselected, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,42))
-            left_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,42))
-            right_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,42))
+            hand_idx = hand_idx.unsqueeze(-1).repeat(1,1,42)
+            obj_idx = obj_idx.unsqueeze(-1).repeat(1,1,42)
+            obj_kp = torch.gather(enc_outputs_obj_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+            hand_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+            # left_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+            # right_kp = torch.gather(enc_outputs_hand_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
             # refpoint_embed_undetach = torch.gather(enc_outputs_coord_unselected, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)) # unsigmoid
+            # refpoint_embed_undetach = torch.cat([obj_kp, hand_kp], dim=1)
+            # refpoint_embed_undetach = torch.cat([obj_kp, left_kp, right_kp], dim=1)
 
-            refpoint_embed_undetach = torch.cat([obj_kp, left_kp, right_kp], dim=1)
+            # init box proposal
+            init_box_proposal_unsig = torch.gather(output_proposals, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+            init_box_proposal = init_box_proposal_unsig.sigmoid()
+            # init_obj_proposal = torch.gather(output_proposals, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,42))
+            # init_left_proposal = torch.gather(output_proposals, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,42))
+            # init_right_proposal = torch.gather(output_proposals, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,42))
+            # init_box_proposal = torch.cat([init_obj_proposal, init_left_proposal, init_right_proposal], dim=1).sigmoid()
+
+            refpoint_embed_undetach = init_box_proposal_unsig.clone().to(torch.float16)
+            refpoint_embed_undetach[obj_idx] = obj_kp[obj_idx]
+            refpoint_embed_undetach[hand_idx] = hand_kp[hand_idx]
             refpoint_embed_ = refpoint_embed_undetach.detach()
 
-            init_obj_proposal = torch.gather(output_proposals, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,42))
-            init_left_proposal = torch.gather(output_proposals, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,42))
-            init_right_proposal = torch.gather(output_proposals, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,42))
-            init_box_proposal = torch.cat([init_obj_proposal, init_left_proposal, init_right_proposal], dim=1).sigmoid()
-
             # gather tgt
-            # tgt_undetach = torch.gather(output_memory, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, self.d_model))
-            tgt_obj = torch.gather(output_memory, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,self.d_model))
-            tgt_left = torch.gather(output_memory, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,self.d_model))
-            tgt_right = torch.gather(output_memory, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,self.d_model))
-            tgt_undetach = torch.cat([tgt_obj, tgt_left, tgt_right], dim=1)
+            tgt_undetach = torch.gather(output_memory, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, self.d_model))
+            # tgt_obj = torch.gather(output_memory, 1, topk_proposals_obj.unsqueeze(-1).repeat(1,1,self.d_model))
+            # tgt_left = torch.gather(output_memory, 1, topk_proposals_left.unsqueeze(-1).repeat(1,1,self.d_model))
+            # tgt_right = torch.gather(output_memory, 1, topk_proposals_right.unsqueeze(-1).repeat(1,1,self.d_model))
+            # tgt_undetach = torch.cat([tgt_obj, tgt_hand], dim=1)
+            # tgt_undetach = torch.cat([tgt_obj, tgt_left, tgt_right], dim=1)
 
             if self.embed_init_tgt:
                 tgt_ = self.tgt_embed.weight[:, None, :].repeat(1, bs, 1).transpose(0, 1) # nq, bs, d_model
@@ -571,6 +586,7 @@ class TransformerEncoder(nn.Module):
             if ((layer_id == 0 and self.two_stage_type in ['enceachlayer', 'enclayer1']) \
                 or (self.two_stage_type == 'enceachlayer')) \
                     and (layer_id != self.num_layers - 1):
+                raise Exception('Not implemented yet.')
                 output_memory, output_proposals = gen_encoder_output_proposals(output, key_padding_mask, spatial_shapes)
                 output_memory = self.enc_norm[layer_id](self.enc_proj[layer_id](output_memory))
                 
