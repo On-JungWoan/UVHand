@@ -49,13 +49,17 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
         'loss_left' : ['loss_left'],
         'loss_right' : ['loss_right'],
         'loss_obj' : ['loss_obj'],
+
+        # dino
+        'loss_hand_key' : ['loss_hand_keypoint'],
+        'loss_obj_key' : ['loss_obj_keypoint'],
     }
 
     # select item
     if mode == 'dino':
         items = [
             'loss_ce', 'loss_CDev', 'loss_penetr', 'loss_mano', 'loss_rot', 'loss_transl',
-            'loss_kp', 'loss_cam'
+            'loss_kp', 'loss_cam', 'loss_hand_key', 'loss_obj_key'
         ]
     elif mode == 'baseline':
         items = [
