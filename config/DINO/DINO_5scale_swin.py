@@ -23,7 +23,7 @@ lr_drop_list = [33, 45]
 modelname = 'dino'
 frozen_weights = None
 backbone = 'swin_L_384_22k'
-use_checkpoint = True
+use_checkpoint = False
 
 dilation = False
 position_embedding = 'sine'
