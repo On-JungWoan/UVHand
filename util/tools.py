@@ -78,7 +78,10 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
     for item in items:
         value = 0
         for loss_key in loss_keys[item]:
-            value += float(loss_out[loss_key])
+            try:
+                value += float(loss_out[loss_key])
+            except:
+                pass
         if round_value:
             value = round(value, 2)
         res_dict[f'{flag}_{item}'] = value

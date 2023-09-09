@@ -504,9 +504,7 @@ class SetCriterion(nn.Module):
         loss_objkey = F.l1_loss(src_obj_key[obj_cal_idx], target_keypoints[obj_cal_idx], reduction='none')
 
         losses = {}
-        if len(loss_handkey) == 0:
-            losses['loss_hand_keypoint'] = 0
-        else:
+        if len(loss_handkey) != 0:
             losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
         losses['loss_obj_keypoint'] = (loss_objkey.sum() / obj_cal_idx.sum().item()) / 21
 
