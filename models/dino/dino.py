@@ -366,13 +366,10 @@ class DINO(nn.Module):
         # for encoder output
         if hs_enc is not None:
             # prepare intermediate outputs
-            # interm_coord = ref_enc[-1]
+            interm_coord = ref_enc[-1]
             interm_class = self.transformer.enc_out_class_embed(hs_enc[-1])
-            # out['interm_outputs'] = {'pred_logits': interm_class, 'pred_boxes': interm_coord}
-            # out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
-            out['interm_outputs'] = {'pred_logits': interm_class}
-            out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class}
-
+            out['interm_outputs'] = {'pred_logits': interm_class, 'pred_boxes': interm_coord}
+            out['interm_outputs_for_matching_pre'] = {'pred_logits': interm_class, 'pred_boxes': init_box_proposal}
 
             # prepare enc outputs
             if hs_enc.shape[0] > 1:
