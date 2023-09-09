@@ -14,6 +14,7 @@ import src.datasets.dataset_utils as dataset_utils
 from common.data_utils import read_img
 from common.object_tensors import ObjectTensors
 from src.datasets.dataset_utils import get_valid, pad_jts2d
+from arctic_tools.common.data_utils import unormalize_kp2d
 
 from cfg import Config as cfg
 
@@ -314,14 +315,14 @@ class ArcticDataset(Dataset):
         targets["joints_valid_r"] = torch.ones(21) * targets["right_valid"]
         targets["joints_valid_l"] = torch.ones(21) * targets["left_valid"]
 
+        # save keypoints & labels for reference points
         label = []
-        small_obj_idx = [idx for idx in range(32) if idx %3 != 0]
-        
-        keypoints = targets['object.kp2d.norm'][small_obj_idx].unsqueeze(0)
         obj2idx = cfg(args).obj2idx
         hand_idx = cfg(args).hand_idx
-
         label.append(obj2idx[meta_info['query_names']])
+
+        small_obj_idx = [idx for idx in range(32) if idx %3 != 0]
+        keypoints = targets['object.kp2d.norm'][small_obj_idx].unsqueeze(0)
         
         assert isinstance(left_valid, np.int64)
         assert isinstance(right_valid, np.int64)
@@ -333,6 +334,15 @@ class ArcticDataset(Dataset):
         if right_valid == 1:
             label.append(hand_idx[1])
             keypoints = torch.cat([targets["mano.j2d.norm.r"].unsqueeze(0), keypoints])
+        keypoints = unormalize_kp2d(keypoints, args.img_res)
+
+        # re-normalize
+        for b in range(len(keypoints)):
+            for k_idx in range(len(keypoints[b])):
+                x = keypoints[b][k_idx][0] / args.img_res * 840 / 840
+                y = (keypoints[b][k_idx][1] - 32) / args.img_res * 840 / 600
+                keypoints[b][k_idx][0] = x
+                keypoints[b][k_idx][1] = y
         keypoints = keypoints.view(-1, 42)
 
         if args.method == 'arctic_lstm':
