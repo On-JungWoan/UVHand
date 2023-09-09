@@ -184,14 +184,14 @@ def main(args):
         if args.resume_dir:
             assert not args.resume
             assert args.modelname == 'dino' and args.dataset_file == 'arctic', 'Not implemented yet.'
-            resume_list = glob(op.join(args.resume_dir,'*'))
+            resume_list = glob(op.join(args.resume_dir,'*.pth'))
             resume_list.sort(key=extract_epoch)
 
             for resume in resume_list:
                 args.resume = resume
-                load_resume(model_without_ddp, resume)
+                load_resume(args, model_without_ddp, resume)
                 print(f"\n{'='*10} current epoch :{extract_epoch(args.resume)} {'='*10}")
-                eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=False, args=args)
+                eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args)
             sys.exit(0)
 
         # evaluation script
@@ -201,7 +201,7 @@ def main(args):
             eval_coco(model, criterion, None, data_loader_val, device, args.output_dir, wo_class_error=False, args=args)
         else:
             if args.modelname == 'dino':
-                eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=wo_class_error, args=args)
+                eval_dn(model, cfg, data_loader_val, device, wo_class_error=wo_class_error, args=args)
             else:
                 test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
         sys.exit(0)
@@ -253,7 +253,7 @@ def main(args):
                         'args': args,
                     }, f'{args.output_dir}/{epoch}.pth')
 
-                    eval_dn(model, criterion, cfg, data_loader_val, device, wo_class_error=False, args=args)
+                    eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args, vis=args.visualization, epoch=epoch)
 
                 # for deformable detr
                 else:
