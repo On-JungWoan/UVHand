@@ -26,7 +26,7 @@ def get_arctic_item(outputs, cfg, device='cuda'):
     bs, _, _ = prob.shape
 
     # query index select
-    best_score = torch.zeros(bs).to(device).to(torch.float16)
+    best_score = torch.zeros(bs).to(device).to(prob.dtype)
     # if dataset != 'AssemblyHands':
     obj_idx = torch.zeros(bs).to(device).to(torch.long)
     for i in range(1, cfg.hand_idx[0]):

@@ -10,7 +10,7 @@ from pytorch3d.ops.knn import knn_points
 
 def arctic_smoothing(target, count):
     # batch_avg = target.mean(0)
-    B, _, _ =target.shape
+    B, x1, x2 =target.shape
     target = target[None].view(1,B,-1).permute(0,2,1)
 
     vel = target[..., 1:] - target[..., :-1]
@@ -26,7 +26,7 @@ def arctic_smoothing(target, count):
             # if (test_value > upper) or (test_value < lower):
             target[..., i+1] = target[..., i] = (target[..., i+1] + target[..., i])/2
 
-    return target[0].reshape(-1,3,B).permute(2,0,1)
+    return target[0].reshape(x1,x2,B).permute(2,0,1)
 
 
 def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='baseline'):
