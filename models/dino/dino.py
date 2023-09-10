@@ -506,6 +506,8 @@ class SetCriterion(nn.Module):
         losses = {}
         if len(loss_handkey) != 0:
             losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
+        else:
+            losses['loss_hand_keypoint'] = torch.tensor(0).cuda()
         losses['loss_obj_keypoint'] = (loss_objkey.sum() / obj_cal_idx.sum().item()) / 21
 
         return losses
