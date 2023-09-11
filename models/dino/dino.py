@@ -912,7 +912,7 @@ def build_dino(args, cfg):
         "loss/object/transl":1.0,
         # "loss/object/transl":10.0,
         # "loss/penetr": 0.1,
-        "loss/penetr": 0.05,
+        "loss/penetr": 0.005,
         # "loss/smooth/2d": 10.0,
         # "loss/smooth/3d": 10.0,
     }    
