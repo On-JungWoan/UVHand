@@ -730,6 +730,11 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
 
+                cnt = args.iter
+                data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
+                data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
+                data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
+
             if args.visualization:
                 # assert samples.tensors.shape[0] == 1
                 if args.dataset_file == 'arctic':
@@ -744,12 +749,7 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
                     pbar.set_postfix({
                         'MPJPE': stats['mpjpe'],
                         })                    
-                else:
-
-                    cnt = args.iter
-                    data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
-                    data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
-                    data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
+                else:                
 
                     def test():
                         import arctic_tools.common.torch_utils as torch_utils
