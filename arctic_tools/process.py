@@ -41,17 +41,17 @@ def get_arctic_item(outputs, cfg, device='cuda'):
     left_hand_idx, right_hand_idx = hand_idx
 
     # extract cam
-    root_l = torch.gather(hand_cam, 1, left_hand_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :]
-    root_r = torch.gather(hand_cam, 1, right_hand_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :]
-    root_o = torch.gather(obj_cam, 1, obj_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :]
+    root_l = torch.gather(hand_cam, 1, left_hand_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :].to(torch.float32)
+    root_r = torch.gather(hand_cam, 1, right_hand_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :].to(torch.float32)
+    root_o = torch.gather(obj_cam, 1, obj_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :].to(torch.float32)
 
-    mano_pose_l = torch.gather(mano_pose, 1, left_hand_idx.view(-1,1,1).repeat(1,1,48))[:, 0, :]
-    mano_pose_r = torch.gather(mano_pose, 1, right_hand_idx.view(-1,1,1).repeat(1,1,48))[:, 0, :]
-    mano_shape_l = torch.gather(mano_shape, 1, left_hand_idx.view(-1,1,1).repeat(1,1,10))[:, 0, :]
-    mano_shape_r = torch.gather(mano_shape, 1, right_hand_idx.view(-1,1,1).repeat(1,1,10))[:, 0, :]
-
-    obj_rot = torch.gather(out_obj_rot, 1, obj_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :]
-    obj_rad = torch.gather(out_obj_rad, 1, obj_idx.view(-1,1,1).repeat(1,1,1))[:, 0, :]
+    mano_pose_l = torch.gather(mano_pose, 1, left_hand_idx.view(-1,1,1).repeat(1,1,48))[:, 0, :].to(torch.float32)
+    mano_pose_r = torch.gather(mano_pose, 1, right_hand_idx.view(-1,1,1).repeat(1,1,48))[:, 0, :].to(torch.float32)
+    mano_shape_l = torch.gather(mano_shape, 1, left_hand_idx.view(-1,1,1).repeat(1,1,10))[:, 0, :].to(torch.float32)
+    mano_shape_r = torch.gather(mano_shape, 1, right_hand_idx.view(-1,1,1).repeat(1,1,10))[:, 0, :].to(torch.float32)
+    
+    obj_rot = torch.gather(out_obj_rot, 1, obj_idx.view(-1,1,1).repeat(1,1,3))[:, 0, :].to(torch.float32)
+    obj_rad = torch.gather(out_obj_rad, 1, obj_idx.view(-1,1,1).repeat(1,1,1))[:, 0, :].to(torch.float32)
 
     # root_r=root_l=root_o=mano_pose_l=mano_pose_r=mano_shape_l=mano_shape_r=obj_rot=obj_rad = torch.tensor([]).to(device)
     # for b in range(bs):
