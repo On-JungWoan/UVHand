@@ -151,7 +151,7 @@ def main(args):
     optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp)
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
     if args.frozen_weights is not None:
