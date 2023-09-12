@@ -30,6 +30,8 @@ def arctic_smoothing(target, count):
 
 
 def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='baseline'):
+    res_dict = {'loss' : loss_value}
+
     loss_keys = {
         # arctic
         'loss_ce' : ['loss_ce'],
@@ -43,6 +45,9 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
             'loss/mano/kp2d/r', 'loss/mano/kp3d/r', 'loss/mano/kp2d/l', 'loss/mano/kp3d/l',
             'loss/object/kp2d', 'loss/object/kp3d'
         ],
+        'loss_3d_kp' : [
+            'loss/mano/kp3d/r', 'loss/mano/kp3d/l', 'loss/object/kp3d'
+        ],        
         'loss_cam' : ['loss/mano/cam_t/r', 'loss/mano/cam_t/l', 'loss/object/cam_t'],
 
         # as hands
@@ -63,8 +68,8 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
         ]
     elif mode == 'small':
         items = [
-            'loss_ce', 'loss_mano', 'loss_rot', 'loss_transl',
-            'loss_cam', 'loss_hand_key', 'loss_obj_key'
+            'loss_ce', 'loss_CDev', 'loss_mano', 'loss_rot', 'loss_transl',
+            'loss_cam', 'loss_3d_kp', 'loss_hand_key', 'loss_obj_key'
         ]        
     elif mode == 'baseline':
         items = [
@@ -75,11 +80,12 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
         items = [
             'loss_left', 'loss_right', 'loss_obj'
         ]
+    elif mode == 'all':
+        return dict((f'{flag}_{k}', float(v)) for k,v in loss_out.items())
     else:
         raise Exception('Not existed mode')
     
     # make results
-    res_dict = {'loss' : loss_value}
     for item in items:
         value = 0
         for loss_key in loss_keys[item]:

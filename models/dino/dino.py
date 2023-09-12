@@ -38,6 +38,9 @@ from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
 from arctic_tools.process import get_arctic_item
 from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_small_loss
 
+from arctic_tools.common.body_models import build_mano_aa
+from arctic_tools.common.object_tensors import ObjectTensors
+
 # from ..registry import MODULE_BUILD_FUNCS
 from .dn_components import prepare_for_cdn,dn_post_process
 class DINO(nn.Module):
@@ -428,7 +431,7 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
-    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, cfg):
+    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, cfg, pre_process_models):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -444,6 +447,8 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
         self.cfg = cfg
+
+        self.pre_process_models = pre_process_models
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -639,7 +644,7 @@ class SetCriterion(nn.Module):
                 if 'labels' in loss:
                     kwargs = {'log': False}
                 l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
-            l_dict.update(compute_small_loss(dn_pred, targets))
+            l_dict.update(compute_small_loss(dn_pred, targets, meta_info, self.pre_process_models, args.img_res))
             # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
             l_dict = {k + f'_dn': v for k, v in l_dict.items()}
             losses.update(l_dict)
@@ -657,11 +662,7 @@ class SetCriterion(nn.Module):
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
         
         pred = get_arctic_item(outputs, self.cfg, args.device)
-        losses.update(compute_small_loss(pred, targets))
-        # data = prepare_data(args, outputs, targets, meta_info, self.cfg)
-        # arctic_pred = data.search('pred.', replace_to='')
-        # arctic_gt = data.search('targets.', replace_to='')
-        # losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
+        losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -687,7 +688,7 @@ class SetCriterion(nn.Module):
                     losses.update(l_dict)
                 # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
                 aux_pred = get_arctic_item(aux_outputs, self.cfg, args.device)
-                l_dict = compute_small_loss(aux_pred, targets)
+                l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res)
                 l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
@@ -972,8 +973,18 @@ def build_dino(args, cfg):
     # losses = ['labels', 'cardinality']
     if args.masks:
         losses += ["masks"]
+
+    obj_tensor = ObjectTensors()
+    obj_tensor.to(args.device)
+    pre_process_models = {
+        "mano_r": build_mano_aa(is_rhand=True).to(args.device),
+        "mano_l": build_mano_aa(is_rhand=False).to(args.device),
+        "arti_head": obj_tensor
+    }
+
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                             focal_alpha=args.focal_alpha, losses=losses, cfg=cfg
+                             focal_alpha=args.focal_alpha, losses=losses, cfg=cfg,
+                             pre_process_models=pre_process_models
                              )
     criterion.to(device)
     # postprocessors = {'bbox': PostProcess(num_select=args.num_select, nms_iou_threshold=args.nms_iou_threshold)}
