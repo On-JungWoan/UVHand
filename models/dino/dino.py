@@ -35,6 +35,9 @@ from .utils import sigmoid_focal_loss, MLP
 from arctic_tools.process import prepare_data
 from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
 
+from arctic_tools.process import get_arctic_item
+from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_small_loss
+
 # from ..registry import MODULE_BUILD_FUNCS
 from .dn_components import prepare_for_cdn,dn_post_process
 class DINO(nn.Module):
@@ -628,12 +631,15 @@ class SetCriterion(nn.Module):
             # dn_arctic_pred = dn_data.search('pred.', replace_to='')
             # dn_arctic_gt = dn_data.search('targets.', replace_to='')
 
+            dn_pred = get_arctic_item(output_known_lbs_bboxes, self.cfg, args.device)
+
             l_dict = {}
             for loss in self.losses:
                 kwargs = {}
                 if 'labels' in loss:
                     kwargs = {'log': False}
                 l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
+            l_dict.update(compute_small_loss(dn_pred, targets))
             # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
             l_dict = {k + f'_dn': v for k, v in l_dict.items()}
             losses.update(l_dict)
@@ -649,19 +655,22 @@ class SetCriterion(nn.Module):
 
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
-        data = prepare_data(args, outputs, targets, meta_info, self.cfg)
-        arctic_pred = data.search('pred.', replace_to='')
-        arctic_gt = data.search('targets.', replace_to='')
-        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))           
+        
+        pred = get_arctic_item(outputs, self.cfg, args.device)
+        losses.update(compute_small_loss(pred, targets))
+        # data = prepare_data(args, outputs, targets, meta_info, self.cfg)
+        # arctic_pred = data.search('pred.', replace_to='')
+        # arctic_gt = data.search('targets.', replace_to='')
+        # losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
             for idx, aux_outputs in enumerate(outputs['aux_outputs']):
                 indices = self.matcher(aux_outputs, targets)
 
-                aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
-                aux_arctic_pred = aux_data.search('pred.', replace_to='')
-                aux_arctic_gt = aux_data.search('targets.', replace_to='')
+                # aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
+                # aux_arctic_pred = aux_data.search('pred.', replace_to='')
+                # aux_arctic_gt = aux_data.search('targets.', replace_to='')
 
                 if return_indices:
                     indices_list.append(indices)
@@ -676,7 +685,9 @@ class SetCriterion(nn.Module):
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
                     l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
-                l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                aux_pred = get_arctic_item(aux_outputs, self.cfg, args.device)
+                l_dict = compute_small_loss(aux_pred, targets)
                 l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 

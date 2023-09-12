@@ -142,7 +142,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
         pbar.set_postfix(
             create_loss_dict(
                 loss_value, loss_dict_reduced_scaled,
-                round_value=True, mode='dino'
+                round_value=True, mode='small'
             )
         )
         samples, targets, meta_info = prefetcher.next()        
@@ -151,7 +151,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    result = create_loss_dict(loss_value, train_stat, flag='train', mode='dino')
+    result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
     print(result)
 
     # for wandb
@@ -729,6 +729,76 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
             outputs = model(samples)
             if args.dataset_file == 'arctic':
                 data = prepare_data(args, outputs, targets, meta_info, cfg)
+
+                # import arctic_tools.common.torch_utils as torch_utils
+                # from arctic_tools.process import make_output
+                # from arctic_tools.common.xdict import xdict
+                # from copy import deepcopy
+                
+                # ######
+                # origin = measure_error(data, args.eval_metrics)
+                # origin_cdev = torch_utils.nanmean(torch.tensor(origin['cdev/ho']))
+                # print(origin_cdev)
+
+                # ######
+                # def t_f(cnt, vis=False):
+                #     test_outputs = deepcopy(outputs)
+
+                #     out_logits = test_outputs['pred_logits']
+                #     hand_cam, obj_cam = test_outputs['pred_cams']
+                #     mano_pose, mano_shape = test_outputs['pred_mano_params']
+                #     out_obj_rad, out_obj_rot = test_outputs['pred_obj_params']
+                #     prob = out_logits.sigmoid()
+                #     bs, _, _ = prob.shape
+
+                #     # query index select
+                #     best_score = torch.zeros(bs).to(device).to(prob.dtype)
+                #     # if dataset != 'AssemblyHands':
+                #     obj_idx = torch.zeros(bs).to(device).to(torch.long)
+                #     for i in range(1, cfg.hand_idx[0]):
+                #         score, idx = torch.max(prob[:,:,i], dim=-1)
+                #         obj_idx[best_score < score] = idx[best_score < score]
+                #         best_score[best_score < score] = score[best_score < score]
+
+                #     hand_idx = []
+                #     for i in cfg.hand_idx:
+                #         hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
+                #     # hand_idx = torch.stack(hand_idx, dim=-1) 
+                #     left_hand_idx, right_hand_idx = hand_idx
+                #     mano_pose_l = torch.gather(mano_pose, 1, left_hand_idx.view(-1,1,1).repeat(1,1,48)).view(bs, 48)
+                #     mano_pose_r = torch.gather(mano_pose, 1, right_hand_idx.view(-1,1,1).repeat(1,1,48)).view(bs, 48)
+                #     mano_shape_l = torch.gather(mano_shape, 1, left_hand_idx.view(-1,1,1).repeat(1,1,10)).view(bs, 10)
+                #     mano_shape_r = torch.gather(mano_shape, 1, right_hand_idx.view(-1,1,1).repeat(1,1,10)).view(bs, 10)
+                #     root_l = torch.gather(hand_cam, 1, left_hand_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
+                #     root_r = torch.gather(hand_cam, 1, right_hand_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
+                #     root_o = torch.gather(obj_cam, 1, obj_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
+                #     obj_rot = torch.gather(out_obj_rot, 1, obj_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
+                #     obj_rad = torch.gather(out_obj_rad, 1, obj_idx.view(-1,1,1).repeat(1,1,1)).view(bs, 1)
+
+                #     mano_pose_l = arctic_smoothing(mano_pose_l.view(512, 1, 48), cnt).view(512,48)
+                #     mano_pose_r = arctic_smoothing(mano_pose_r.view(512, 1, 48), cnt).view(512,48)
+                #     mano_shape_l = arctic_smoothing(mano_shape_l.view(512, 1, 10), cnt).view(512,10)
+                #     mano_shape_r = arctic_smoothing(mano_shape_r.view(512, 1, 10), cnt).view(512,10)
+                #     root_l = arctic_smoothing(root_l.view(512, 1, 3), cnt).view(512,3)
+                #     root_r = arctic_smoothing(root_r.view(512, 1, 3), cnt).view(512,3)
+                #     root_o = arctic_smoothing(root_o.view(512, 1, 3), cnt).view(512,3)
+                #     obj_rot = arctic_smoothing(obj_rot.view(512, 1, 3), cnt).view(512,3)
+                #     obj_rad = arctic_smoothing(obj_rad.view(512, 1, 1), cnt).view(512,1)
+
+                #     pred = ([root_l, root_r, root_o], [mano_pose_l, mano_pose_r], [mano_shape_l, mano_shape_r], [obj_rot, obj_rad])
+                #     out = make_output(args, *pred, meta_info["query_names"], meta_info["intrinsics"])
+                #     test_data = prepare_data(args, None, targets, meta_info, cfg, pred=out)
+
+                #     #####
+                #     replace = measure_error(test_data, args.eval_metrics)
+                #     replace_cdev = torch_utils.nanmean(torch.tensor(replace['cdev/ho']))
+                #     print(replace_cdev)
+
+                #     if vis:
+                #         visualize_arctic_result(args, test_data, 'pred')
+                # t_f(5)
+                # samples, targets, meta_info = prefetcher.next()
+                # continue
 
                 cnt = args.iter
                 data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))

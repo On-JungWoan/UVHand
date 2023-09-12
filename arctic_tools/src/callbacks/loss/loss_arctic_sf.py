@@ -178,3 +178,94 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
     }
     
     return loss_dict
+
+
+def compute_small_loss(pred, gt, device='cuda'):
+    # unpacking pred and gt
+    root, mano_pose, mano_shape, obj_angle = pred
+    root_l, root_r, root_o = root
+    pred_betas_l, pred_betas_r = mano_shape
+    pred_rotmat_l, pred_rotmat_r = mano_pose
+    pred_rot, pred_radian = obj_angle
+
+    gt_pose_r = gt["mano.pose.r"]
+    gt_betas_r = gt["mano.beta.r"]
+    gt_pose_l = gt["mano.pose.l"]
+    gt_betas_l = gt["mano.beta.l"]
+    gt_rot = gt["object.rot"].view(-1, 3).float()
+    gt_radian = gt["object.radian"].view(-1).float()
+
+    is_valid = gt["is_valid"]
+    right_valid = gt["right_valid"]
+    left_valid = gt["left_valid"]
+
+    # reshape
+    gt_pose_r = axis_angle_to_matrix(gt_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+    gt_pose_l = axis_angle_to_matrix(gt_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+    pred_rotmat_r = axis_angle_to_matrix(pred_rotmat_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+    pred_rotmat_l = axis_angle_to_matrix(pred_rotmat_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+
+    # Compute loss on MANO parameters
+    loss_regr_pose_r, loss_regr_betas_r = mano_loss(
+        pred_rotmat_r,
+        pred_betas_r,
+        gt_pose_r,
+        gt_betas_r,
+        criterion=mse_loss,
+        is_valid=right_valid,
+    )
+    loss_regr_pose_l, loss_regr_betas_l = mano_loss(
+        pred_rotmat_l,
+        pred_betas_l,
+        gt_pose_l,
+        gt_betas_l,
+        criterion=mse_loss,
+        is_valid=left_valid,
+    )
+
+    loss_radian = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
+    loss_rot = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
+    loss_transl_l = vector_loss(
+        root_l - root_r,
+        gt["mano.cam_t.wp.l"] - gt["mano.cam_t.wp.r"],
+        mse_loss,
+        right_valid * left_valid,
+    )
+    loss_transl_o = vector_loss(
+        root_o - root_r,
+        gt["object.cam_t.wp"] - gt["mano.cam_t.wp.r"],
+        mse_loss,
+        right_valid * is_valid,
+    )
+
+    loss_cam_t_r = vector_loss(
+        root_r,
+        gt["mano.cam_t.wp.r"],
+        mse_loss,
+        right_valid,
+    )
+    loss_cam_t_l = vector_loss(
+        root_l,
+        gt["mano.cam_t.wp.l"],
+        mse_loss,
+        left_valid,
+    )
+    loss_cam_t_o = vector_loss(
+        root_o, gt["object.cam_t.wp"], mse_loss, is_valid
+    )
+
+    loss_dict = {
+        "loss/mano/cam_t/r": loss_cam_t_r.to(device),
+        "loss/mano/cam_t/l": loss_cam_t_l.to(device),
+        "loss/object/cam_t": loss_cam_t_o.to(device),
+        "loss/mano/pose/r": loss_regr_pose_r.to(device),
+        "loss/mano/beta/r": loss_regr_betas_r.to(device),
+        "loss/mano/pose/l": loss_regr_pose_l.to(device),
+        "loss/mano/transl/l": loss_transl_l.to(device),
+        "loss/mano/beta/l": loss_regr_betas_l.to(device),
+        "loss/object/radian": loss_radian.to(device),
+        "loss/object/rot": loss_rot.to(device),
+        "loss/object/transl": loss_transl_o.to(device),
+    }
+    
+    return loss_dict

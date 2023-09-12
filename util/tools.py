@@ -61,6 +61,11 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
             'loss_ce', 'loss_CDev', 'loss_penetr', 'loss_mano', 'loss_rot', 'loss_transl',
             'loss_kp', 'loss_cam', 'loss_hand_key', 'loss_obj_key'
         ]
+    elif mode == 'small':
+        items = [
+            'loss_ce', 'loss_mano', 'loss_rot', 'loss_transl',
+            'loss_cam', 'loss_hand_key', 'loss_obj_key'
+        ]        
     elif mode == 'baseline':
         items = [
             'loss_ce', 'loss_CDev', 'loss_penetr', 'loss_mano', 'loss_rot', 'loss_transl',
