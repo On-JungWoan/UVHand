@@ -108,7 +108,8 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
+            for k,v in (loss_dict_reduced.items()):
+                print(f'{k} : {v.item()}')
             sys.exit(1)
 
 
@@ -151,7 +152,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    result = create_loss_dict(loss_value, train_stat, flag='train', mode='all')
+    result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
     print(result)
 
     # for wandb

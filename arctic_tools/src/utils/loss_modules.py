@@ -178,27 +178,30 @@ def subtract_root_batch(joints: torch.Tensor, root_idx: int):
 
 
 def compute_contact_devi_loss(pred, targets):
-    cd_ro = contact_deviation(
-        pred["object.v.cam"],
-        pred["mano.v3d.cam.r"],
-        targets["dist.ro"],
-        targets["idx.ro"],
-        targets["is_valid"],
-        targets["right_valid"],
-    )
-
-    cd_lo = contact_deviation(
-        pred["object.v.cam"],
-        pred["mano.v3d.cam.l"],
-        targets["dist.lo"],
-        targets["idx.lo"],
-        targets["is_valid"],
-        targets["left_valid"],
-    )
-    cd_ro = nanmean(cd_ro)
-    cd_lo = nanmean(cd_lo)
-    cd_ro = torch.nan_to_num(cd_ro)
-    cd_lo = torch.nan_to_num(cd_lo)
+    cd_lo = cd_ro = None
+    
+    if 'mano.v3d.cam.r' in pred.keys():
+        cd_ro = contact_deviation(
+            pred["object.v.cam"],
+            pred["mano.v3d.cam.r"],
+            targets["dist.ro"],
+            targets["idx.ro"],
+            targets["is_valid"],
+            targets["right_valid"],
+        )
+        cd_ro = nanmean(cd_ro)
+        cd_ro = torch.nan_to_num(cd_ro)        
+    if 'mano.v3d.cam.l' in pred.keys():
+        cd_lo = contact_deviation(
+            pred["object.v.cam"],
+            pred["mano.v3d.cam.l"],
+            targets["dist.lo"],
+            targets["idx.lo"],
+            targets["is_valid"],
+            targets["left_valid"],
+        )
+        cd_lo = nanmean(cd_lo)
+        cd_lo = torch.nan_to_num(cd_lo)
     return cd_ro, cd_lo
 
 

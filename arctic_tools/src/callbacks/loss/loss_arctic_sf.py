@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import arctic_tools.common.camera as camera
+import arctic_tools.common.transforms as tf
+import arctic_tools.common.data_utils as data_utils
 from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
 from src.utils.loss_modules import (
@@ -196,6 +198,9 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     gt_joints_l = gt["mano.j3d.cam.l"]
     gt_joints_r = gt["mano.j3d.cam.r"]
     gt_kp3d_o = gt["object.kp3d.cam"]
+    gt_keypoints_2d_r = gt["mano.j2d.norm.r"]
+    gt_keypoints_2d_l = gt["mano.j2d.norm.l"]
+    gt_kp2d_o = torch.cat((gt["object.kp2d.norm.t"], gt["object.kp2d.norm.b"]), dim=1)
     gt_rot = gt["object.rot"].view(-1, 3).float()
     gt_radian = gt["object.radian"].view(-1).float()
     joints_valid_r = gt["joints_valid_r"]
@@ -212,123 +217,151 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
     cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
 
+    tmp_pred = {}
+    loss_dict = {}
 
+    # l hand
+    if sum(is_valid * left_valid) != 0:
+        # pre process
+        mano_output_l = pre_process_models['mano_l'](
+            betas=pred_betas_l,
+            hand_pose=pred_rotmat_l[:, 3:],
+            global_orient=pred_rotmat_l[:, :3],
+        )        
+        joints3d_cam_l = mano_output_l.joints + cam_t_l[:, None, :]
+        v3d_cam_l = mano_output_l.vertices + cam_t_l[:, None, :]
+        joints2d_l = tf.project2d_batch(K, joints3d_cam_l)
+        pred_projected_keypoints_2d_l = data_utils.normalize_kp2d(joints2d_l, img_res)
+        tmp_pred["mano.v3d.cam.l"] = v3d_cam_l
+        gt_pose_l = axis_angle_to_matrix(gt_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+        pred_rotmat_l = axis_angle_to_matrix(pred_rotmat_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)        
+
+        # calc loss
+        loss_dict["loss/mano/kp2d/l"] = joints_loss(
+            pred_projected_keypoints_2d_l,
+            gt_keypoints_2d_l,
+            criterion=mse_loss,
+            jts_valid=joints_valid_l,
+        )      
+        loss_dict["loss/mano/pose/l"], loss_dict["loss/mano/beta/l"] = mano_loss(
+            pred_rotmat_l,
+            pred_betas_l,
+            gt_pose_l,
+            gt_betas_l,
+            criterion=mse_loss,
+            is_valid=left_valid,
+        )
+        loss_dict["loss/mano/cam_t/l"] = vector_loss(
+            root_l,
+            gt["mano.cam_t.wp.l"],
+            mse_loss,
+            left_valid,
+        )
+        loss_dict["loss/mano/kp3d/l"] = hand_kp3d_loss(
+            joints3d_cam_l, gt_joints_l, mse_loss, joints_valid_l
+        )
+    else:
+        pass
+        # loss_dict["loss/mano/kp2d/l"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/mano/kp3d/l"] = torch.tensor(0).to(torch.float16).to(device)
+
+
+    # r hand
+    if sum(is_valid * right_valid) != 0:
+        # pre process
+        mano_output_r = pre_process_models['mano_r'](
+            betas=pred_betas_r,
+            hand_pose=pred_rotmat_r[:, 3:],
+            global_orient=pred_rotmat_r[:, :3],
+        )
+        joints3d_cam_r = mano_output_r.joints + cam_t_r[:, None, :]
+        v3d_cam_r = mano_output_r.vertices + cam_t_r[:, None, :]
+        joints2d_r = tf.project2d_batch(K, joints3d_cam_r)
+        pred_projected_keypoints_2d_r = data_utils.normalize_kp2d(joints2d_r, img_res)
+        tmp_pred["mano.v3d.cam.r"] = v3d_cam_r
+        gt_pose_r = axis_angle_to_matrix(gt_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+        pred_rotmat_r = axis_angle_to_matrix(pred_rotmat_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)        
+        # calc loss
+        loss_dict["loss/mano/kp2d/r"] = joints_loss(
+            pred_projected_keypoints_2d_r,
+            gt_keypoints_2d_r,
+            criterion=mse_loss,
+            jts_valid=joints_valid_r,
+        )
+        loss_dict["loss/mano/pose/r"], loss_dict["loss/mano/beta/r"] = mano_loss(
+            pred_rotmat_r,
+            pred_betas_r,
+            gt_pose_r,
+            gt_betas_r,
+            criterion=mse_loss,
+            is_valid=right_valid,
+        )
+        loss_dict["loss/mano/cam_t/r"] = vector_loss(
+            root_r,
+            gt["mano.cam_t.wp.r"],
+            mse_loss,
+            right_valid,
+        )
+        loss_dict["loss/mano/kp3d/r"] = hand_kp3d_loss(
+            joints3d_cam_r, gt_joints_r, mse_loss, joints_valid_r
+        )
+        loss_dict["loss/object/transl"] = vector_loss(
+            root_o - root_r,
+            gt["object.cam_t.wp"] - gt["mano.cam_t.wp.r"],
+            mse_loss,
+            right_valid * is_valid,
+        )
+    else:
+        pass
+        # loss_dict["loss/mano/kp2d/r"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/mano/kp3d/r"] = torch.tensor(0).to(torch.float16).to(device)
+        # loss_dict["loss/object/transl"] = torch.tensor(0).to(torch.float16).to(device)
+    
+    if sum(is_valid * left_valid) != 0 and sum(is_valid * right_valid) != 0:
+        loss_dict["loss/mano/transl/l"] = vector_loss(
+            root_l - root_r,
+            gt["mano.cam_t.wp.l"] - gt["mano.cam_t.wp.r"],
+            mse_loss,
+            right_valid * left_valid,
+        )
+    else:
+        pass
+        # loss_dict["loss/mano/transl/l"] = torch.tensor(0).to(torch.float16).to(device)
+
+    # obj
     # pre process
-    mano_output_r = pre_process_models['mano_r'](
-        betas=pred_betas_r,
-        hand_pose=pred_rotmat_r[:, 3:],
-        global_orient=pred_rotmat_r[:, :3],
-    )
-    mano_output_l = pre_process_models['mano_l'](
-        betas=pred_betas_l,
-        hand_pose=pred_rotmat_l[:, 3:],
-        global_orient=pred_rotmat_l[:, :3],
-    )
     obj_output = pre_process_models['arti_head'].forward(
         pred_radian.view(-1, 1), pred_rot, None, query_names
     )
-    
-    # r hand
-    joints3d_cam_r = mano_output_r.joints + cam_t_r[:, None, :]
-    v3d_cam_r = mano_output_r.vertices + cam_t_r[:, None, :]
-
-    # l hand
-    joints3d_cam_l = mano_output_l.joints + cam_t_l[:, None, :]
-    v3d_cam_l = mano_output_l.vertices + cam_t_l[:, None, :]
-
-    # obj
     kp3d_cam_o = obj_output["kp3d"] + cam_t_o[:, None, :]
     v3d_cam_o = obj_output["v"] + cam_t_o[:, None, :]
-
-    tmp_pred = {}
-    tmp_pred["mano.v3d.cam.l"] = v3d_cam_l
-    tmp_pred["mano.v3d.cam.r"] = v3d_cam_r
+    kp2d_o = tf.project2d_batch(K, kp3d_cam_o)
+    pred_kp2d_o = data_utils.normalize_kp2d(kp2d_o, img_res)
     tmp_pred["object.v.cam"] = v3d_cam_o
 
-    # reshape
-    gt_pose_r = axis_angle_to_matrix(gt_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
-    gt_pose_l = axis_angle_to_matrix(gt_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
-    pred_rotmat_r = axis_angle_to_matrix(pred_rotmat_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
-    pred_rotmat_l = axis_angle_to_matrix(pred_rotmat_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
-
-    # Compute loss on MANO parameters
-    loss_regr_pose_r, loss_regr_betas_r = mano_loss(
-        pred_rotmat_r,
-        pred_betas_r,
-        gt_pose_r,
-        gt_betas_r,
-        criterion=mse_loss,
-        is_valid=right_valid,
+    # calc loss
+    loss_dict["loss/object/kp2d"] = vector_loss(
+        pred_kp2d_o, gt_kp2d_o, criterion=mse_loss, is_valid=is_valid
     )
-    loss_regr_pose_l, loss_regr_betas_l = mano_loss(
-        pred_rotmat_l,
-        pred_betas_l,
-        gt_pose_l,
-        gt_betas_l,
-        criterion=mse_loss,
-        is_valid=left_valid,
-    )
-
-    # rotation
-    loss_radian = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
-    loss_rot = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
-    loss_transl_l = vector_loss(
-        root_l - root_r,
-        gt["mano.cam_t.wp.l"] - gt["mano.cam_t.wp.r"],
-        mse_loss,
-        right_valid * left_valid,
-    )
-    loss_transl_o = vector_loss(
-        root_o - root_r,
-        gt["object.cam_t.wp"] - gt["mano.cam_t.wp.r"],
-        mse_loss,
-        right_valid * is_valid,
-    )
-
-    loss_cam_t_r = vector_loss(
-        root_r,
-        gt["mano.cam_t.wp.r"],
-        mse_loss,
-        right_valid,
-    )
-    loss_cam_t_l = vector_loss(
-        root_l,
-        gt["mano.cam_t.wp.l"],
-        mse_loss,
-        left_valid,
-    )
-    loss_cam_t_o = vector_loss(
+    loss_dict["loss/object/cam_t"] = vector_loss(
         root_o, gt["object.cam_t.wp"], mse_loss, is_valid
     )
+    loss_dict["loss/object/kp3d"] = object_kp3d_loss(kp3d_cam_o, gt_kp3d_o, mse_loss, is_valid)
+    loss_dict["loss/object/radian"] = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
+    loss_dict["loss/object/rot"] = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
 
-    # Compute 3D keypoint loss
-    loss_keypoints_3d_r = hand_kp3d_loss(
-        joints3d_cam_r, gt_joints_r, mse_loss, joints_valid_r
-    )
-    loss_keypoints_3d_l = hand_kp3d_loss(
-        joints3d_cam_l, gt_joints_l, mse_loss, joints_valid_l
-    )
-    loss_keypoints_3d_o = object_kp3d_loss(kp3d_cam_o, gt_kp3d_o, mse_loss, is_valid)    
 
     # cdev
+    loss_cd = torch.tensor(0).to(torch.float16).to(device)
     cd_ro, cd_lo = compute_contact_devi_loss(tmp_pred, gt)
-
-    loss_dict = {
-        "loss/mano/cam_t/r": loss_cam_t_r.to(device),
-        "loss/mano/cam_t/l": loss_cam_t_l.to(device),
-        "loss/object/cam_t": loss_cam_t_o.to(device),
-        "loss/mano/pose/r": loss_regr_pose_r.to(device),
-        "loss/mano/beta/r": loss_regr_betas_r.to(device),
-        "loss/mano/pose/l": loss_regr_pose_l.to(device),
-        "loss/mano/transl/l": loss_transl_l.to(device),
-        "loss/mano/beta/l": loss_regr_betas_l.to(device),
-        "loss/object/radian": loss_radian.to(device),
-        "loss/object/rot": loss_rot.to(device),
-        "loss/object/transl": loss_transl_o.to(device),
-        "loss/cd": cd_ro.to(device) + cd_lo.to(device),
-        "loss/mano/kp3d/r": loss_keypoints_3d_r.to(device),
-        "loss/mano/kp3d/l": loss_keypoints_3d_l.to(device),
-        "loss/object/kp3d": loss_keypoints_3d_o.to(device),
-    }
+    if cd_ro is not None:
+        loss_cd += cd_ro
+    if cd_lo is not None:
+        loss_cd += cd_lo
+    loss_dict["loss/cd"] = loss_cd
     
     return loss_dict
