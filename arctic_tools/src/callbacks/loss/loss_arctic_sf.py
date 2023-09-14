@@ -190,34 +190,42 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     pred_betas_l, pred_betas_r = mano_shape
     pred_rotmat_l, pred_rotmat_r = mano_pose
     pred_rot, pred_radian = obj_angle
+
+    root_l = root_l.float()
+    root_r = root_r.float()
+    root_o = root_o.float()
+    pred_betas_l = pred_betas_l.float()
+    pred_betas_r = pred_betas_r.float()
+    pred_rotmat_l = pred_rotmat_l.float()
+    pred_rotmat_r = pred_rotmat_r.float()
     pred_rot = pred_rot.view(-1, 3).float()
     pred_radian = pred_radian.view(-1).float()
 
-    gt_pose_r = gt["mano.pose.r"]
-    gt_betas_r = gt["mano.beta.r"]
-    gt_pose_l = gt["mano.pose.l"]
-    gt_betas_l = gt["mano.beta.l"]
-    gt_joints_l = gt["mano.j3d.cam.l"]
-    gt_joints_r = gt["mano.j3d.cam.r"]
-    gt_kp3d_o = gt["object.kp3d.cam"]
-    gt_keypoints_2d_r = gt["mano.j2d.norm.r"]
-    gt_keypoints_2d_l = gt["mano.j2d.norm.l"]
-    gt_kp2d_o = torch.cat((gt["object.kp2d.norm.t"], gt["object.kp2d.norm.b"]), dim=1)
+    gt_pose_r = gt["mano.pose.r"].float()
+    gt_betas_r = gt["mano.beta.r"].float()
+    gt_pose_l = gt["mano.pose.l"].float()
+    gt_betas_l = gt["mano.beta.l"].float()
+    gt_joints_l = gt["mano.j3d.cam.l"].float()
+    gt_joints_r = gt["mano.j3d.cam.r"].float()
+    gt_kp3d_o = gt["object.kp3d.cam"].float()
+    gt_keypoints_2d_r = gt["mano.j2d.norm.r"].float()
+    gt_keypoints_2d_l = gt["mano.j2d.norm.l"].float()
+    gt_kp2d_o = torch.cat((gt["object.kp2d.norm.t"], gt["object.kp2d.norm.b"]), dim=1).float()
     gt_rot = gt["object.rot"].view(-1, 3).float()
     gt_radian = gt["object.radian"].view(-1).float()   
 
-    is_valid = gt["is_valid"]
-    right_valid = gt["right_valid"]
-    left_valid = gt["left_valid"]
-    joints_valid_r = gt["joints_valid_r"]
-    joints_valid_l = gt["joints_valid_l"]     
+    is_valid = gt["is_valid"].float()
+    right_valid = gt["right_valid"].float()
+    left_valid = gt["left_valid"].float()
+    joints_valid_r = gt["joints_valid_r"].float()
+    joints_valid_l = gt["joints_valid_l"].float()
 
     K = meta_info["intrinsics"]
     query_names = meta_info["query_names"]
     avg_focal_length = (K[:, 0, 0] + K[:, 1, 1]) / 2.0
-    cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1).float()
+    cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1).float()
+    cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1).float()
 
     tmp_pred = {}
     loss_dict = {}
@@ -263,10 +271,10 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
             joints3d_cam_l, gt_joints_l, mse_loss, joints_valid_l
         )
     else:
-        loss_dict["loss/mano/kp2d/l"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/mano/kp3d/l"] = torch.tensor(0).to(torch.float16).to(device)
+        loss_dict["loss/mano/kp2d/l"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/kp3d/l"] = torch.tensor(0).to(torch.float32).to(device)
 
 
     # r hand
@@ -315,11 +323,11 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
             right_valid * is_valid,
         )
     else:
-        loss_dict["loss/mano/kp2d/r"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/mano/kp3d/r"] = torch.tensor(0).to(torch.float16).to(device)
-        loss_dict["loss/object/transl"] = torch.tensor(0).to(torch.float16).to(device)
+        loss_dict["loss/mano/kp2d/r"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/kp3d/r"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/object/transl"] = torch.tensor(0).to(torch.float32).to(device)
     
     if sum(is_valid * left_valid) != 0 and sum(is_valid * right_valid) != 0:
         loss_dict["loss/mano/transl/l"] = vector_loss(
@@ -329,7 +337,7 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
             right_valid * left_valid,
         )
     else:
-        loss_dict["loss/mano/transl/l"] = torch.tensor(0).to(torch.float16).to(device)
+        loss_dict["loss/mano/transl/l"] = torch.tensor(0).to(torch.float32).to(device)
 
     # obj
     # pre process
@@ -355,7 +363,7 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
 
 
     # cdev
-    loss_cd = torch.tensor(0).to(torch.float16).to(device)
+    loss_cd = torch.tensor(0).to(torch.float32).to(device)
     cd_ro, cd_lo = compute_contact_devi_loss(tmp_pred, gt)
     if cd_ro is not None:
         loss_cd += cd_ro
