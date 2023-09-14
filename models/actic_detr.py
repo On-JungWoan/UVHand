@@ -155,7 +155,8 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.key_embed = self.key_embed
             self.transformer.decoder.obj_key_embed = self.obj_key_embed
 
-        # else:
+        else:
+            self.cls_embed = nn.ModuleList([self.cls_embed for _ in range(num_pred)])
             # if self.method == 'arctic_lstm':
             #     self.gru = nn.ModuleList([self.gru for _ in range(num_pred)])
         self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
@@ -242,8 +243,13 @@ class DeformableDETR(nn.Module):
         # hs : result include intermeditate feature (num_decoder_layer, B, num_queries, hidden_dim)
         # dataset = 'H2O' if len(self.cfg.hand_idx) == 2 else 'FPHA'
 
-        outputs_hand_coord_list = []
-        outputs_obj_coord_list = []
+        levels = hs.shape[0]
+        outputs_hand_coord = torch.zeros(levels)
+        outputs_obj_coord = torch.zeros(levels)
+
+        if self.two_stage:
+            outputs_hand_coord_list = []
+            outputs_obj_coord_list = []
 
         outputs_classes = []
         outputs_mano_pose = []
@@ -253,7 +259,7 @@ class DeformableDETR(nn.Module):
         outputs_obj_radians = []
         outputs_obj_rotations = []
 
-        for lvl in range(hs.shape[0]):
+        for lvl in range(levels):
             # if self.method == 'arctic_sf':
             hs_lvl = hs[lvl]
             # else:
@@ -265,13 +271,14 @@ class DeformableDETR(nn.Module):
             #     hs_lvl, _ = self.gru[lvl](hs_lvl) # GRU
             #     hs_lvl = hs_lvl.reshape(B, Q, N, C).permute(0,2,1,3).reshape(B*N, Q, C) # B*N, Q, C
             
-            layer_key_delta_unsig = self.key_embed[lvl](hs_lvl)
-            layer_obj_delta_unsig = self.obj_key_embed[lvl](hs_lvl)
-            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
-            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
+            if self.two_stage:
+                layer_key_delta_unsig = self.key_embed[lvl](hs_lvl)
+                layer_obj_delta_unsig = self.obj_key_embed[lvl](hs_lvl)
+                layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
+                layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
 
-            outputs_hand_coord_list.append(layer_key_outputs_unsig)
-            outputs_obj_coord_list.append(layer_obj_outputs_unsig)
+                outputs_hand_coord_list.append(layer_key_outputs_unsig)
+                outputs_obj_coord_list.append(layer_obj_outputs_unsig)
 
             outputs_class = self.cls_embed[lvl](hs_lvl)
             out_mano_pose = self.mano_pose_embed[lvl](hs_lvl)
@@ -289,8 +296,9 @@ class DeformableDETR(nn.Module):
             outputs_obj_radians.append(out_obj_rad)
             outputs_obj_rotations.append(out_obj_rot)
 
-        outputs_hand_coord = torch.stack(outputs_hand_coord_list)
-        outputs_obj_coord = torch.stack(outputs_obj_coord_list)
+        if self.two_stage:
+            outputs_hand_coord = torch.stack(outputs_hand_coord_list)
+            outputs_obj_coord = torch.stack(outputs_obj_coord_list)
 
         outputs_class = torch.stack(outputs_classes)
         outputs_mano_params = [torch.stack(outputs_mano_pose), torch.stack(outputs_mano_beta)]
@@ -298,7 +306,7 @@ class DeformableDETR(nn.Module):
         outputs_cams = [torch.stack(outputs_hand_cams), torch.stack(outputs_obj_cams)]
 
         out = {
-            'pred_logits': outputs_class[-1],  'pred_hand_key': outputs_hand_coord[-1], 'pred_obj_key': outputs_obj_coord[-1],
+            'pred_logits': outputs_class[-1], 'pred_hand_key': outputs_hand_coord[-1], 'pred_obj_key': outputs_obj_coord[-1],
             'pred_mano_params': [outputs_mano_params[0][-1], outputs_mano_params[1][-1]],
             'pred_obj_params': [outputs_obj_params[0][-1], outputs_obj_params[1][-1]],
             'pred_cams': [outputs_cams[0][-1], outputs_cams[1][-1]]

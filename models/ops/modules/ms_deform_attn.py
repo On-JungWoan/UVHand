@@ -109,13 +109,13 @@ class MSDeformAttn(nn.Module):
 
         elif reference_points.shape[-1] == 42:
             offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
-            x1 = reference_points[:, :, :, 0::2].min(dim=-1, keepdim=True)[0]
-            y1 = reference_points[:, :, :, 1::2].min(dim=-1, keepdim=True)[0]
-            x2 = reference_points[:, :, :, 0::2].max(dim=-1, keepdim=True)[0]
-            y2 = reference_points[:, :, :, 1::2].max(dim=-1, keepdim=True)[0]
-            w = torch.clamp(x2 - x1, min=1e-4)
-            h = torch.clamp(y2 - y1, min=1e-4)
-            wh = torch.cat([w, h], dim=-1)[:, :, None, :, None, :]
+            # x1 = reference_points[:, :, :, 0::2].min(dim=-1, keepdim=True)[0]
+            # y1 = reference_points[:, :, :, 1::2].min(dim=-1, keepdim=True)[0]
+            # x2 = reference_points[:, :, :, 0::2].max(dim=-1, keepdim=True)[0]
+            # y2 = reference_points[:, :, :, 1::2].max(dim=-1, keepdim=True)[0]
+            # w = torch.clamp(x2 - x1, min=1e-4)
+            # h = torch.clamp(y2 - y1, min=1e-4)
+            # wh = torch.cat([w, h], dim=-1)[:, :, None, :, None, :]
 
             ######################## root refine ####################################
             # ref_x = reference_points[:, :, None, :, None, 0].unsqueeze(-1)
