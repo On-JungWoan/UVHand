@@ -183,7 +183,6 @@ def main(args):
         # multiple evaluation
         if args.resume_dir:
             assert not args.resume
-            assert args.modelname == 'dino' and args.dataset_file == 'arctic', 'Not implemented yet.'
             resume_list = glob(op.join(args.resume_dir,'*.pth'))
             resume_list.sort(key=extract_epoch)
 
@@ -191,7 +190,12 @@ def main(args):
                 args.resume = resume
                 load_resume(args, model_without_ddp, resume)
                 print(f"\n{'='*10} current epoch :{extract_epoch(args.resume)} {'='*10}")
-                eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args)
+                if args.modelname == 'dino':
+                    eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args)
+                elif args.modelname == 'deformable_detr':
+                    test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
+                else:
+                    raise Exception('Not implemented yet.')
             sys.exit(0)
 
         # evaluation script
