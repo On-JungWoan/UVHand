@@ -748,8 +748,8 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
                 continue
 
         # Testing script begin from here
-        with torch.cuda.amp.autocast(enabled=True):
-            outputs = model(samples)
+        # with torch.cuda.amp.autocast(enabled=True):
+        outputs = model(samples)
 
         if args.dataset_file == 'arctic':
             data = prepare_data(args, outputs, targets, meta_info, cfg)
