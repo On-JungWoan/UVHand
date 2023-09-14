@@ -198,9 +198,9 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     gt_joints_l = gt["mano.j3d.cam.l"]
     gt_joints_r = gt["mano.j3d.cam.r"]
     gt_kp3d_o = gt["object.kp3d.cam"]
-    # gt_keypoints_2d_r = gt["mano.j2d.norm.r"]
-    # gt_keypoints_2d_l = gt["mano.j2d.norm.l"]
-    # gt_kp2d_o = torch.cat((gt["object.kp2d.norm.t"], gt["object.kp2d.norm.b"]), dim=1)
+    gt_keypoints_2d_r = gt["mano.j2d.norm.r"]
+    gt_keypoints_2d_l = gt["mano.j2d.norm.l"]
+    gt_kp2d_o = torch.cat((gt["object.kp2d.norm.t"], gt["object.kp2d.norm.b"]), dim=1)
     gt_rot = gt["object.rot"].view(-1, 3).float()
     gt_radian = gt["object.radian"].view(-1).float()
     joints_valid_r = gt["joints_valid_r"]
@@ -230,19 +230,19 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
         )        
         joints3d_cam_l = mano_output_l.joints + cam_t_l[:, None, :]
         v3d_cam_l = mano_output_l.vertices + cam_t_l[:, None, :]
-        # joints2d_l = tf.project2d_batch(K, joints3d_cam_l)
-        # pred_projected_keypoints_2d_l = data_utils.normalize_kp2d(joints2d_l, img_res)
+        joints2d_l = tf.project2d_batch(K, joints3d_cam_l)
+        pred_projected_keypoints_2d_l = data_utils.normalize_kp2d(joints2d_l, img_res)
         tmp_pred["mano.v3d.cam.l"] = v3d_cam_l
         gt_pose_l = axis_angle_to_matrix(gt_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
         pred_rotmat_l = axis_angle_to_matrix(pred_rotmat_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)        
 
         # calc loss
-        # loss_dict["loss/mano/kp2d/l"] = joints_loss(
-        #     pred_projected_keypoints_2d_l,
-        #     gt_keypoints_2d_l,
-        #     criterion=mse_loss,
-        #     jts_valid=joints_valid_l,
-        # )
+        loss_dict["loss/mano/kp2d/l"] = joints_loss(
+            pred_projected_keypoints_2d_l,
+            gt_keypoints_2d_l,
+            criterion=mse_loss,
+            jts_valid=joints_valid_l,
+        )
         loss_dict["loss/mano/pose/l"], loss_dict["loss/mano/beta/l"] = mano_loss(
             pred_rotmat_l,
             pred_betas_l,
@@ -261,7 +261,7 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
             joints3d_cam_l, gt_joints_l, mse_loss, joints_valid_l
         )
     else:
-        # loss_dict["loss/mano/kp2d/l"] = torch.tensor(0).to(torch.float16).to(device)
+        loss_dict["loss/mano/kp2d/l"] = torch.tensor(0).to(torch.float16).to(device)
         loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float16).to(device)
         loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float16).to(device)
         loss_dict["loss/mano/kp3d/l"] = torch.tensor(0).to(torch.float16).to(device)
@@ -277,18 +277,18 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
         )
         joints3d_cam_r = mano_output_r.joints + cam_t_r[:, None, :]
         v3d_cam_r = mano_output_r.vertices + cam_t_r[:, None, :]
-        # joints2d_r = tf.project2d_batch(K, joints3d_cam_r)
-        # pred_projected_keypoints_2d_r = data_utils.normalize_kp2d(joints2d_r, img_res)
+        joints2d_r = tf.project2d_batch(K, joints3d_cam_r)
+        pred_projected_keypoints_2d_r = data_utils.normalize_kp2d(joints2d_r, img_res)
         tmp_pred["mano.v3d.cam.r"] = v3d_cam_r
         gt_pose_r = axis_angle_to_matrix(gt_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
         pred_rotmat_r = axis_angle_to_matrix(pred_rotmat_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)        
         # calc loss
-        # loss_dict["loss/mano/kp2d/r"] = joints_loss(
-        #     pred_projected_keypoints_2d_r,
-        #     gt_keypoints_2d_r,
-        #     criterion=mse_loss,
-        #     jts_valid=joints_valid_r,
-        # )
+        loss_dict["loss/mano/kp2d/r"] = joints_loss(
+            pred_projected_keypoints_2d_r,
+            gt_keypoints_2d_r,
+            criterion=mse_loss,
+            jts_valid=joints_valid_r,
+        )
         loss_dict["loss/mano/pose/r"], loss_dict["loss/mano/beta/r"] = mano_loss(
             pred_rotmat_r,
             pred_betas_r,
@@ -313,7 +313,7 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
             right_valid * is_valid,
         )
     else:
-        # loss_dict["loss/mano/kp2d/r"] = torch.tensor(0).to(torch.float16).to(device)
+        loss_dict["loss/mano/kp2d/r"] = torch.tensor(0).to(torch.float16).to(device)
         loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float16).to(device)
         loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float16).to(device)
         loss_dict["loss/mano/kp3d/r"] = torch.tensor(0).to(torch.float16).to(device)
@@ -336,14 +336,14 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     )
     kp3d_cam_o = obj_output["kp3d"] + cam_t_o[:, None, :]
     v3d_cam_o = obj_output["v"] + cam_t_o[:, None, :]
-    # kp2d_o = tf.project2d_batch(K, kp3d_cam_o)
-    # pred_kp2d_o = data_utils.normalize_kp2d(kp2d_o, img_res)
+    kp2d_o = tf.project2d_batch(K, kp3d_cam_o)
+    pred_kp2d_o = data_utils.normalize_kp2d(kp2d_o, img_res)
     tmp_pred["object.v.cam"] = v3d_cam_o
 
     # calc loss
-    # loss_dict["loss/object/kp2d"] = vector_loss(
-    #     pred_kp2d_o, gt_kp2d_o, criterion=mse_loss, is_valid=is_valid
-    # )
+    loss_dict["loss/object/kp2d"] = vector_loss(
+        pred_kp2d_o, gt_kp2d_o, criterion=mse_loss, is_valid=is_valid
+    )
     loss_dict["loss/object/cam_t"] = vector_loss(
         root_o, gt["object.cam_t.wp"], mse_loss, is_valid
     )
