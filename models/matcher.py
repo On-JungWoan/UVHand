@@ -64,44 +64,33 @@ class ArcticMatcher(nn.Module):
         """
         with torch.no_grad():
             bs, num_queries = outputs["pred_logits"].shape[:2]
+            device = outputs["pred_logits"].device
 
             # We flatten to compute the cost matrices in a batch
             out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()
-            # out_mano_pose, out_mano_beta = outputs['pred_mano_params']
-            # out_obj_rad, out_obj_rot = outputs['pred_obj_params']
-            # out_hand_cam, out_obj_cam = outputs['pred_cams']
+            out_hand = outputs['pred_hand_key'].flatten(0, 1)
+            out_obj = outputs['pred_obj_key'].flatten(0, 1)
 
+            # validation info.
             is_valid = targets['is_valid']
-            left_valid = (targets['left_valid']*is_valid).type(torch.bool)
-            right_valid = (targets['right_valid']*is_valid).type(torch.bool)
 
-            try:
-                # FIXME : is_valid 고려
-                tgt_ids = torch.cat(targets['labels'], dim=1)[0]
-            except:
-                tgt_ids = torch.as_tensor(sum([t for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1], []))
+            # check validation
+            tgt_ids = torch.tensor(
+                sum([t for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1], [])
+            ).to(device)
+            tgt_key = torch.cat([k for idx, k in enumerate(targets['keypoints']) if is_valid[idx] == 1], dim=0)
 
-            # is_valid = is_valid.type(torch.bool)
-            # tgt_mano_pose_l = targets['mano.pose.l'][left_valid]
-            # tgt_mano_pose_r = targets['mano.pose.r'][right_valid]
-            # tgt_mano_beta_l = targets['mano.beta.l'][left_valid]
-            # tgt_mano_beta_r = targets['mano.beta.r'][right_valid]
-            # tgt_obj_rad = targets['object.radian'][is_valid]
-            # tgt_obj_rot = targets['object.rot'][is_valid]
-            # tgt_hand_cam_l = targets['mano.cam_t.wp.l'][left_valid]
-            # tgt_hand_cam_r = targets['mano.cam_t.wp.r'][right_valid]
-            # tgt_obj_cam = targets['object.cam_t.wp'][is_valid]
-
-            
-            # # hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
-            # obj_idx = torch.ones_like(tgt_ids, dtype=torch.bool)
-            # for idx in [0] + self.cfg.hand_idx:
-            #     obj_idx &= (tgt_ids != idx)
-            #     # if idx != 0:
-            #     #     hand_idx |= (tgt_ids == idx)
-            # left_idx = tgt_ids == self.cfg.hand_idx[0]
-            # right_idx = tgt_ids == self.cfg.hand_idx[1]
-            # # hand_idx = tgt_ids != 0
+            l_hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
+            r_hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
+            obj_idx = torch.ones_like(tgt_ids, dtype=torch.bool)
+            for idx in [0] + [12, 13]:
+                obj_idx &= (tgt_ids != idx)
+                if idx != 0:
+                    assert idx in [12, 13]
+                    if idx == 12:
+                        l_hand_idx |= (tgt_ids == idx)
+                    else:
+                        r_hand_idx |= (tgt_ids == idx)
             
             # Compute the classification cost.
             alpha = 0.25
@@ -110,43 +99,21 @@ class ArcticMatcher(nn.Module):
             pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
             cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
-            # cost_cam = torch.zeros_like(cost_class)
-            # cost_pose = torch.zeros_like(cost_class)
-            # cost_shape = torch.zeros_like(cost_class)
-            # cost_angle = torch.zeros_like(cost_class)
+            # Compute the L1 cost between boxes
+            cost_keypoints = torch.zeros_like(cost_class).to(device)
+            cost_l_hand = torch.cdist(out_hand, tgt_key[l_hand_idx], p=1)
+            cost_r_hand = torch.cdist(out_hand, tgt_key[r_hand_idx], p=1)
+            cost_obj = torch.cdist(out_obj, tgt_key[obj_idx], p=1)
 
-            # cost_cam_left = torch.cdist(out_hand_cam, tgt_hand_cam_l.reshape(-1, 3), p=1).view(bs*num_queries, -1)
-            # cost_cam_right = torch.cdist(out_hand_cam, tgt_hand_cam_r.reshape(-1, 3), p=1).view(bs*num_queries, -1)
-            # cost_cam_obj = torch.cdist(out_obj_cam, tgt_obj_cam.reshape(-1, 3), p=1).view(bs*num_queries, -1)
-            # cost_cam[:, left_idx] = cost_cam_left
-            # cost_cam[:, right_idx] = cost_cam_right
-            # cost_cam[:, obj_idx] = cost_cam_obj
+            cost_keypoints[:, l_hand_idx] = cost_l_hand
+            cost_keypoints[:, r_hand_idx] = cost_r_hand
+            cost_keypoints[:, obj_idx] = cost_obj
 
-            # cost_pose_left = torch.cdist(out_mano_pose, tgt_mano_pose_l.reshape(-1, 48), p=1).view(bs*num_queries, -1)
-            # cost_pose_right = torch.cdist(out_mano_pose, tgt_mano_pose_r.reshape(-1, 48), p=1).view(bs*num_queries, -1)
-            # cost_pose[:, left_idx] = cost_pose_left
-            # cost_pose[:, right_idx] = cost_pose_right
-
-            # cost_beta_left = torch.cdist(out_mano_beta, tgt_mano_beta_l.reshape(-1, 10), p=1).view(bs*num_queries, -1)
-            # cost_beta_right = torch.cdist(out_mano_beta, tgt_mano_beta_r.reshape(-1, 10), p=1).view(bs*num_queries, -1)
-            # cost_shape[:, right_idx] = cost_beta_right
-            # cost_shape[:, left_idx] = cost_beta_left
-
-            # cost_rad = torch.cdist(out_obj_rad, tgt_obj_rad.unsqueeze(-1), p=1).view(bs*num_queries, -1)
-            # cost_rot = torch.cdist(out_obj_rot, tgt_obj_rot.reshape(-1, 3), p=1).view(bs*num_queries, -1)
-            # cost_angle[:, obj_idx] = cost_angle[:, obj_idx] + cost_rad
-            # cost_angle[:, obj_idx] = cost_angle[:, obj_idx] + cost_rot
-
-            # C = (cost_cam * 10) + (cost_pose * 0.5) + cost_shape + (cost_angle * 5)
-            C = self.cost_class * cost_class
-            # C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
+            # C = self.cost_class * cost_class
+            C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
             C = C.view(bs, num_queries, -1).cpu()
-            # sizes = [len(v["keypoints"]) for idx, v in enumerate(targets)]
-            try:
-                # FIXME : is_valid 고려
-                sizes = [v.shape[-1] for v in targets['labels']]
-            except:
-                sizes = [len(t) for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1]
+
+            sizes = [len(t) for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1]
             indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
 
             return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]

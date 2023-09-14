@@ -25,7 +25,7 @@ class DeformableTransformer(nn.Module):
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.1,
                  activation="relu", return_intermediate_dec=False,
                  num_feature_levels=4, dec_n_points=4,  enc_n_points=4,
-                 two_stage=False, two_stage_num_proposals=300, cfg=None):
+                 two_stage=False, two_stage_num_proposals=300):
         super().__init__()
 
         self.d_model = d_model
@@ -34,7 +34,6 @@ class DeformableTransformer(nn.Module):
         self.two_stage_num_proposals = two_stage_num_proposals
         self.n_levels=num_feature_levels
         self.n_points=dec_n_points
-        self.cfg = cfg
 
         encoder_layer = DeformableTransformerEncoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
@@ -44,7 +43,7 @@ class DeformableTransformer(nn.Module):
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
                                                           num_feature_levels, nhead, dec_n_points)
-        self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec, cfg)
+        self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
@@ -125,7 +124,7 @@ class DeformableTransformer(nn.Module):
 
             scale = torch.cat([valid_W.unsqueeze(-1),valid_H.unsqueeze(-1)], 1).view(N, 1, 1, 2)
             grid = (grid.unsqueeze(0).expand(N, -1, -1, -1) + 0.5) / scale
-            proposal = grid.view(N, -1, 2)
+            proposal = grid.view(N, -1, 2).repeat(1,1,21)
             proposals.append(proposal)
             _cur += (H * W)
         output_proposals = torch.cat(proposals, 1)
@@ -181,49 +180,41 @@ class DeformableTransformer(nn.Module):
         # prepare input for decoder
         bs, _, c = memory.shape
         if self.two_stage:
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory[:,level_start_index[-1]:], mask_flatten[:,level_start_index[-1]:], spatial_shapes[-1:])
-            # output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+            # output_memory, output_proposals = self.gen_encoder_output_proposals(memory[:,level_start_index[-1]:], mask_flatten[:,level_start_index[-1]:], spatial_shapes[-1:])
+            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.cls_embed[self.decoder.num_layers](output_memory)
             # enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
-            enc_outputs_hand_coord_unact = self.decoder.keypoint_embed[self.decoder.num_layers](output_memory)#.reshape(bs, _, 21, 3) + torch.cat([output_proposals, torch.zeros(bs, _, 1).cuda()], dim=-1).unsqueeze(2)
-            enc_outputs_obj_coord_unact = self.decoder.obj_keypoint_embed[self.decoder.num_layers](output_memory)#.reshape(bs, _, 21, 3) + torch.cat([output_proposals, torch.zeros(bs, _, 1).cuda()], dim=-1).unsqueeze(2)
-            enc_outputs_hand_coord_unact[..., 0::3] += output_proposals[..., 0:1]
-            enc_outputs_hand_coord_unact[..., 1::3] += output_proposals[..., 1:2]
-            enc_outputs_obj_coord_unact[..., 0::3] += output_proposals[..., 0:1]
-            enc_outputs_obj_coord_unact[..., 1::3] += output_proposals[..., 1:2]
+            enc_outputs_hand_coord_unact = self.decoder.key_embed[self.decoder.num_layers](output_memory)#.reshape(bs, _, 21, 3) + torch.cat([output_proposals, torch.zeros(bs, _, 1).cuda()], dim=-1).unsqueeze(2)
+            enc_outputs_obj_coord_unact = self.decoder.obj_key_embed[self.decoder.num_layers](output_memory)#.reshape(bs, _, 21, 3) + torch.cat([output_proposals, torch.zeros(bs, _, 1).cuda()], dim=-1).unsqueeze(2)
+            enc_outputs_hand_coord_unact[..., 0::2] += output_proposals[..., 0:1]
+            enc_outputs_hand_coord_unact[..., 1::2] += output_proposals[..., 1:2]
+            enc_outputs_obj_coord_unact[..., 0::2] += output_proposals[..., 0:1]
+            enc_outputs_obj_coord_unact[..., 1::2] += output_proposals[..., 1:2]
 
             # topk = self.two_stage_num_proposals
             # left_proposals = torch.topk(enc_outputs_class[..., 9], 1, dim=1)[1]
             # right_proposals = torch.topk(enc_outputs_class[..., 10], 1, dim=1)[1]
             # obj_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
             # topk_coords_unact = torch.gather(enc_outputs_hand_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
+            topk = self.two_stage_num_proposals
+            topk_proposals = torch.topk(enc_outputs_class.max(-1)[0], topk, dim=1)[1] # bs, nq
+            class_indices = torch.gather(enc_outputs_class.argmax(dim=-1), 1, topk_proposals)
+            hand_idx = ((class_indices == 12) + (class_indices == 13))
+            obj_idx = ~hand_idx * (class_indices != 0)
 
-            best_score = torch.zeros(bs).to(memory.device)
-            obj_idx = torch.zeros(bs).to(memory.device).to(torch.long)
-            for i in range(1, 9):
-                score, idx = torch.max(enc_outputs_class[:,:,i], dim=-1)
-                obj_idx[best_score < score] = idx[best_score < score]
-                best_score[best_score < score] = score[best_score < score]
+            # gather boxes
+            hand_idx = hand_idx.unsqueeze(-1).repeat(1,1,42)
+            obj_idx = obj_idx.unsqueeze(-1).repeat(1,1,42)
+            obj_kp = torch.gather(enc_outputs_obj_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+            hand_kp = torch.gather(enc_outputs_hand_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
 
-            left_idx = torch.argmax(enc_outputs_class[:,:,9], dim=-1)
-            right_idx = torch.argmax(enc_outputs_class[:,:,10], dim=-1)
-
-            # left_coords_unact = torch.gather(
-            #     enc_outputs_hand_coord_unact, 1,
-            #     left_proposals.unsqueeze(-1).repeat(
-            #         1, 1, enc_outputs_hand_coord_unact.size(-1)))
-
-            left_kp = torch.gather(enc_outputs_hand_coord_unact, 1, left_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63))
-            right_kp = torch.gather(enc_outputs_hand_coord_unact, 1, right_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63))
-            obj_kp = torch.gather(enc_outputs_obj_coord_unact, 1, obj_idx.unsqueeze(1).unsqueeze(1).repeat(1,1,63))
-
-            topk_coords_unact = torch.cat([left_kp, right_kp, obj_kp], dim=1).detach()
-            reference_points = topk_coords_unact.sigmoid()
-            ref_x = reference_points[...,0::3].mean(-1).unsqueeze(-1) ########################################################### one ref-point
-            ref_y = reference_points[...,1::3].mean(-1).unsqueeze(-1)
-            reference_points = torch.cat([ref_x, ref_y], dim=-1)
+            # init box proposal
+            refpoint_embed_undetach = torch.gather(output_proposals, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+            refpoint_embed_undetach[obj_idx] = obj_kp[obj_idx]
+            refpoint_embed_undetach[hand_idx] = hand_kp[hand_idx]
+            reference_points = refpoint_embed_undetach.sigmoid() * 2 - 1
             init_reference_out = reference_points
 
             # pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
@@ -386,21 +377,15 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
 
 class DeformableTransformerDecoder(nn.Module):
-    def __init__(self, decoder_layer, num_layers, return_intermediate=False, cfg=None):
+    def __init__(self, decoder_layer, num_layers, return_intermediate=False):
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.return_intermediate = return_intermediate
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
-        # self.keypoint_embed = None # modify
-        # self.obj_keypoint_embed = None
-        self.mano_pose_embed = None
-        self.mano_beta_embed = None
-        self.obj_keypoint_embed = None
-        self.obj_ref_embed = None
-        # self.obj_rad = None
         self.cls_embed = None
-        self.cfg = cfg
+        self.key_embed = None # modify
+        self.obj_key_embed = None
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None):
@@ -420,10 +405,6 @@ class DeformableTransformerDecoder(nn.Module):
 
             ## hack implementation for iterative bounding box refinement ##
             if self.cls_embed is not None:
-                assert sum(
-                    [ebd is not None for ebd in [self.mano_pose_embed, self.mano_beta_embed, self.obj_keypoint_embed, self.obj_ref_embed]]
-                ) == 4
-
                 #################
                 ## class embed ##
                 #################
@@ -435,60 +416,21 @@ class DeformableTransformerDecoder(nn.Module):
                 # hand_idx : class 예측결과 중 hand idx만 추출
                 obj_idx = torch.ones_like(class_indices, dtype=torch.bool)
                 hand_idx = torch.zeros_like(class_indices, dtype=torch.bool)
-                for idx in [0] + self.cfg.hand_idx:
+                for idx in [0] + [12, 13]:
                     obj_idx &= (class_indices != idx)
                     if idx != 0:
                         hand_idx |= (class_indices == idx)
 
+                delta_key_unsig = self.key_embed[lid](output)
+                delta_obj_key_unsig = self.obj_key_embed[lid](output)
 
-                ######################
-                ## reference points ##
-                ######################
-                if reference_points.shape[-1] == 2:
-                    ref = inverse_sigmoid(reference_points).unsqueeze(2)
-                    # ref = reference_points.unsqueeze(2)
-                    new_reference_points = ref.repeat(1,1,21,1).clone()
-        
-                elif reference_points.shape[-1] == 42:
-                    ref_x = reference_points[...,0::2].mean(-1).unsqueeze(-1)
-                    ref_y = reference_points[...,1::2].mean(-1).unsqueeze(-1)
-                    # if len(self.cfg.hand_idx) == 2:
-                    #     new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
-                    # else:
-                    # new_reference_points = torch.cat([ref_x, ref_y], dim=-1).unsqueeze(2).repeat(1,1,21,1).clone()
-                    new_reference_points = inverse_sigmoid(torch.cat([ref_x, ref_y], dim=-1)).unsqueeze(2).repeat(1,1,21,1).clone()
-                    # new_reference_points = inverse_sigmoid((torch.cat([ref_x, ref_y], dim=-1)+0.5)/2).unsqueeze(2).repeat(1,1,21,1).clone()
+                outputs_unsig = inverse_sigmoid(reference_points)
+                outputs_unsig[obj_idx] += delta_obj_key_unsig[obj_idx]
+                outputs_unsig[hand_idx] += delta_key_unsig[hand_idx]
+                new_reference_points = outputs_unsig.sigmoid() * 2 - 1
 
-
-                ################
-                ## mano embed ##
-                ################
-                bs = class_indices.shape[0]
-
-                out_mano_pose = self.mano_pose_embed[lid](output)
-                out_mano_beta = self.mano_beta_embed[lid](output)
-
-                tmp = self.get_reference_point(bs, [out_mano_pose,out_mano_beta], class_indices, new_reference_points) # <- 이건 구현 해야 함
-                new_reference_points[hand_idx] += tmp[hand_idx]
-                # new_reference_points[hand_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[hand_idx][...,:2] 
-
-
-                ########################
-                ## obj keypoint embed ##
-                ########################
-                tmp = self.obj_keypoint_embed[lid](output)
-                tmp = self.obj_ref_embed[lid](tmp)
-
-                new_reference_points[obj_idx] += tmp.reshape(tmp.shape[0], tmp.shape[1], -1, 3)[obj_idx][...,:2]
-                new_reference_points = new_reference_points.reshape(tmp.shape[0], tmp.shape[1], -1)
-                # if len(self.cfg.hand_idx) == 2:
-                new_reference_points = new_reference_points.sigmoid()
-                # else:
-                #     new_reference_points = new_reference_points.sigmoid()*2 -0.5
-                    
                 reference_points = new_reference_points.detach()
             ## modify ##
-
             if self.return_intermediate:
                 intermediate.append(output)
                 intermediate_reference_points.append(reference_points)
@@ -514,7 +456,7 @@ def _get_activation_fn(activation):
     raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
 
-def build_deforamble_transformer(args, cfg):
+def build_deforamble_transformer(args):
     return DeformableTransformer(
         d_model=args.hidden_dim,
         nhead=args.nheads,
@@ -528,7 +470,6 @@ def build_deforamble_transformer(args, cfg):
         dec_n_points=args.dec_n_points,
         enc_n_points=args.enc_n_points,
         two_stage=args.two_stage,
-        two_stage_num_proposals=args.num_queries,
-        cfg = cfg)
+        two_stage_num_proposals=args.num_queries)
 
 

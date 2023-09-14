@@ -136,24 +136,38 @@ class DeformableDETR(nn.Module):
     
         num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
         if with_box_refine:
-            raise Exception('Not implemented yet')
-            self.cls_embed = _get_clones(self.cls_embed, num_pred)
-            self.transformer.decoder.cls_embed = self.cls_embed
+            assert two_stage, "Not implemented! You should use 'with_box_refine' and 'two_stage' option simultaneously."
 
-        else:
+            self.cls_embed = _get_clones(self.cls_embed, num_pred)
+
+            # for only ref points
+            self.key_embed = MLP(self.hidden_dim, self.hidden_dim, 42, 3)
+            self.obj_key_embed = MLP(self.hidden_dim, self.hidden_dim, 42, 3)    
+            nn.init.xavier_uniform_(self.key_embed.layers[-1].weight.data, gain=1)
+            nn.init.constant_(self.key_embed.layers[-1].bias.data, 0)
+            nn.init.xavier_uniform_(self.obj_key_embed.layers[-1].weight.data, gain=1)
+            nn.init.constant_(self.obj_key_embed.layers[-1].bias.data, 0)
+
+            self.key_embed = _get_clones(self.key_embed, num_pred)
+            self.obj_key_embed = _get_clones(self.obj_key_embed, num_pred)
+
+            self.transformer.decoder.cls_embed = self.cls_embed
+            self.transformer.decoder.key_embed = self.key_embed
+            self.transformer.decoder.obj_key_embed = self.obj_key_embed
+
+        # else:
             # if self.method == 'arctic_lstm':
             #     self.gru = nn.ModuleList([self.gru for _ in range(num_pred)])
-            self.cls_embed = nn.ModuleList([self.cls_embed for _ in range(num_pred)])
-            self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
-            self.mano_beta_embed = nn.ModuleList([self.mano_beta_embed for _ in range(num_pred)])
-            self.hand_cam = nn.ModuleList([self.hand_cam for _ in range(num_pred)])
-            self.obj_cam = nn.ModuleList([self.obj_cam for _ in range(num_pred)])
-            self.obj_rot = nn.ModuleList([self.obj_rot for _ in range(num_pred)])
-            self.obj_rad = nn.ModuleList([self.obj_rad for _ in range(num_pred)])
-        if two_stage:
-            raise Exception('Not implemented yet')
-            # hack implementation for two-stage
-            self.transformer.decoder.cls_embed = self.cls_embed
+        self.mano_pose_embed = nn.ModuleList([self.mano_pose_embed for _ in range(num_pred)])
+        self.mano_beta_embed = nn.ModuleList([self.mano_beta_embed for _ in range(num_pred)])
+        self.hand_cam = nn.ModuleList([self.hand_cam for _ in range(num_pred)])
+        self.obj_cam = nn.ModuleList([self.obj_cam for _ in range(num_pred)])
+        self.obj_rot = nn.ModuleList([self.obj_rot for _ in range(num_pred)])
+        self.obj_rad = nn.ModuleList([self.obj_rad for _ in range(num_pred)])
+        # if two_stage:
+        #     raise Exception('Not implemented yet')
+        #     # hack implementation for two-stage
+        #     self.transformer.decoder.cls_embed = self.cls_embed
 
     def forward(self, samples, is_extract=False):
         """ The forward expects a NestedTensor, which consists of:
@@ -228,7 +242,9 @@ class DeformableDETR(nn.Module):
         # hs : result include intermeditate feature (num_decoder_layer, B, num_queries, hidden_dim)
         # dataset = 'H2O' if len(self.cfg.hand_idx) == 2 else 'FPHA'
 
-        dataset = self.cfg.dataset_file
+        outputs_hand_coord_list = []
+        outputs_obj_coord_list = []
+
         outputs_classes = []
         outputs_mano_pose = []
         outputs_mano_beta = []
@@ -249,6 +265,14 @@ class DeformableDETR(nn.Module):
             #     hs_lvl, _ = self.gru[lvl](hs_lvl) # GRU
             #     hs_lvl = hs_lvl.reshape(B, Q, N, C).permute(0,2,1,3).reshape(B*N, Q, C) # B*N, Q, C
             
+            layer_key_delta_unsig = self.key_embed[lvl](hs_lvl)
+            layer_obj_delta_unsig = self.obj_key_embed[lvl](hs_lvl)
+            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
+            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
+
+            outputs_hand_coord_list.append(layer_key_outputs_unsig)
+            outputs_obj_coord_list.append(layer_obj_outputs_unsig)
+
             outputs_class = self.cls_embed[lvl](hs_lvl)
             out_mano_pose = self.mano_pose_embed[lvl](hs_lvl)
             out_mano_beta = self.mano_beta_embed[lvl](hs_lvl)
@@ -265,31 +289,50 @@ class DeformableDETR(nn.Module):
             outputs_obj_radians.append(out_obj_rad)
             outputs_obj_rotations.append(out_obj_rot)
 
+        outputs_hand_coord = torch.stack(outputs_hand_coord_list)
+        outputs_obj_coord = torch.stack(outputs_obj_coord_list)
+
         outputs_class = torch.stack(outputs_classes)
         outputs_mano_params = [torch.stack(outputs_mano_pose), torch.stack(outputs_mano_beta)]
         outputs_obj_params = [torch.stack(outputs_obj_radians), torch.stack(outputs_obj_rotations)]
         outputs_cams = [torch.stack(outputs_hand_cams), torch.stack(outputs_obj_cams)]
 
         out = {
-            'pred_logits': outputs_class[-1], 'pred_mano_params': [outputs_mano_params[0][-1], outputs_mano_params[1][-1]],
+            'pred_logits': outputs_class[-1],  'pred_hand_key': outputs_hand_coord[-1], 'pred_obj_key': outputs_obj_coord[-1],
+            'pred_mano_params': [outputs_mano_params[0][-1], outputs_mano_params[1][-1]],
             'pred_obj_params': [outputs_obj_params[0][-1], outputs_obj_params[1][-1]],
             'pred_cams': [outputs_cams[0][-1], outputs_cams[1][-1]]
         }
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_mano_params, outputs_obj_params, outputs_cams)
+            out['aux_outputs'] = self._set_aux_loss(
+                outputs_class, outputs_hand_coord, outputs_obj_coord,
+                outputs_mano_params, outputs_obj_params, outputs_cams
+            )
 
         if self.two_stage:
-            raise Exception('Not implemeted.')
-            enc_outputs_hand_coord = enc_outputs_hand_coord_unact.sigmoid()
+            enc_outputs_hand_coord = enc_outputs_hand_coord_unact.sigmoid() * 2 - 1
+            enc_outputs_obj_coord = enc_outputs_obj_coord_unact.sigmoid() * 2 - 1
+
+            out['interm_outputs'] = {
+                'pred_logits': enc_outputs_class,
+                'pred_hand_key': enc_outputs_hand_coord,
+                'pred_obj_key': enc_outputs_obj_coord
+            }
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_mano_params, outputs_obj_params, outputs_cams): 
+    def _set_aux_loss(
+            self, outputs_class, outputs_hand_coord, outputs_obj_coord,
+            outputs_mano_params, outputs_obj_params, outputs_cams
+        ): 
         return [
-                {'pred_logits': c, 'pred_mano_params': [s, p], 'pred_obj_params': [ra, ro], 'pred_cams': [hc, oc]} \
-                for c, s, p, ra, ro, hc, oc in \
+                {
+                    'pred_logits': c, 'pred_hand_key': hk, 'pred_obj_key': ok,
+                    'pred_mano_params': [s, p], 'pred_obj_params': [ra, ro], 'pred_cams': [hc, oc]
+                } \
+                for c, hk, ok, s, p, ra, ro, hc, oc in \
                     zip(
-                        outputs_class[:-1], 
+                        outputs_class[:-1], outputs_hand_coord[:-1], outputs_obj_coord[:-1],
                         outputs_mano_params[0][:-1], outputs_mano_params[1][:-1],
                         outputs_obj_params[0][:-1], outputs_obj_params[1][:-1],
                         outputs_cams[0][:-1], outputs_cams[1][:-1]
@@ -330,13 +373,6 @@ class SetArcticCriterion(nn.Module):
 
         idx = self._get_src_permutation_idx(indices)
 
-        # try:
-        #     # target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
-        #     # FIXME : is valid 고려
-        #     target_classes_o = torch.cat([t[0][indices[i][1]] for i, t in enumerate(targets['labels'])]).to('cuda')
-        # except:
-        # target_classes_o = torch.cat([torch.tensor(t).cuda()[J] for t, (_, J) in zip(targets['labels'], indices)])
-        # # target_classes_o = torch.cat([torch.tensor(t) for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
         labels = [t for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
         target_classes_o = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
 
@@ -374,155 +410,37 @@ class SetArcticCriterion(nn.Module):
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
         losses = {'cardinality_error': card_err}
         return losses
-
-    def loss_cam(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
-        """
-        assert 'pred_cams' in outputs
-        # assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
-        left_valid = targets['left_valid'].type(torch.bool)
-        right_valid = targets['right_valid'].type(torch.bool)
-
-        pred_hand_cam, pred_obj_cam = outputs['pred_cams']
-        idx = self._get_src_permutation_idx(indices)
-        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
-
-        src_hand = pred_hand_cam[idx]
-        src_obj = pred_obj_cam[idx]
-
-        # target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
-        left_idx = target_labels == self.cfg.hand_idx[0]
-        right_idx = target_labels == self.cfg.hand_idx[1]
-        obj_idx = torch.tensor([label not in self.cfg.hand_idx for label in target_labels])
-
-        src_left_cam = src_hand[left_idx]
-        src_right_cam = src_hand[right_idx]
-        src_obj_cam = src_obj[obj_idx]
-
-        # target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_left_cam = targets['mano.cam_t.wp.l'][left_valid]
-        target_right_cam = targets['mano.cam_t.wp.l'][right_valid]
-        target_obj_cam = targets['object.cam_t.wp']
-
-        loss_left_cam = F.l1_loss(src_left_cam, target_left_cam, reduction='mean')
-        loss_right_cam = F.l1_loss(src_right_cam, target_right_cam, reduction='mean')
-        loss_obj_cam = F.l1_loss(src_obj_cam, target_obj_cam, reduction='mean')
-
-        loss_hand_cam = (loss_left_cam + loss_right_cam) / 2
-
-        losses = {}
-        losses['loss_cam'] = loss_hand_cam + loss_obj_cam
-        return losses
-
-    def loss_obj_rotations(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
-        """
-        assert 'pred_obj_params' in outputs
-        left_valid = targets['left_valid'].type(torch.bool)
-        right_valid = targets['right_valid'].type(torch.bool)
-        bs = left_valid.shape[0]
-
-        pred_obj_radian, pred_obj_rot = outputs['pred_obj_params']
-        idx = self._get_src_permutation_idx(indices)
-        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
-
-        src_rad = pred_obj_radian[idx]
-        src_rot = pred_obj_rot[idx]
     
-        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
-        obj_idx = torch.tensor([label not in self.cfg.hand_idx for label in target_labels])
-
-        src_obj_rad = src_rad[obj_idx]
-        src_obj_rot = src_rot[obj_idx]
-
-        # target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_obj_rad = targets['object.radian']
-        target_obj_rot = targets['object.rot']
-
-        loss_rad = F.l1_loss(src_obj_rad, target_obj_rad.unsqueeze(-1), reduction='mean')
-        loss_rot = F.l1_loss(src_obj_rot, target_obj_rot.view(bs, -1), reduction='mean')
-
-        losses = {}
-        losses['loss_rad_rot'] = loss_rad + loss_rot
-        return losses
-
-    def loss_mano_poses(self, outputs, targets, indices, num_boxes):
+    def loss_boxes(self, outputs, targets, indices, num_boxes):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+           The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
         """
-        assert 'pred_mano_params' in outputs
-        # assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
-        left_valid = targets['left_valid'].type(torch.bool)
-        right_valid = targets['right_valid'].type(torch.bool)
-
-        pred_mano_pose, pred_mano_beta = outputs['pred_mano_params']
+        assert 'pred_hand_key' in outputs and 'pred_obj_key' in outputs
         idx = self._get_src_permutation_idx(indices)
-        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
+        src_hand_key = outputs['pred_hand_key'][idx]
+        src_obj_key = outputs['pred_obj_key'][idx]
 
-        src_pose = pred_mano_pose[idx]
+        labels = [t for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
+        keypoints = [t for i, t in enumerate(targets['keypoints']) if targets['is_valid'][i] == 1]
 
-        # target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
-        left_idx = target_labels == self.cfg.hand_idx[0]
-        right_idx = target_labels == self.cfg.hand_idx[1]
+        target_keypoints = torch.cat([t[indices[i][1]] for i, t in enumerate(keypoints)]).to('cuda')
+        target_labels = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
 
-        src_left_pose = src_pose[left_idx]
-        src_right_pose = src_pose[right_idx]
-
-        # target_mano_pose = torch.cat([t['mano_pose'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_left_mano_pose = targets['mano.pose.l'][left_valid]
-        target_right_mano_pose = targets['mano.pose.r'][right_valid]
+        #
+        hand_cal_idx = (target_labels == 12) + (target_labels == 13)
+        obj_cal_idx = ~hand_cal_idx
         
-        loss_left_pose = F.l1_loss(src_left_pose, target_left_mano_pose, reduction='mean')
-        loss_right_pose = F.l1_loss(src_right_pose, target_right_mano_pose, reduction='mean')
-
-        loss_pose = (loss_left_pose + loss_right_pose) / 2
+        loss_handkey = F.l1_loss(src_hand_key[hand_cal_idx], target_keypoints[hand_cal_idx], reduction='none')
+        loss_objkey = F.l1_loss(src_obj_key[obj_cal_idx], target_keypoints[obj_cal_idx], reduction='none')
 
         losses = {}
-        losses['loss_mano_pose'] = loss_pose
-        return losses
-    
-    def loss_mano_betas(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
-        """
-        assert 'pred_mano_params' in outputs
-        # assert sum([t["mano_pose"].sum() for t in targets]).item() != 0
-        left_valid = targets['left_valid'].type(torch.bool)
-        right_valid = targets['right_valid'].type(torch.bool)
+        if len(loss_handkey) != 0:
+            losses['loss_hand_keypoint'] = (loss_handkey.sum() / hand_cal_idx.sum().item()) / 21
+        else:
+            losses['loss_hand_keypoint'] = torch.tensor(0).cuda()
+        losses['loss_obj_keypoint'] = (loss_objkey.sum() / obj_cal_idx.sum().item()) / 21
 
-        pred_mano_pose, pred_mano_beta = outputs['pred_mano_params']
-        idx = self._get_src_permutation_idx(indices)
-        assert sum(left_valid) + sum(right_valid) + len(targets['is_valid']) == len(idx[0])
-
-        src_beta = pred_mano_beta[idx]
-
-        # target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_labels = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)], dim=0)
-        left_idx = target_labels == self.cfg.hand_idx[0]
-        right_idx = target_labels == self.cfg.hand_idx[1]
-
-        src_left_beta = src_beta[left_idx]
-        src_right_beta = src_beta[right_idx]
-
-        # target_mano_beta = torch.cat([t['mano_beta'][i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_left_mano_beta = targets['mano.beta.l'][left_valid]
-        target_right_mano_beta = targets['mano.beta.r'][right_valid]
-        
-        loss_left_beta = F.l1_loss(src_left_beta, target_left_mano_beta, reduction='mean')
-        loss_right_beta = F.l1_loss(src_right_beta, target_right_mano_beta, reduction='mean')
-
-        loss_beta = (loss_left_beta + loss_right_beta) / 2
-
-        losses = {}
-        losses['loss_mano_beta'] = loss_beta
         return losses    
 
     def _get_src_permutation_idx(self, indices):
@@ -541,59 +459,10 @@ class SetArcticCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
-            # 'mano_params': self.loss_mano_params,
-
-            # 'mano_poses': self.loss_mano_poses,
-            # 'mano_betas': self.loss_mano_betas,
-            # 'cam': self.loss_cam,
-            # 'obj_rotation': self.loss_obj_rotations,
-
-            # 'obj_keypoint': self.loss_obj_keypoints,
-            # 'hand_keypoint': self.loss_hand_keypoints,
+            'boxes' : self.loss_boxes,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
-
-    def select_indices(self, cfg, outputs, targets, device):
-        prob = outputs['pred_logits']
-        B = prob.shape[0]
-
-        is_valid = targets['is_valid']
-        left_valid = targets['left_valid'] * is_valid
-        right_valid = targets['right_valid'] * is_valid
-
-        # query index select
-        best_score = torch.zeros(B).to(device)
-        # if dataset != 'AssemblyHands':
-        obj_idx = torch.zeros(B).to(device).to(torch.long)
-        for i in range(1, cfg.hand_idx[0]):
-            score, idx = torch.max(prob[:,:,i], dim=-1)
-            obj_idx[best_score < score] = idx[best_score < score]
-            best_score[best_score < score] = score[best_score < score]
-
-        hand_idx = []
-        for i in cfg.hand_idx:
-            hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
-        # hand_idx = torch.stack(hand_idx, dim=-1) 
-        left_hand_idx, right_hand_idx = hand_idx
-
-        indicies = []
-        batch = []
-
-        for idx, item in enumerate(zip(obj_idx, left_hand_idx, right_hand_idx)):
-            obj, left, right = item
-
-            obj_item = obj[is_valid.to(torch.bool)[idx]]
-            left_item = left[left_valid.to(torch.bool)[idx]]
-            right_item = right[right_valid.to(torch.bool)[idx]]
-            for item in [obj_item, left_item, right_item]:
-                if len(item) > 0:
-                    indicies.append(item[0])
-                    batch.append(idx)
-        indicies = torch.stack(indicies)
-        batch = torch.as_tensor(batch, dtype=torch.int64).to(device)
-
-        return batch, indicies
 
     def forward(self, outputs, targets, args, meta_info):
         """ This performs the loss computation.
@@ -602,7 +471,7 @@ class SetArcticCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
+        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'interm_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)
@@ -655,6 +524,23 @@ class SetArcticCriterion(nn.Module):
                 l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res)
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
+
+        # interm_outputs loss
+        if 'interm_outputs' in outputs:
+            interm_outputs = outputs['interm_outputs']
+            indices = self.matcher(interm_outputs, targets)
+            for loss in self.losses:
+                if loss == 'masks':
+                    # Intermediate masks losses are too costly to compute, we ignore them.
+                    continue
+                kwargs = {}
+                if loss == 'labels':
+                    # Logging is enabled only for the last layer
+                    kwargs = {'log': False}
+                l_dict = self.get_loss(loss, interm_outputs, targets, indices, num_boxes, **kwargs)
+                l_dict = {k + f'_interm': v for k, v in l_dict.items()}
+                losses.update(l_dict)
+
         return losses
 
 
@@ -678,7 +564,7 @@ def build(args, cfg):
 
     backbone = build_backbone(args)
 
-    transformer = build_deforamble_transformer(args, cfg)
+    transformer = build_deforamble_transformer(args)
     model = DeformableDETR(
         backbone,
         transformer,
@@ -730,9 +616,9 @@ def build(args, cfg):
     # }        
     loss_weights = {
         'loss_ce': args.cls_loss_coef,
-        # 'loss_ce': 1,
-        'class_error':1,
-        'cardinality_error':1,
+        'loss_hand_keypoint': args.keypoint_loss_coef,
+        'loss_obj_keypoint': args.keypoint_loss_coef,        
+        # # 'loss_ce': 1,
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,
         "loss/object/cam_t":1.0,
@@ -743,7 +629,7 @@ def build(args, cfg):
         "loss/mano/kp2d/l":5.0,
         "loss/mano/kp3d/l":5.0,
         "loss/mano/pose/l":10.0,
-        # "loss/cd":1.0,
+        # # "loss/cd":1.0,
         "loss/cd":10.0,
         "loss/mano/transl/l":10.0,
         "loss/mano/beta/l":0.001,
@@ -752,22 +638,22 @@ def build(args, cfg):
         "loss/object/radian":1.0,
         "loss/object/rot":10.0,
         "loss/object/transl":1.0,
-        # "loss/object/transl":10.0,
-        # "loss/penetr": 0.1,
-        "loss/penetr": 0.05,
-        "loss/smooth/2d": 10.0,
-        "loss/smooth/3d": 10.0,
+        # # "loss/object/transl":10.0,
+        # # "loss/penetr": 0.1,
+        # "loss/penetr": 0.05,
+        # "loss/smooth/2d": 10.0,
+        # "loss/smooth/3d": 10.0,
     }
 
     if args.aux_loss:
         aux_weight_dict = {}
         for i in range(args.dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in loss_weights.items()})
-        aux_weight_dict.update({k + f'_enc': v for k, v in loss_weights.items()})
+        aux_weight_dict.update({k + f'_interm': v for k, v in loss_weights.items()})
         loss_weights.update(aux_weight_dict)
 
     # losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
-    losses = ['labels', 'cardinality']
+    losses = ['labels', 'cardinality', 'boxes']
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
 
     obj_tensor = ObjectTensors()
