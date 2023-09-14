@@ -706,9 +706,6 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             print(res, end='')
         f.write('\n\n')
 
-    for k,v in train_stat.items():
-        print(f'{k:35}  |  {round(v,4)}')
-
     # for wandb
     if args is not None and args.wandb:
         if args.distributed:
