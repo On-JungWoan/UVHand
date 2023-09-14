@@ -601,62 +601,62 @@ class SetCriterion(nn.Module):
         losses = {}
 
         # prepare for dn loss
-        dn_meta = outputs['dn_meta']
+        # dn_meta = outputs['dn_meta']
 
-        if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
-            output_known_lbs_bboxes,single_pad, scalar = self.prep_for_dn(dn_meta)
+        # if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
+        #     output_known_lbs_bboxes,single_pad, scalar = self.prep_for_dn(dn_meta)
 
-            dn_pos_idx = []
-            dn_neg_idx = []
+        #     dn_pos_idx = []
+        #     dn_neg_idx = []
 
-            for i in range(len(targets['labels'])):
-                t = torch.range(0, len(targets['labels'][i]) - 1).long().cuda()
-                t = t.unsqueeze(0).repeat(scalar, 1)
-                tgt_idx = t.flatten()
-                output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
-                output_idx = output_idx.flatten()
+        #     for i in range(len(targets['labels'])):
+        #         t = torch.range(0, len(targets['labels'][i]) - 1).long().cuda()
+        #         t = t.unsqueeze(0).repeat(scalar, 1)
+        #         tgt_idx = t.flatten()
+        #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
+        #         output_idx = output_idx.flatten()
 
-                dn_pos_idx.append((output_idx, tgt_idx))
-                dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
-            # for i in range(len(targets)):
-            #     if len(targets[i]['labels']) > 0:
-            #         t = torch.range(0, len(targets[i]['labels']) - 1).long().cuda()
-            #         t = t.unsqueeze(0).repeat(scalar, 1)
-            #         tgt_idx = t.flatten()
-            #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
-            #         output_idx = output_idx.flatten()
-            #     else:
-            #         output_idx = tgt_idx = torch.tensor([]).long().cuda()
+        #         dn_pos_idx.append((output_idx, tgt_idx))
+        #         dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
+        #     # for i in range(len(targets)):
+        #     #     if len(targets[i]['labels']) > 0:
+        #     #         t = torch.range(0, len(targets[i]['labels']) - 1).long().cuda()
+        #     #         t = t.unsqueeze(0).repeat(scalar, 1)
+        #     #         tgt_idx = t.flatten()
+        #     #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
+        #     #         output_idx = output_idx.flatten()
+        #     #     else:
+        #     #         output_idx = tgt_idx = torch.tensor([]).long().cuda()
 
-            #     dn_pos_idx.append((output_idx, tgt_idx))
-            #     dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
+        #     #     dn_pos_idx.append((output_idx, tgt_idx))
+        #     #     dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
 
-            # output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
-            # dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
-            # dn_arctic_pred = dn_data.search('pred.', replace_to='')
-            # dn_arctic_gt = dn_data.search('targets.', replace_to='')
+        #     # output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
+        #     # dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
+        #     # dn_arctic_pred = dn_data.search('pred.', replace_to='')
+        #     # dn_arctic_gt = dn_data.search('targets.', replace_to='')
 
-            dn_pred = get_arctic_item(output_known_lbs_bboxes, self.cfg, args.device)
+        #     dn_pred = get_arctic_item(output_known_lbs_bboxes, self.cfg, args.device)
 
-            l_dict = {}
-            for loss in self.losses:
-                kwargs = {}
-                if 'labels' in loss:
-                    kwargs = {'log': False}
-                l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
-            l_dict.update(compute_small_loss(dn_pred, targets, meta_info, self.pre_process_models, args.img_res))
-            # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
-            l_dict = {k + f'_dn': v for k, v in l_dict.items()}
-            losses.update(l_dict)
-        else:
-            l_dict = dict()
-            l_dict['loss_bbox_dn'] = torch.as_tensor(0.).to('cuda')
-            l_dict['loss_giou_dn'] = torch.as_tensor(0.).to('cuda')
-            l_dict['loss_ce_dn'] = torch.as_tensor(0.).to('cuda')
-            l_dict['loss_xy_dn'] = torch.as_tensor(0.).to('cuda')
-            l_dict['loss_hw_dn'] = torch.as_tensor(0.).to('cuda')
-            l_dict['cardinality_error_dn'] = torch.as_tensor(0.).to('cuda')
-            losses.update(l_dict)
+        #     l_dict = {}
+        #     for loss in self.losses:
+        #         kwargs = {}
+        #         if 'labels' in loss:
+        #             kwargs = {'log': False}
+        #         l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
+        #     l_dict.update(compute_small_loss(dn_pred, targets, meta_info, self.pre_process_models, args.img_res))
+        #     # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
+        #     l_dict = {k + f'_dn': v for k, v in l_dict.items()}
+        #     losses.update(l_dict)
+        # else:
+        #     l_dict = dict()
+        #     l_dict['loss_bbox_dn'] = torch.as_tensor(0.).to('cuda')
+        #     l_dict['loss_giou_dn'] = torch.as_tensor(0.).to('cuda')
+        #     l_dict['loss_ce_dn'] = torch.as_tensor(0.).to('cuda')
+        #     l_dict['loss_xy_dn'] = torch.as_tensor(0.).to('cuda')
+        #     l_dict['loss_hw_dn'] = torch.as_tensor(0.).to('cuda')
+        #     l_dict['cardinality_error_dn'] = torch.as_tensor(0.).to('cuda')
+        #     losses.update(l_dict)
 
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
@@ -692,29 +692,29 @@ class SetCriterion(nn.Module):
                 l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
-                if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
-                    aux_outputs_known = output_known_lbs_bboxes['aux_outputs'][idx]
-                    l_dict={}
-                    for loss in self.losses:
-                        kwargs = {}
-                        if 'labels' in loss:
-                            kwargs = {'log': False}
+                # if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
+                #     aux_outputs_known = output_known_lbs_bboxes['aux_outputs'][idx]
+                #     l_dict={}
+                #     for loss in self.losses:
+                #         kwargs = {}
+                #         if 'labels' in loss:
+                #             kwargs = {'log': False}
 
-                        l_dict.update(self.get_loss(loss, aux_outputs_known, targets, dn_pos_idx, num_boxes*scalar,
-                                                                 **kwargs))
+                #         l_dict.update(self.get_loss(loss, aux_outputs_known, targets, dn_pos_idx, num_boxes*scalar,
+                #                                                  **kwargs))
 
-                    l_dict = {k + f'_dn_{idx}': v for k, v in l_dict.items()}
-                    losses.update(l_dict)
-                else:
-                    l_dict = dict()
-                    l_dict['loss_bbox_dn']=torch.as_tensor(0.).to('cuda')
-                    l_dict['loss_giou_dn']=torch.as_tensor(0.).to('cuda')
-                    l_dict['loss_ce_dn']=torch.as_tensor(0.).to('cuda')
-                    l_dict['loss_xy_dn'] = torch.as_tensor(0.).to('cuda')
-                    l_dict['loss_hw_dn'] = torch.as_tensor(0.).to('cuda')
-                    l_dict['cardinality_error_dn'] = torch.as_tensor(0.).to('cuda')
-                    l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
-                    losses.update(l_dict)
+                #     l_dict = {k + f'_dn_{idx}': v for k, v in l_dict.items()}
+                #     losses.update(l_dict)
+                # else:
+                #     l_dict = dict()
+                #     l_dict['loss_bbox_dn']=torch.as_tensor(0.).to('cuda')
+                #     l_dict['loss_giou_dn']=torch.as_tensor(0.).to('cuda')
+                #     l_dict['loss_ce_dn']=torch.as_tensor(0.).to('cuda')
+                #     l_dict['loss_xy_dn'] = torch.as_tensor(0.).to('cuda')
+                #     l_dict['loss_hw_dn'] = torch.as_tensor(0.).to('cuda')
+                #     l_dict['cardinality_error_dn'] = torch.as_tensor(0.).to('cuda')
+                #     l_dict = {k + f'_{idx}': v for k, v in l_dict.items()}
+                #     losses.update(l_dict)
 
         # interm_outputs loss
         if 'interm_outputs' in outputs:

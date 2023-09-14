@@ -82,6 +82,10 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
         with torch.cuda.amp.autocast(enabled=args.amp):
             if need_tgt_for_training:
                 outputs = model(samples, targets=targets) 
+
+                # if outputs['dn_meta']['output_known_lbs_bboxes']['pred_logits'].isnan().sum() != 0:
+                #     outputs = model(samples, targets=targets) 
+
                 loss_dict = criterion(outputs, targets, args, meta_info)
             else:
                 raise Exception('Not implemented!')
@@ -543,6 +547,8 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0, args=None, cfg=None):
+    scaler = torch.cuda.amp.GradScaler(enabled=True)
+
     model.train()
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -586,13 +592,13 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 samples, targets = prefetcher.next()
                 continue
 
-        with autocast(False):
+        with torch.cuda.amp.autocast(enabled=True):
             # Training script begin from here
             outputs = model(samples)
 
             if args.dataset_file == 'arctic':
-                data = prepare_data(args, outputs, targets, meta_info, cfg)
-                loss_dict = criterion(outputs, targets, data, args, meta_info, cfg)
+                # data = prepare_data(args, outputs, targets, meta_info, cfg)
+                loss_dict = criterion(outputs, targets, args, meta_info)
             else:
                 # check validation
                 for i in range(len(targets)):
@@ -626,22 +632,32 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         # loss check
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
+            for k,v in (loss_dict_reduced.items()):
+                print(f'{k} : {v.item()}')
             sys.exit(1)
 
         # back propagation
-        optimizer.zero_grad()
-        losses.backward()
-        if max_norm > 0:
-            grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-        else:
-            grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
-        optimizer.step()
+        if scaler is not None:
+            optimizer.zero_grad()
+            scaler.scale(losses).backward()
+            if max_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:        
+            optimizer.zero_grad()
+            losses.backward()
+            if max_norm > 0:
+                grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            else:
+                grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
+            optimizer.step()
 
         # logger update
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        metric_logger.update(grad_norm=grad_total_norm)
+        # metric_logger.update(grad_norm=grad_total_norm)
         if args.dataset_file == 'AssemblyHands':
             metric_logger.update(class_error=loss_dict_reduced['class_error'])
 
@@ -653,7 +669,10 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         # for debug
         if args.dataset_file == 'arctic':
             pbar.set_postfix(
-                create_loss_dict(loss_value, loss_dict_reduced_scaled, round_value=True)
+                create_loss_dict(
+                    loss_value, loss_dict_reduced_scaled,
+                    round_value=True, mode='small'
+                )
             )
             samples, targets, meta_info = prefetcher.next()
         elif args.dataset_file == 'AssemblyHands':
@@ -671,7 +690,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if args.dataset_file == 'arctic':
-        result = create_loss_dict(loss_value, train_stat)
+        result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
         print(result)
 
     # for wandb
@@ -694,6 +713,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     return train_stat
 
 
+@torch.no_grad()
 def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle=False, epoch=None):
     model.eval()
 
@@ -706,166 +726,99 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     pbar = tqdm(range(len(data_loader)))
+    header = 'Test:'
+    print(header)
 
     for _ in pbar:
         if args.dataset_file == 'arctic':
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
-        with torch.no_grad():
-            # for feature map extraction mode
-            if args.extract:
-                extract_feature(
-                    args, model, samples, targets, meta_info, data_loader, cfg
-                )
+        # for feature map extraction mode
+        if args.extract:
+            extract_feature(
+                args, model, samples, targets, meta_info, data_loader, cfg
+            )
 
-                # next samples
-                if args.dataset_file == 'arctic':
-                    samples, targets, meta_info = prefetcher.next()
-                    continue
-                else:
-                    samples, targets = prefetcher.next()
-                    continue
-
-            # Testing script begin from here
-            outputs = model(samples)
+            # next samples
             if args.dataset_file == 'arctic':
-                data = prepare_data(args, outputs, targets, meta_info, cfg)
-
-                # import arctic_tools.common.torch_utils as torch_utils
-                # from arctic_tools.process import make_output
-                # from arctic_tools.common.xdict import xdict
-                # from copy import deepcopy
-                
-                # ######
-                # origin = measure_error(data, args.eval_metrics)
-                # origin_cdev = torch_utils.nanmean(torch.tensor(origin['cdev/ho']))
-                # print(origin_cdev)
-
-                # ######
-                # def t_f(cnt, vis=False):
-                #     test_outputs = deepcopy(outputs)
-
-                #     out_logits = test_outputs['pred_logits']
-                #     hand_cam, obj_cam = test_outputs['pred_cams']
-                #     mano_pose, mano_shape = test_outputs['pred_mano_params']
-                #     out_obj_rad, out_obj_rot = test_outputs['pred_obj_params']
-                #     prob = out_logits.sigmoid()
-                #     bs, _, _ = prob.shape
-
-                #     # query index select
-                #     best_score = torch.zeros(bs).to(device).to(prob.dtype)
-                #     # if dataset != 'AssemblyHands':
-                #     obj_idx = torch.zeros(bs).to(device).to(torch.long)
-                #     for i in range(1, cfg.hand_idx[0]):
-                #         score, idx = torch.max(prob[:,:,i], dim=-1)
-                #         obj_idx[best_score < score] = idx[best_score < score]
-                #         best_score[best_score < score] = score[best_score < score]
-
-                #     hand_idx = []
-                #     for i in cfg.hand_idx:
-                #         hand_idx.append(torch.argmax(prob[:,:,i], dim=-1)) 
-                #     # hand_idx = torch.stack(hand_idx, dim=-1) 
-                #     left_hand_idx, right_hand_idx = hand_idx
-                #     mano_pose_l = torch.gather(mano_pose, 1, left_hand_idx.view(-1,1,1).repeat(1,1,48)).view(bs, 48)
-                #     mano_pose_r = torch.gather(mano_pose, 1, right_hand_idx.view(-1,1,1).repeat(1,1,48)).view(bs, 48)
-                #     mano_shape_l = torch.gather(mano_shape, 1, left_hand_idx.view(-1,1,1).repeat(1,1,10)).view(bs, 10)
-                #     mano_shape_r = torch.gather(mano_shape, 1, right_hand_idx.view(-1,1,1).repeat(1,1,10)).view(bs, 10)
-                #     root_l = torch.gather(hand_cam, 1, left_hand_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
-                #     root_r = torch.gather(hand_cam, 1, right_hand_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
-                #     root_o = torch.gather(obj_cam, 1, obj_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
-                #     obj_rot = torch.gather(out_obj_rot, 1, obj_idx.view(-1,1,1).repeat(1,1,3)).view(bs, 3)
-                #     obj_rad = torch.gather(out_obj_rad, 1, obj_idx.view(-1,1,1).repeat(1,1,1)).view(bs, 1)
-
-                #     mano_pose_l = arctic_smoothing(mano_pose_l.view(512, 1, 48), cnt).view(512,48)
-                #     mano_pose_r = arctic_smoothing(mano_pose_r.view(512, 1, 48), cnt).view(512,48)
-                #     mano_shape_l = arctic_smoothing(mano_shape_l.view(512, 1, 10), cnt).view(512,10)
-                #     mano_shape_r = arctic_smoothing(mano_shape_r.view(512, 1, 10), cnt).view(512,10)
-                #     root_l = arctic_smoothing(root_l.view(512, 1, 3), cnt).view(512,3)
-                #     root_r = arctic_smoothing(root_r.view(512, 1, 3), cnt).view(512,3)
-                #     root_o = arctic_smoothing(root_o.view(512, 1, 3), cnt).view(512,3)
-                #     obj_rot = arctic_smoothing(obj_rot.view(512, 1, 3), cnt).view(512,3)
-                #     obj_rad = arctic_smoothing(obj_rad.view(512, 1, 1), cnt).view(512,1)
-
-                #     pred = ([root_l, root_r, root_o], [mano_pose_l, mano_pose_r], [mano_shape_l, mano_shape_r], [obj_rot, obj_rad])
-                #     out = make_output(args, *pred, meta_info["query_names"], meta_info["intrinsics"])
-                #     test_data = prepare_data(args, None, targets, meta_info, cfg, pred=out)
-
-                #     #####
-                #     replace = measure_error(test_data, args.eval_metrics)
-                #     replace_cdev = torch_utils.nanmean(torch.tensor(replace['cdev/ho']))
-                #     print(replace_cdev)
-
-                #     if vis:
-                #         visualize_arctic_result(args, test_data, 'pred')
-                # t_f(5)
-                # samples, targets, meta_info = prefetcher.next()
-                # continue
-
-                cnt = args.iter
-                data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
-                data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
-                data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
-
-            if args.visualization:
-                # assert samples.tensors.shape[0] == 1
-                if args.dataset_file == 'arctic':
-                    visualize_arctic_result(args, data, 'pred')
-                elif args.dataset_file == 'AssemblyHands':
-                    visualize_assembly_result(args, cfg, outputs, targets, data_loader)
+                samples, targets, meta_info = prefetcher.next()
+                continue
             else:
-                if args.dataset_file == 'AssemblyHands':
-                    # measure error
-                    stats = eval_assembly_result(outputs, targets, cfg, data_loader)
+                samples, targets = prefetcher.next()
+                continue
 
-                    pbar.set_postfix({
-                        'MPJPE': stats['mpjpe'],
-                        })                    
-                else:                
+        # Testing script begin from here
+        with torch.cuda.amp.autocast(enabled=True):
+            outputs = model(samples)
 
-                    def test():
-                        import arctic_tools.common.torch_utils as torch_utils
-                        from arctic_tools.common.xdict import xdict
-                        from copy import deepcopy
-                        
-                        origin = measure_error(data, args.eval_metrics)
-                        origin_cdev = torch_utils.nanmean(torch.tensor(origin['cdev/ho']))
+        if args.dataset_file == 'arctic':
+            data = prepare_data(args, outputs, targets, meta_info, cfg)
 
-                        cnt = 20
-                        test_data = deepcopy(data)
-                        test_data.overwrite("pred.object.v.cam", arctic_smoothing(test_data["pred.object.v.cam"], cnt))
-                        test_data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(test_data["pred.mano.v3d.cam.r"], cnt))
-                        test_data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(test_data["pred.mano.v3d.cam.l"], cnt))
+            # cnt = args.iter
+            # data.overwrite("pred.object.v.cam", arctic_smoothing(data["pred.object.v.cam"], cnt))
+            # data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(data["pred.mano.v3d.cam.r"], cnt))
+            # data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(data["pred.mano.v3d.cam.l"], cnt))                    
 
-                        replace = measure_error(test_data, args.eval_metrics)
-                        replace_cdev = torch_utils.nanmean(torch.tensor(replace['cdev/ho']))
-                        print(replace_cdev)
+        if args.visualization:
+            # assert samples.tensors.shape[0] == 1
+            if args.dataset_file == 'arctic':
+                visualize_arctic_result(args, data, 'pred')
+            elif args.dataset_file == 'AssemblyHands':
+                visualize_assembly_result(args, cfg, outputs, targets, data_loader)
+        else:
+            if args.dataset_file == 'AssemblyHands':
+                # measure error
+                stats = eval_assembly_result(outputs, targets, cfg, data_loader)
 
-                        visualize_arctic_result(args, test_data, 'pred')
-                        samples, targets, meta_info = prefetcher.next()
-                        # continue
-
-                    # measure error
-                    try:
-                        stats = measure_error(data, args.eval_metrics)
-                    except:
-                        print('Fail to mesure the data of last iteration.')
-                        break
+                pbar.set_postfix({
+                    'MPJPE': stats['mpjpe'],
+                    })                    
+            else:
+                def test():
+                    import arctic_tools.common.torch_utils as torch_utils
+                    from arctic_tools.common.xdict import xdict
+                    from copy import deepcopy
                     
-                    for k,v in stats.items():
-                        not_non_idx = ~np.isnan(stats[k])
-                        replace_value = float(stats[k][not_non_idx].mean())
-                        # If all values are nan, drop that key.
-                        if replace_value != replace_value:
-                            stats = stats.rm(k)
-                        else:
-                            stats.overwrite(k, replace_value)
+                    origin = measure_error(data, args.eval_metrics)
+                    origin_cdev = torch_utils.nanmean(torch.tensor(origin['cdev/ho']))
 
-                    pbar.set_postfix(stat_round(**stats))
-                metric_logger.update(**stats)
+                    cnt = 20
+                    test_data = deepcopy(data)
+                    test_data.overwrite("pred.object.v.cam", arctic_smoothing(test_data["pred.object.v.cam"], cnt))
+                    test_data.overwrite("pred.mano.v3d.cam.r", arctic_smoothing(test_data["pred.mano.v3d.cam.r"], cnt))
+                    test_data.overwrite("pred.mano.v3d.cam.l", arctic_smoothing(test_data["pred.mano.v3d.cam.l"], cnt))
 
-            if args.debug == True:
-                if args.num_debug == _:
+                    replace = measure_error(test_data, args.eval_metrics)
+                    replace_cdev = torch_utils.nanmean(torch.tensor(replace['cdev/ho']))
+                    print(replace_cdev)
+
+                    visualize_arctic_result(args, test_data, 'pred')
+                    samples, targets, meta_info = prefetcher.next()
+                    # continue
+
+                # measure error
+                try:
+                    stats = measure_error(data, args.eval_metrics)
+                except:
+                    print('Fail to mesure the data of last iteration.')
                     break
+                
+                for k,v in stats.items():
+                    not_non_idx = ~np.isnan(stats[k])
+                    replace_value = float(stats[k][not_non_idx].mean())
+                    # If all values are nan, drop that key.
+                    if replace_value != replace_value:
+                        stats = stats.rm(k)
+                    else:
+                        stats.overwrite(k, replace_value)
+
+                pbar.set_postfix(stat_round(**stats))
+            metric_logger.update(**stats)
+
+        if args.debug == True:
+            if args.num_debug == _:
+                break
+
         if args.dataset_file == 'arctic':
             samples, targets, meta_info = prefetcher.next()
         else:

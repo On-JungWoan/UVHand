@@ -28,7 +28,13 @@ from .arctic_transformer import build_deforamble_transformer, _get_activation_fn
 import copy
 import numpy as np
 from arctic_tools.process import prepare_data
-from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
+# from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
+
+from arctic_tools.process import get_arctic_item
+from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_small_loss
+
+from arctic_tools.common.body_models import build_mano_aa
+from arctic_tools.common.object_tensors import ObjectTensors
 
 import sys
 
@@ -251,7 +257,7 @@ class DeformableDETR(nn.Module):
             out_obj_rot = self.obj_rot[lvl](hs_lvl)
             out_obj_rad = self.obj_rad[lvl](hs_lvl)
             
-            outputs_classes.append(outputs_class)
+            outputs_classes.append(outputs_class.to(torch.float32))
             outputs_mano_pose.append(out_mano_pose)
             outputs_mano_beta.append(out_mano_beta)
             outputs_hand_cams.append(out_hand_cam)
@@ -297,7 +303,7 @@ class SetArcticCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
-    def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25, cfg=None):
+    def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25, cfg=None, pre_process_models=None):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -313,6 +319,7 @@ class SetArcticCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
         self.cfg = cfg
+        self.pre_process_models = pre_process_models
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
@@ -322,17 +329,16 @@ class SetArcticCriterion(nn.Module):
         src_logits = outputs['pred_logits']
 
         idx = self._get_src_permutation_idx(indices)
-        # target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)]).cuda()
-        # target_classes_o = torch.cat([t[0][J] for t, (_, J) in zip(targets['labels'], indices)]).cuda()
-        is_valid = targets['is_valid'].type(torch.bool)
-        try:
-            # target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
-            # FIXME : is valid 고려
-            target_classes_o = torch.cat([t[0][indices[i][1]] for i, t in enumerate(targets['labels'])]).to('cuda')
-        except:
-            # target_classes_o = torch.cat([torch.tensor(t) for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
-            labels = [t for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
-            target_classes_o = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
+
+        # try:
+        #     # target_classes_o = torch.cat([t[0] for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+        #     # FIXME : is valid 고려
+        #     target_classes_o = torch.cat([t[0][indices[i][1]] for i, t in enumerate(targets['labels'])]).to('cuda')
+        # except:
+        # target_classes_o = torch.cat([torch.tensor(t).cuda()[J] for t, (_, J) in zip(targets['labels'], indices)])
+        # # target_classes_o = torch.cat([torch.tensor(t) for idx, t in enumerate(targets['labels']) if targets['is_valid'][idx] == 1]).cuda()
+        labels = [t for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
+        target_classes_o = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
 
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
@@ -351,21 +357,23 @@ class SetArcticCriterion(nn.Module):
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
         return losses
 
-    # @torch.no_grad()
-    # def loss_cardinality(self, outputs, targets, indices, num_boxes):
-    #     """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
-    #     This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
-    #     """
-    #     pred_logits = outputs['pred_logits']
-    #     device = pred_logits.device
-    #     # tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
-    #     tgt_lengths = torch.as_tensor([v.shape[-1] for v in targets['labels']], device=device)
-    #     # Count the number of predictions that are NOT "no-object" (which is the last class)
-    #     # card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
-    #     card_pred = (pred_logits.argmax(-1) != 0).sum(1)
-    #     card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
-    #     losses = {'cardinality_error': card_err}
-    #     return losses
+    @torch.no_grad()
+    def loss_cardinality(self, outputs, targets, indices, num_boxes):
+        """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
+        This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
+        """
+        pred_logits = outputs['pred_logits']
+        device = pred_logits.device
+        # tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        # tgt_lengths = torch.as_tensor([v.shape[-1] for v in targets['labels']], device=device)
+        tgt_lengths = torch.as_tensor([len(l) for l in targets['labels']], device=device)
+        
+        # Count the number of predictions that are NOT "no-object" (which is the last class)
+        # card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
+        card_pred = (pred_logits.argmax(-1) != 0).sum(1)
+        card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
+        losses = {'cardinality_error': card_err}
+        return losses
 
     def loss_cam(self, outputs, targets, indices, num_boxes):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
@@ -532,7 +540,7 @@ class SetArcticCriterion(nn.Module):
     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
         loss_map = {
             'labels': self.loss_labels,
-            # 'cardinality': self.loss_cardinality,
+            'cardinality': self.loss_cardinality,
             # 'mano_params': self.loss_mano_params,
 
             # 'mano_poses': self.loss_mano_poses,
@@ -587,14 +595,13 @@ class SetArcticCriterion(nn.Module):
 
         return batch, indicies
 
-    def forward(self, outputs, targets, data, args, meta_info, cfg):
+    def forward(self, outputs, targets, args, meta_info):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        device = args.device
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
@@ -619,9 +626,11 @@ class SetArcticCriterion(nn.Module):
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
             # losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
 
-        arctic_pred = data.search('pred.', replace_to='')
-        arctic_gt = data.search('targets.', replace_to='')
-        losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
+        pred = get_arctic_item(outputs, self.cfg, args.device)
+        losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res))
+        # arctic_pred = data.search('pred.', replace_to='')
+        # arctic_gt = data.search('targets.', replace_to='')
+        # losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -629,9 +638,10 @@ class SetArcticCriterion(nn.Module):
                 indices = self.matcher(aux_outputs, targets)
                 # idx = self.select_indices(cfg, aux_outputs, targets, device)
 
-                aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
-                aux_arctic_pred = aux_data.search('pred.', replace_to='')
-                aux_arctic_gt = aux_data.search('targets.', replace_to='')
+                # aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
+                # aux_arctic_pred = aux_data.search('pred.', replace_to='')
+                # aux_arctic_gt = aux_data.search('targets.', replace_to='')
+                aux_pred = get_arctic_item(aux_outputs, self.cfg, args.device)
 
                 for loss in self.losses:
                     kwargs = {}
@@ -641,7 +651,8 @@ class SetArcticCriterion(nn.Module):
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
-                l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res)
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
         return losses
@@ -688,33 +699,65 @@ def build(args, cfg):
     loss_weights = {
         'loss_ce': args.cls_loss_coef,
         # 'loss_ce': 1,
-        'class_error':1,
-        'cardinality_error':1,
+        # 'class_error':1,
+        # 'cardinality_error':1,
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,
         "loss/object/cam_t":1.0,
-        "loss/mano/kp2d/r":5.0,
+        # "loss/mano/kp2d/r":5.0,
         "loss/mano/kp3d/r":5.0,
         "loss/mano/pose/r":10.0,
         "loss/mano/beta/r":0.001,
-        "loss/mano/kp2d/l":5.0,
+        # "loss/mano/kp2d/l":5.0,
         "loss/mano/kp3d/l":5.0,
         "loss/mano/pose/l":10.0,
-        # "loss/cd":1.0,
-        "loss/cd":10.0,
-        "loss/mano/transl/l":10.0,
+        "loss/cd":1.0,
+        # "loss/cd":10.0,
+        "loss/mano/transl/l":1.0,
+        # "loss/mano/transl/l":10.0,
         "loss/mano/beta/l":0.001,
-        "loss/object/kp2d":1.0,
+        # "loss/object/kp2d":1.0,
         "loss/object/kp3d":5.0,
         "loss/object/radian":1.0,
-        "loss/object/rot":10.0,
+        "loss/object/rot":1.0,
+        # "loss/object/rot":10.0,
         "loss/object/transl":1.0,
         # "loss/object/transl":10.0,
         # "loss/penetr": 0.1,
-        "loss/penetr": 0.05,
-        "loss/smooth/2d": 10.0,
-        "loss/smooth/3d": 10.0,
-    }
+        "loss/penetr": 0.005,
+        # "loss/smooth/2d": 10.0,
+        # "loss/smooth/3d": 10.0,
+    }        
+    # loss_weights = {
+    #     'loss_ce': args.cls_loss_coef,
+    #     # 'loss_ce': 1,
+    #     'class_error':1,
+    #     'cardinality_error':1,
+    #     "loss/mano/cam_t/r":1.0,
+    #     "loss/mano/cam_t/l":1.0,
+    #     "loss/object/cam_t":1.0,
+    #     "loss/mano/kp2d/r":5.0,
+    #     "loss/mano/kp3d/r":5.0,
+    #     "loss/mano/pose/r":10.0,
+    #     "loss/mano/beta/r":0.001,
+    #     "loss/mano/kp2d/l":5.0,
+    #     "loss/mano/kp3d/l":5.0,
+    #     "loss/mano/pose/l":10.0,
+    #     # "loss/cd":1.0,
+    #     "loss/cd":10.0,
+    #     "loss/mano/transl/l":10.0,
+    #     "loss/mano/beta/l":0.001,
+    #     "loss/object/kp2d":1.0,
+    #     "loss/object/kp3d":5.0,
+    #     "loss/object/radian":1.0,
+    #     "loss/object/rot":10.0,
+    #     "loss/object/transl":1.0,
+    #     # "loss/object/transl":10.0,
+    #     # "loss/penetr": 0.1,
+    #     "loss/penetr": 0.05,
+    #     "loss/smooth/2d": 10.0,
+    #     "loss/smooth/3d": 10.0,
+    # }
 
     if args.aux_loss:
         aux_weight_dict = {}
@@ -724,9 +767,18 @@ def build(args, cfg):
         loss_weights.update(aux_weight_dict)
 
     # losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
-    losses = ['labels',]
+    losses = ['labels', 'cardinality']
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
-    criterion = SetArcticCriterion(num_classes, matcher, loss_weights, losses, focal_alpha=args.focal_alpha, cfg=cfg)
+
+    obj_tensor = ObjectTensors()
+    obj_tensor.to(args.device)
+    pre_process_models = {
+        "mano_r": build_mano_aa(is_rhand=True).to(args.device),
+        "mano_l": build_mano_aa(is_rhand=False).to(args.device),
+        "arti_head": obj_tensor
+    }    
+    criterion = SetArcticCriterion(num_classes, matcher, loss_weights, losses, focal_alpha=args.focal_alpha, cfg=cfg,
+                                   pre_process_models=pre_process_models)
     criterion.to(device)
 
     return model, criterion
