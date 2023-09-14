@@ -190,6 +190,8 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     pred_betas_l, pred_betas_r = mano_shape
     pred_rotmat_l, pred_rotmat_r = mano_pose
     pred_rot, pred_radian = obj_angle
+    pred_rot = pred_rot.view(-1, 3).float()
+    pred_radian = pred_radian.view(-1).float()
 
     gt_pose_r = gt["mano.pose.r"]
     gt_betas_r = gt["mano.beta.r"]
@@ -202,23 +204,20 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     gt_keypoints_2d_l = gt["mano.j2d.norm.l"]
     gt_kp2d_o = torch.cat((gt["object.kp2d.norm.t"], gt["object.kp2d.norm.b"]), dim=1)
     gt_rot = gt["object.rot"].view(-1, 3).float()
-    gt_radian = gt["object.radian"].view(-1).float()
-    joints_valid_r = gt["joints_valid_r"]
-    joints_valid_l = gt["joints_valid_l"]    
+    gt_radian = gt["object.radian"].view(-1).float()   
 
     is_valid = gt["is_valid"]
     right_valid = gt["right_valid"]
     left_valid = gt["left_valid"]
+    joints_valid_r = gt["joints_valid_r"]
+    joints_valid_l = gt["joints_valid_l"]     
 
     K = meta_info["intrinsics"]
     query_names = meta_info["query_names"]
     avg_focal_length = (K[:, 0, 0] + K[:, 1, 1]) / 2.0
-    # cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    # cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    # cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    cam_t_r = root_r
-    cam_t_l = root_l
-    cam_t_o = root_o
+    cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
 
     tmp_pred = {}
     loss_dict = {}
