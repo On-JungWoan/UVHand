@@ -547,7 +547,7 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0, args=None, cfg=None):
-    scaler = torch.cuda.amp.GradScaler(enabled=True)
+    # scaler = torch.cuda.amp.GradScaler(enabled=True)
 
     model.train()
     criterion.train()
@@ -592,42 +592,42 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                 samples, targets = prefetcher.next()
                 continue
 
-        with torch.cuda.amp.autocast(enabled=True):
-            # Training script begin from here
-            outputs = model(samples)
+        # with torch.cuda.amp.autocast(enabled=True):
+        # Training script begin from here
+        outputs = model(samples)
 
-            if args.dataset_file == 'arctic':
-                # data = prepare_data(args, outputs, targets, meta_info, cfg)
-                loss_dict = criterion(outputs, targets, args, meta_info)
-            else:
-                # check validation
-                for i in range(len(targets)):
-                    target = targets[i]
-                    img_id = target['image_id'].item()
-                    label = [l.item()-1 for l in target['labels']]
-                    joint_valid = data_loader.dataset.coco.loadAnns(img_id)[0]['joint_valid']
-                    joint_valid = torch.stack([torch.tensor(joint_valid[:21]), torch.tensor(joint_valid[21:])]).type(torch.bool)[label]
-                    joint_valid = joint_valid.unsqueeze(-1).repeat(1,1,3)
-                    targets[i]['joint_valid'] = joint_valid
-                loss_dict = criterion(outputs, targets)
+        if args.dataset_file == 'arctic':
+            # data = prepare_data(args, outputs, targets, meta_info, cfg)
+            loss_dict = criterion(outputs, targets, args, meta_info)
+        else:
+            # check validation
+            for i in range(len(targets)):
+                target = targets[i]
+                img_id = target['image_id'].item()
+                label = [l.item()-1 for l in target['labels']]
+                joint_valid = data_loader.dataset.coco.loadAnns(img_id)[0]['joint_valid']
+                joint_valid = torch.stack([torch.tensor(joint_valid[:21]), torch.tensor(joint_valid[21:])]).type(torch.bool)[label]
+                joint_valid = joint_valid.unsqueeze(-1).repeat(1,1,3)
+                targets[i]['joint_valid'] = joint_valid
+            loss_dict = criterion(outputs, targets)
 
-            # calc losses
-            weight_dict = criterion.weight_dict
-            losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        # calc losses
+        weight_dict = criterion.weight_dict
+        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
-            # for arctic
-            for k, v in loss_dict.items():
-                if len(v.shape) == 1:
-                    loss_dict[k] = v[0]
+        # for arctic
+        for k, v in loss_dict.items():
+            if len(v.shape) == 1:
+                loss_dict[k] = v[0]
 
-            # reduce losses over all GPUs for logging purposes
-            loss_dict_reduced = utils.reduce_dict(loss_dict)
-            loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                        for k, v in loss_dict_reduced.items()}
-            loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                        for k, v in loss_dict_reduced.items() if k in weight_dict}
-            losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-            loss_value = losses_reduced_scaled.item()
+        # reduce losses over all GPUs for logging purposes
+        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                    for k, v in loss_dict_reduced.items()}
+        loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
+        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+        loss_value = losses_reduced_scaled.item()
 
         # loss check
         if not math.isfinite(loss_value):
@@ -637,27 +637,27 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             sys.exit(1)
 
         # back propagation
-        if scaler is not None:
-            optimizer.zero_grad()
-            scaler.scale(losses).backward()
-            if max_norm > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-            scaler.step(optimizer)
-            scaler.update()
-        else:        
-            optimizer.zero_grad()
-            losses.backward()
-            if max_norm > 0:
-                grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-            else:
-                grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
-            optimizer.step()
+        # if scaler is not None:
+        #     optimizer.zero_grad()
+        #     scaler.scale(losses).backward()
+        #     if max_norm > 0:
+        #         scaler.unscale_(optimizer)
+        #         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+        #     scaler.step(optimizer)
+        #     scaler.update()
+        # else:        
+        optimizer.zero_grad()
+        losses.backward()
+        if max_norm > 0:
+            grad_total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+        else:
+            grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
+        optimizer.step()
 
         # logger update
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        # metric_logger.update(grad_norm=grad_total_norm)
+        metric_logger.update(grad_norm=grad_total_norm)
         if args.dataset_file == 'AssemblyHands':
             metric_logger.update(class_error=loss_dict_reduced['class_error'])
 
