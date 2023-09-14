@@ -213,9 +213,12 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     K = meta_info["intrinsics"]
     query_names = meta_info["query_names"]
     avg_focal_length = (K[:, 0, 0] + K[:, 1, 1]) / 2.0
-    cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
-    cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    # cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    # cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    # cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1)
+    cam_t_r = root_r
+    cam_t_l = root_l
+    cam_t_o = root_o
 
     tmp_pred = {}
     loss_dict = {}
