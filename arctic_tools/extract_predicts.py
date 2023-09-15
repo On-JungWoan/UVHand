@@ -7,16 +7,6 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
-sys.path.append(".")
-import common.thing as thing
-import src.extraction.interface as interface
-import src.factory as factory
-from common.xdict import xdict
-from src.parsers.parser import construct_args
-import common.camera as camera
-from arctic_tools.process import get_arctic_item, arctic_pre_process
-from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
-
 
 # LSTM models are trained using image features from single-frame models
 # this specify the single-frame model features that the LSTM model was trained on
@@ -34,6 +24,15 @@ model_dependencies = {
 
 
 def main(args=None, wrapper=None, cfg=None):
+    import common.thing as thing
+    import src.extraction.interface as interface
+    import src.factory as factory
+    from common.xdict import xdict
+    from src.parsers.parser import construct_args
+    import common.camera as camera
+    from arctic_tools.process import get_arctic_item, arctic_pre_process
+    from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
+
     args.experiment = None
     args.exp_key = "xxxxxxx"
 
