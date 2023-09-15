@@ -8,12 +8,12 @@ from loguru import logger
 from tqdm import tqdm
 
 sys.path.append(".")
-import origin_arctic.common.thing as thing
-import origin_arctic.src.extraction.interface as interface
-import origin_arctic.src.factory as factory
-from origin_arctic.common.xdict import xdict
-from origin_arctic.src.parsers.parser import construct_args
-import origin_arctic.common.camera as camera
+import common.thing as thing
+import src.extraction.interface as interface
+import src.factory as factory
+from common.xdict import xdict
+from src.parsers.parser import construct_args
+import common.camera as camera
 from arctic_tools.process import get_arctic_item, arctic_pre_process
 from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
