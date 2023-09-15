@@ -5,7 +5,7 @@ import arctic_tools.common.transforms as tf
 import arctic_tools.common.data_utils as data_utils
 from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
-from src.utils.loss_modules import (
+from arctic_tools.src.utils.loss_modules import (
     compute_contact_devi_loss,
     hand_kp3d_loss,
     joints_loss,

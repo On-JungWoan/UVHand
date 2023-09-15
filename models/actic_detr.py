@@ -272,10 +272,16 @@ class DeformableDETR(nn.Module):
             #     hs_lvl = hs_lvl.reshape(B, Q, N, C).permute(0,2,1,3).reshape(B*N, Q, C) # B*N, Q, C
             
             if self.two_stage:
+                if lvl == 0:
+                    reference = init_reference
+                else:
+                    reference = inter_references[lvl - 1]
+                reference = inverse_sigmoid(reference)
+                
                 layer_key_delta_unsig = self.key_embed[lvl](hs_lvl)
                 layer_obj_delta_unsig = self.obj_key_embed[lvl](hs_lvl)
-                layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
-                layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(inter_references[lvl])).sigmoid() * 2 - 1
+                layer_key_outputs_unsig = (layer_key_delta_unsig  + reference).sigmoid() * 2 - 1
+                layer_obj_outputs_unsig = (layer_obj_delta_unsig  + reference).sigmoid() * 2 - 1
 
                 outputs_hand_coord_list.append(layer_key_outputs_unsig)
                 outputs_obj_coord_list.append(layer_obj_outputs_unsig)
