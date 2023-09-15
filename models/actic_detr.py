@@ -10,33 +10,26 @@
 """
 Deformable DETR model and criterion classes.
 """
-import torch
-import torch.nn.functional as F
-from torch import nn
 import math
+import copy
+import torch
+from torch import nn
+import torch.nn.functional as F
 
-from util import box_ops
+from .matcher import build_matcher
+from .backbone import build_backbone
+from .segmentation import sigmoid_focal_loss
+from .arctic_transformer import build_deforamble_transformer, _get_activation_fn
+
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        accuracy, get_world_size, interpolate,
                        is_dist_avail_and_initialized, inverse_sigmoid)
 
-from .backbone import build_backbone
-from .matcher import build_matcher
-from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
-                           dice_loss, sigmoid_focal_loss)
-from .arctic_transformer import build_deforamble_transformer, _get_activation_fn
-import copy
-import numpy as np
-from arctic_tools.process import prepare_data
-# from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss
-
-from arctic_tools.process import get_arctic_item
-from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_small_loss
-
 from arctic_tools.common.body_models import build_mano_aa
 from arctic_tools.common.object_tensors import ObjectTensors
+from arctic_tools.process import prepare_data, get_arctic_item
+from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_loss, compute_small_loss
 
-import sys
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
