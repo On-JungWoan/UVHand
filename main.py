@@ -39,7 +39,7 @@ from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, train
 from util.settings import (
     get_general_args_parser, get_deformable_detr_args_parser, get_dino_arg_parser,
     load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
-    set_dino_args
+    set_dino_args, submit_result
 )
 
 
@@ -77,6 +77,12 @@ def main(args):
     cudnn.benchmark = False
     cudnn.deterministic = True
     random.seed(seed)
+
+    # test
+    if args.extraction_mode == 'submit_pose':
+        sys.path = ["./origin_arctic"] + sys.path # Change to your own path.
+        submit_result(args, cfg)
+        sys.exit(0)
 
     if not args.eval:
         dataset_train = build_dataset(image_set='train', args=args)
@@ -310,6 +316,6 @@ if __name__ == '__main__':
     make_arctic_environments(args)
     from datasets import build_dataset
     import datasets.samplers as samplers
-    from engine import train_pose, test_pose    
+    from engine import train_pose, test_pose
 
     main(args)

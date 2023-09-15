@@ -427,6 +427,8 @@ class ArcticDataset(Dataset):
 
     def getitem_eval(self, imgname, load_rgb=True):
         args = self.args
+        imgname = op.join(args.coco_path, args.dataset_file, imgname[2:])
+        
         # LOADING START
         speedup = args.speedup
         sid, seq_name, view_idx, image_idx = imgname.split("/")[-4:]
@@ -465,7 +467,7 @@ class ArcticDataset(Dataset):
         if load_rgb:
             if speedup:
                 imgname = imgname.replace("/images/", "/cropped_images/")
-            imgname = imgname.replace("/arctic_data/", "/data/arctic_data/data/")
+            imgname = imgname.replace("/arctic_data/", "/data/arctic_data/data/").replace("/data/data/", "/data/")
             cv_img, img_status = read_img(imgname, (2800, 2000, 3))
         else:
             norm_img = None

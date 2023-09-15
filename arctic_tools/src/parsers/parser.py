@@ -2,8 +2,8 @@ import argparse
 
 from easydict import EasyDict
 
-from common.args_utils import set_default_params
-from src.parsers.generic_parser import add_generic_args
+from arctic_tools.common.args_utils import set_default_params
+from arctic_tools.src.parsers.generic_parser import add_generic_args
 
 
 def construct_args(parser):

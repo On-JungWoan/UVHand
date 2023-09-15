@@ -8,11 +8,14 @@ from loguru import logger
 from tqdm import tqdm
 
 sys.path.append(".")
-import common.thing as thing
-import src.extraction.interface as interface
-import src.factory as factory
-from common.xdict import xdict
-from src.parsers.parser import construct_args
+import origin_arctic.common.thing as thing
+import origin_arctic.src.extraction.interface as interface
+import origin_arctic.src.factory as factory
+from origin_arctic.common.xdict import xdict
+from origin_arctic.src.parsers.parser import construct_args
+import origin_arctic.common.camera as camera
+from arctic_tools.process import get_arctic_item, arctic_pre_process
+from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
 
 # LSTM models are trained using image features from single-frame models
@@ -30,21 +33,11 @@ model_dependencies = {
 }
 
 
-def main(args=None, model=None, data_loader=None):
-    # args = construct_args()
-
+def main(args=None, wrapper=None, cfg=None):
     args.experiment = None
     args.exp_key = "xxxxxxx"
 
     device = "cuda:0"
-    wrapper = factory.fetch_model(args, model).to(device)
-    if args.load_ckpt == "":
-        args.load_ckpt = 'arctic_tools/logs/3558f1342/checkpoints/last.ckpt'
-    wrapper.load_state_dict(torch.load(args.load_ckpt)["state_dict"], strict=False)
-    logger.info(f"Loaded weights from {args.load_ckpt}")
-    wrapper.eval()
-    wrapper.to(device)
-    wrapper.model.arti_head.object_tensors.to(device)
     # wrapper.metric_dict = []
 
     exp_key = op.abspath(args.load_ckpt).split("/")[-3]
@@ -53,12 +46,10 @@ def main(args=None, model=None, data_loader=None):
             args.img_feat_version == model_dependencies[exp_key]
         ), f"Image features used for training ({model_dependencies[exp_key]}) do not match the ones used for the current inference ({args.img_feat_version})"
 
-    out_dir = op.join(args.load_ckpt.split("checkpoints")[0], "eval")
+    out_dir = op.join(args.output_dir, "eval")
 
-    root_dir = op.join(args.coco_path, args.dataset_file)
     with open(
-        f"{root_dir}/data/arctic_data/data/splits_json/protocol_{args.setup}.json",
-        "r",
+        op.join(args.coco_path, args.dataset_file,f"data/arctic_data/data/splits_json/protocol_{args.setup}.json"), "r"
     ) as f:
         seqs = json.load(f)[args.run_on]
 
@@ -88,14 +79,80 @@ def main(args=None, model=None, data_loader=None):
         logger.info(f"Processing seq {seq} {seq_idx + 1}/{len(seqs)}")
         out_list = []
         val_loader = factory.fetch_dataloader(args, "val", seq)
+        # val_loader.dataset[0]
+
         with torch.no_grad():
             for idx, batch in tqdm(enumerate(val_loader), total=len(val_loader)):
                 batch = thing.thing2dev(batch, device)
                 inputs, targets, meta_info = batch
-                if "submit_" in args.extraction_mode:
-                    out_dict = wrapper.inference(inputs, meta_info)
-                else:
-                    out_dict = wrapper.forward(inputs, targets, meta_info, "extract")
+
+                # meta info
+                query_names = meta_info["query_names"]
+                K = meta_info["intrinsics"]
+                avg_focal_length = (K[:, 0, 0] + K[:, 1, 1]) / 2.0
+
+                # extract outputs
+                outputs = wrapper(inputs['img'])
+                root, mano_pose, mano_shape, obj = get_arctic_item(outputs, cfg)
+                root_l, root_r, root_o = root
+                mano_pose_l, mano_pose_r = mano_pose
+                mano_shape_l, mano_shape_r = mano_shape
+                obj_rot, obj_rad = obj
+
+                cam_t_l = camera.weak_perspective_to_perspective_torch(
+                    root_l, focal_length=avg_focal_length, img_res=args.img_res, min_s=0.1
+                )
+                cam_t_r = camera.weak_perspective_to_perspective_torch(
+                    root_r, focal_length=avg_focal_length, img_res=args.img_res, min_s=0.1
+                )
+                cam_t_o = camera.weak_perspective_to_perspective_torch(
+                    root_o, focal_length=avg_focal_length, img_res=args.img_res, min_s=0.1
+                )
+
+                mano_pose_r = axis_angle_to_matrix(mano_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+                mano_pose_l = axis_angle_to_matrix(mano_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+
+                # save
+                out_dict = {
+                    'pred.mano.cam_t.l' : cam_t_l.cpu(),
+                    'pred.mano.beta.l' : mano_shape_l.cpu(),
+                    'pred.mano.pose.l' : mano_pose_l.cpu(),
+                    'pred.mano.cam_t.r' : cam_t_r.cpu(),
+                    'pred.mano.beta.r' : mano_shape_r.cpu(),
+                    'pred.mano.pose.r' : mano_pose_r.cpu(),
+                    'pred.object.rot' : obj_rot.cpu(),
+                    'pred.object.cam_t' : cam_t_o.cpu(),
+                    'pred.object.radian' : obj_rad.cpu(),
+                    'meta_info.imgname' : meta_info['imgname']
+                }
+
+                if "submit_" not in args.extraction_mode:
+                    targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+                    out_dict['targets.mano.pose.r'] = targets['mano.pose.r']
+                    out_dict['targets.mano.pose.l'] = targets['mano.pose.l']
+                    out_dict['targets.mano.beta.r'] = targets['mano.beta.r']
+                    out_dict['targets.mano.beta.l'] = targets['mano.beta.l']
+                    out_dict['targets.object.radian'] = targets['object.radian']
+                    out_dict['targets.object.rot'] = targets['object.rot']
+                    out_dict['targets.is_valid'] = targets['is_valid']
+                    out_dict['targets.left_valid'] = targets['left_valid']
+                    out_dict['targets.right_valid'] = targets['right_valid']
+                    out_dict['targets.joints_valid_r'] = targets['joints_valid_r']
+                    out_dict['targets.joints_valid_l'] = targets['joints_valid_l']
+                    out_dict['targets.mano.cam_t.r'] = targets['mano.cam_t.r']
+                    out_dict['targets.mano.cam_t.l'] = targets['mano.cam_t.l']
+                    out_dict['targets.object.cam_t'] = targets['object.cam_t']
+                    out_dict['targets.object.bbox3d.cam'] = targets['object.bbox3d.cam']
+                    
+                    out_dict['meta_info.imgname'] = meta_info['imgname']
+                    out_dict['meta_info.query_names'] = meta_info['query_names']
+                    out_dict['meta_info.window_size'] = meta_info['window_size']
+                    out_dict['meta_info.center'] = meta_info['center']
+                    out_dict['meta_info.is_flipped'] = meta_info['is_flipped']
+                    out_dict['meta_info.rot_angle'] = meta_info['rot_angle']
+                    out_dict['meta_info.diameter'] = meta_info['diameter']
+
                 out_dict = xdict(out_dict)
                 out_dict = out_dict.subset(KEYS)
                 out_list.append(out_dict)

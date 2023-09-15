@@ -1,9 +1,11 @@
+import os
+import time
+import json
 import torch
-import pickle
 import argparse
 import numpy as np
 import os.path as op
-from util.slconfig import DictAction
+from util.slconfig import DictAction, SLConfig
 
 
 # general arguments
@@ -429,12 +431,6 @@ def make_arctic_environments(args):
             f"DATASET_ROOT = '{env_dir}'"
         )
 
-
-import os
-import time
-import json
-from util.slconfig import SLConfig
-
 def set_dino_args(args):
     # load cfg file and update the args
     print("Loading config file from {}".format(args.config_file))
@@ -468,3 +464,19 @@ def set_dino_args(args):
         args.debug = False
 
     return args
+
+from arctic_tools.extract_predicts import main as submit_main
+from models import build_model
+
+def submit_result(args, cfg):
+    # build model
+    model, _ = build_model(args, cfg)
+    model.to(args.device)
+    model_without_ddp = model
+
+    # load ckpt
+    load_resume(args, model_without_ddp, args.resume)
+    model_without_ddp.eval()
+
+    # submit
+    submit_main(args, model_without_ddp, cfg)

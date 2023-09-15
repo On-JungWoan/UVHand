@@ -13,7 +13,8 @@ class TempoInferenceDatasetEval(TempoInferenceDataset):
         meta_list = []
         img_feats = []
         # load_rgb = not self.args.eval  # test.py do not load rgb
-        load_rgb = False
+        # load_rgb = False
+        load_rgb = True
         for imgname in imgnames:
             short_imgname = "/".join(imgname.split("/")[-4:])
             # always load rgb because in training, we need to visualize
