@@ -61,15 +61,15 @@ class DeformableTransformer(nn.Module):
                             )
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
 
-            # 기존 proposal이 root의 x,y를 예측하고,
-            # 나머지 20개의 keypoint에 대한 x,y는 학습 가능하도록 변경
-            if two_stage_learn_xy:
-                self.two_stage_learn_xy = nn.Embedding(1, 40)
-            else:
-                self.two_stage_learn_xy = None
-
         else:
             self.reference_points = nn.Linear(d_model, 2)
+
+        # 기존 proposal이 root의 x,y를 예측하고,
+        # 나머지 20개의 keypoint에 대한 x,y는 학습 가능하도록 변경
+        if two_stage_learn_xy:
+            self.two_stage_learn_xy = nn.Embedding(1, 40)
+        else:
+            self.two_stage_learn_xy = None            
 
         self._reset_parameters()
 
