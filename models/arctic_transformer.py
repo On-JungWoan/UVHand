@@ -25,7 +25,7 @@ class DeformableTransformer(nn.Module):
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.1,
                  activation="relu", return_intermediate_dec=False,
                  num_feature_levels=4, dec_n_points=4,  enc_n_points=4,
-                 two_stage=False, two_stage_num_proposals=300):
+                 two_stage=False, two_stage_num_proposals=300, two_stage_learn_xy=True):
         super().__init__()
 
         self.d_model = d_model
@@ -50,8 +50,24 @@ class DeformableTransformer(nn.Module):
         if two_stage:
             self.enc_output = nn.Linear(d_model, d_model)
             self.enc_output_norm = nn.LayerNorm(d_model)
-            self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
+            # self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
+            self.pos_trans = nn.Sequential(
+                                nn.Linear(5376, 1024),
+                                nn.ReLU(),
+                                nn.Linear(1024, 1024),
+                                nn.ReLU(),
+                                nn.Linear(1024, 512),
+                                nn.ReLU(),
+                            )
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
+
+            # 기존 proposal이 root의 x,y를 예측하고,
+            # 나머지 20개의 keypoint에 대한 x,y는 학습 가능하도록 변경
+            if two_stage_learn_xy:
+                self.two_stage_learn_xy = nn.Embedding(1, 40)
+            else:
+                self.two_stage_learn_xy = None
+
         else:
             self.reference_points = nn.Linear(d_model, 2)
 
@@ -69,6 +85,10 @@ class DeformableTransformer(nn.Module):
             constant_(self.reference_points.bias.data, 0.)
         normal_(self.level_embed)
 
+        # learn_wh init
+        if self.two_stage_learn_xy:
+            nn.init.constant_(self.two_stage_learn_xy.weight, math.log(0.05 / (1 - 0.05)))        
+
     def get_proposal_pos_embed(self, proposals):
         num_pos_feats = 128
         temperature = 10000
@@ -76,66 +96,49 @@ class DeformableTransformer(nn.Module):
 
         dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=proposals.device)
         dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
-        # N, L, 4
-        proposals = proposals.sigmoid() * scale
-        # N, L, 4, 128
+        # N, L, 42
+        proposals = proposals.sigmoid() * scale     # 이 부분에도 sigmoid * 2 - 1 해서 스케일 맞춰줘야 하는지?
+        # N, L, 42, 128
         pos = proposals[:, :, :, None] / dim_t
-        # N, L, 4, 64, 2
+        # N, L, 42, 64, 2
         pos = torch.stack((pos[:, :, :, 0::2].sin(), pos[:, :, :, 1::2].cos()), dim=4).flatten(2)
         return pos
 
     def gen_encoder_output_proposals(self, memory, memory_padding_mask,
-                                     spatial_shapes):
-        """Generate proposals from encoded memory.
-
-        Args:
-            memory (Tensor) : The output of encoder,
-                has shape (bs, num_key, embed_dim).  num_key is
-                equal the number of points on feature map from
-                all level.
-            memory_padding_mask (Tensor): Padding mask for memory.
-                has shape (bs, num_key).
-            spatial_shapes (Tensor): The shape of all feature maps.
-                has shape (num_level, 2).
-
-        Returns:
-            tuple: A tuple of feature map and bbox prediction.
-
-                - output_memory (Tensor): The input of decoder,  \
-                    has shape (bs, num_key, embed_dim).  num_key is \
-                    equal the number of points on feature map from \
-                    all levels.
-                - output_proposals (Tensor): The normalized proposal \
-                    after a inverse sigmoid, has shape \
-                    (bs, num_keys, 4).
-        """
-
-        N, S, C = memory.shape
+                                     spatial_shapes, learnedxy):
+        N_, S_, C_ = memory.shape
+        base_scale = 4.0
         proposals = []
         _cur = 0
-        for lvl, (H, W) in enumerate(spatial_shapes):
-            mask_flatten_ = memory_padding_mask[:, _cur:(_cur + H * W)].view(N, H, W, 1)
+        for lvl, (H_, W_) in enumerate(spatial_shapes):
+            mask_flatten_ = memory_padding_mask[:, _cur:(_cur + H_ * W_)].view(N_, H_, W_, 1)
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
 
-            grid_y, grid_x = torch.meshgrid(torch.linspace(0, H - 1, H, dtype=torch.float32, device=memory.device),
-                                            torch.linspace(0, W - 1, W, dtype=torch.float32, device=memory.device))
+            grid_y, grid_x = torch.meshgrid(torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
+                                            torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device))
             grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)
 
-            scale = torch.cat([valid_W.unsqueeze(-1),valid_H.unsqueeze(-1)], 1).view(N, 1, 1, 2)
-            grid = (grid.unsqueeze(0).expand(N, -1, -1, -1) + 0.5) / scale
-            proposal = grid.view(N, -1, 2).repeat(1,1,21)
+            scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
+            grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
+
+            if learnedxy is not None:
+                xy = torch.ones_like(grid).repeat(1,1,1,20) * learnedxy.sigmoid() * (2.0 ** lvl)
+            else:
+                xy = (torch.ones_like(grid) * 0.05 * (2.0 ** lvl)).repeat(1,1,1,20)
+            proposal = torch.cat((grid, xy), -1).view(N_, -1, 42)
+            # proposal = grid.view(N_, -1, 2).repeat(1,1,21)
             proposals.append(proposal)
-            _cur += (H * W)
+            _cur += (H_ * W_)
         output_proposals = torch.cat(proposals, 1)
-        output_proposals_valid = ((output_proposals > 0.01) &(output_proposals < 0.99)).all(-1, keepdim=True)
+        output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
         output_proposals = torch.log(output_proposals / (1 - output_proposals))
         output_proposals = output_proposals.masked_fill(memory_padding_mask.unsqueeze(-1), float('inf'))
         output_proposals = output_proposals.masked_fill(~output_proposals_valid, float('inf'))
 
         output_memory = memory
         output_memory = output_memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
-        output_memory = output_memory.masked_fill(~output_proposals_valid,float(0))
+        output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
         output_memory = self.enc_output_norm(self.enc_output(output_memory))
         return output_memory, output_proposals
 
@@ -180,8 +183,13 @@ class DeformableTransformer(nn.Module):
         # prepare input for decoder
         bs, _, c = memory.shape
         if self.two_stage:
+            if self.two_stage_learn_xy:
+                input_non_root_key_xy = self.two_stage_learn_xy.weight[0]
+            else:
+                input_non_root_key_xy = None
+
             # output_memory, output_proposals = self.gen_encoder_output_proposals(memory[:,level_start_index[-1]:], mask_flatten[:,level_start_index[-1]:], spatial_shapes[-1:])
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes, input_non_root_key_xy)
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.cls_embed[self.decoder.num_layers](output_memory)
@@ -212,17 +220,25 @@ class DeformableTransformer(nn.Module):
 
             # init box proposal
             refpoint_embed_undetach = torch.gather(output_proposals, 1, topk_proposals.unsqueeze(-1).repeat(1,1,42))
+
+            refpoint_embed_undetach = refpoint_embed_undetach.detach()
+            obj_kp = obj_kp.detach()
+            hand_kp = hand_kp.detach()
+
+            # proposal이 이미 더해져 있기 때문에 더하는 것이 아니라 치환
             refpoint_embed_undetach[obj_idx] = obj_kp[obj_idx]
             refpoint_embed_undetach[hand_idx] = hand_kp[hand_idx]
             reference_points = refpoint_embed_undetach.sigmoid() * 2 - 1
             init_reference_out = reference_points
 
-            # pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-            # query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
-            
-            query_embed, tgt = torch.split(query_embed, c, dim=1)
-            query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
-            tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
+            #     16, 300, 42*64*2
+            # ->  
+            pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(refpoint_embed_undetach)))
+            query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
+
+            # query_embed, tgt = torch.split(query_embed, c, dim=1)
+            # query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
+            # tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             
         else:
             query_embed, tgt = torch.split(query_embed, c, dim=1)
