@@ -79,7 +79,8 @@ def main(args):
     random.seed(seed)
 
     # test
-    if args.extraction_mode == 'submit_pose':
+    if args.extraction_mode != '':
+        sys.path.pop(sys.path.index('./arctic_tools'))
         sys.path = ["./origin_arctic"] + sys.path # Change to your own path.
         submit_result(args, cfg)
         sys.exit(0)
