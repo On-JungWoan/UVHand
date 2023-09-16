@@ -7,6 +7,9 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
+from arctic_tools.common.torch_utils import nanmean
+from arctic_tools.visualizer import visualize_arctic_result
+from arctic_tools.process import prepare_data, measure_error
 
 # LSTM models are trained using image features from single-frame models
 # this specify the single-frame model features that the LSTM model was trained on
@@ -30,7 +33,7 @@ def main(args=None, wrapper=None, cfg=None):
     from origin_arctic.common.xdict import xdict
     from origin_arctic.src.parsers.parser import construct_args
     import origin_arctic.common.camera as camera
-    from arctic_tools.process import get_arctic_item, arctic_pre_process
+    from arctic_tools.process import get_arctic_item, arctic_pre_process, make_output
     from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
     args.experiment = None
@@ -78,7 +81,7 @@ def main(args=None, wrapper=None, cfg=None):
         logger.info(f"Processing seq {seq} {seq_idx + 1}/{len(seqs)}")
         out_list = []
         val_loader = factory.fetch_dataloader(args, "val", seq)
-        # val_loader.dataset[0]
+        val_loader.dataset[0]
 
         with torch.no_grad():
             for idx, batch in tqdm(enumerate(val_loader), total=len(val_loader)):
@@ -92,6 +95,31 @@ def main(args=None, wrapper=None, cfg=None):
 
                 # extract outputs
                 outputs = wrapper(inputs['img'])
+
+
+                def test(target):
+                    pass
+
+                #
+                query_names = meta_info["query_names"]
+                K = meta_info["intrinsics"]
+                targets, meta_info = arctic_pre_process(args, targets, meta_info)
+
+                # select query
+                root, mano_pose, mano_shape, obj_angle = get_arctic_item(outputs, cfg, args.device)
+                root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
+                mano_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
+                mano_shape = [targets['mano.beta.l'], targets['mano.beta.r']]
+                obj_angle = [targets['object.rot'].view(-1, 3), targets['object.radian'].view(-1, 1)]
+                pred = make_output(args, root, mano_pose, mano_shape, obj_angle, query_names, K)
+
+                data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
+                stats = measure_error(data, args.eval_metrics)
+                visualize_arctic_result(args, data, 'pred')
+
+                print(nanmean(torch.tensor(stats['cdev/ho'])).item())
+                continue
+                
                 root, mano_pose, mano_shape, obj = get_arctic_item(outputs, cfg)
                 root_l, root_r, root_o = root
                 mano_pose_l, mano_pose_r = mano_pose
