@@ -192,7 +192,12 @@ class DeformableDETR(nn.Module):
             masks = []
             for l, feat in enumerate(features):
                 src, mask = feat.decompose() # Nested tensor -> return (tensor, mask)
-                srcs.append(self.input_proj[l](src))  # 모든 feature의 output dim -> hidden dim으로 projection
+
+                # encoder input의 30% masking
+                src_input = self.input_proj[l](src) # 모든 feature의 output dim -> hidden dim으로 projection
+                src_mask = torch.cuda.FloatTensor(src_input.shape).uniform_() > 0.3
+                srcs.append(src_input*src_mask)
+                
                 masks.append(mask)
                 assert mask is not None
             if self.num_feature_levels > len(srcs): # output last feature map 이후
@@ -205,7 +210,10 @@ class DeformableDETR(nn.Module):
                     m = samples.mask
                     mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
                     pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
-                    srcs.append(src) # B, C, (28 & 14 & 7 & 4)
+
+                    # encoder input의 30% masking
+                    src_mask = torch.cuda.FloatTensor(src.shape).uniform_() > 0.3
+                    srcs.append(src*src_mask) # B, C, (28 & 14 & 7 & 4)
                     masks.append(mask)
                     pos.append(pos_l)
 
@@ -503,7 +511,7 @@ class SetArcticCriterion(nn.Module):
             # losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
 
         pred = get_arctic_item(outputs, self.cfg, args.device)
-        losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res))
+        losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res, args.batch_size, args.window_size))
         # arctic_pred = data.search('pred.', replace_to='')
         # arctic_gt = data.search('targets.', replace_to='')
         # losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
@@ -528,7 +536,7 @@ class SetArcticCriterion(nn.Module):
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
                 # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
-                l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res)
+                l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res, args.batch_size, args.window_size)
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
@@ -648,8 +656,8 @@ def build(args, cfg):
         # # "loss/object/transl":10.0,
         # # "loss/penetr": 0.1,
         # "loss/penetr": 0.05,
-        # "loss/smooth/2d": 10.0,
-        # "loss/smooth/3d": 10.0,
+        "loss/smooth/2d": 10.0,
+        "loss/smooth/3d": 10.0,
     }
 
     if args.aux_loss:

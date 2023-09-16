@@ -37,6 +37,8 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
         'loss_ce' : ['loss_ce'],
         'loss_CDev' : ['loss/cd'],
         'loss_smooth' : ['loss/smooth/2d', 'loss/smooth/3d'],
+        'loss_smooth_2d' : ['loss/smooth/2d'],
+        'loss_smooth_3d' : ['loss/smooth/3d'],
         'loss_penetr' : ['loss/penetr'],
         'loss_mano' : ['loss/mano/pose/r', 'loss/mano/beta/r', 'loss/mano/pose/l', 'loss/mano/beta/l'],
         'loss_rot' : ['loss/object/radian', 'loss/object/rot'],
@@ -73,7 +75,8 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
         items = [
             'loss_ce', 'loss_CDev', 'loss_mano', 'loss_rot', 'loss_transl',
             # 'loss_cam', 'loss_3d_kp', 'loss_2d_kp'
-            'loss_cam', 'loss_3d_kp', 'loss_2d_kp', 'loss_hand_key', 'loss_obj_key'
+            'loss_cam', 'loss_3d_kp', 'loss_2d_kp', 'loss_hand_key', 'loss_obj_key',
+            'loss_smooth_2d', 'loss_smooth_3d'
         ]        
     elif mode == 'baseline':
         items = [

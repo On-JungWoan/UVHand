@@ -413,8 +413,11 @@ def load_resume(args, model, optimizer, lr_scheduler, resume):
             print(f'unexpected_keys : {key}')
     
     if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint:
+        checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
+        # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
+        
         optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        # lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
     
     return model, optimizer, lr_scheduler
 

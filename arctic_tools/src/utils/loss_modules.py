@@ -11,11 +11,11 @@ l1_loss = nn.L1Loss(reduction="none")
 mse_loss = nn.MSELoss(reduction="none")
 
 def compute_smooth_loss(
-        args, dim,
+        batch_size, window_size, dim,
         right_pred, right_gt, left_pred, left_gt, obj_pred, obj_gt,
         right_valid, left_valid, is_valid
     ):
-    B, N = args.batch_size, args.window_size
+    B, N = batch_size, window_size
 
     # right hand
     rs = compute_acc_vel_loss(
