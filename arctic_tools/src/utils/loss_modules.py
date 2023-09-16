@@ -18,20 +18,26 @@ def compute_smooth_loss(
     B, N = batch_size, window_size
 
     # right hand
-    rs = compute_acc_vel_loss(
-        right_pred.reshape(B, N, -1),
-        right_gt.reshape(B, N, -1),
-        criterion=mse_loss,
-        valid=right_valid.reshape(B, N, -1).repeat(1,1,dim),
-    )
+    if right_pred is not None:
+        rs = compute_acc_vel_loss(
+            right_pred.reshape(B, N, -1),
+            right_gt.reshape(B, N, -1),
+            criterion=mse_loss,
+            valid=right_valid.reshape(B, N, -1).repeat(1,1,dim),
+        )
+    else:
+        rs = torch.tensor(0).cuda()
 
     # left hand
-    ls = compute_acc_vel_loss(
-        left_pred.reshape(B, N, -1),
-        left_gt.reshape(B, N, -1),
-        criterion=mse_loss,
-        valid=left_valid.reshape(B, N, -1).repeat(1,1,dim),
-    )
+    if left_pred is not None:
+        ls = compute_acc_vel_loss(
+            left_pred.reshape(B, N, -1),
+            left_gt.reshape(B, N, -1),
+            criterion=mse_loss,
+            valid=left_valid.reshape(B, N, -1).repeat(1,1,dim),
+        )
+    else:
+        ls = torch.tensor(0).cuda()
 
     # object
     _, C, D = obj_pred.shape

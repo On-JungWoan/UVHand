@@ -200,6 +200,10 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, batch_s
     pred_rotmat_r = pred_rotmat_r.float()
     pred_rot = pred_rot.view(-1, 3).float()
     pred_radian = pred_radian.view(-1).float()
+    pred_projected_keypoints_2d_r=None
+    pred_projected_keypoints_2d_l=None
+    joints3d_cam_r=None
+    joints3d_cam_l=None    
 
     gt_pose_r = gt["mano.pose.r"].float()
     gt_betas_r = gt["mano.beta.r"].float()
