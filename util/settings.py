@@ -392,7 +392,7 @@ def set_training_scheduler(args, model, general_lr=None):
     return optimizer, lr_scheduler
 
 
-def load_resume(args, model, resume):
+def load_resume(args, model, optimizer, lr_scheduler, resume):
     checkpoint = torch.load(resume, map_location='cpu')
     ckpt = checkpoint['model'].copy()
     for key in ckpt.keys():
@@ -412,7 +412,11 @@ def load_resume(args, model, resume):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
-    return model
+    if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    
+    return model, optimizer, lr_scheduler
 
 
 def extract_epoch(file_path):
