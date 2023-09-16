@@ -24,12 +24,12 @@ model_dependencies = {
 
 
 def main(args=None, wrapper=None, cfg=None):
-    import common.thing as thing
-    import src.extraction.interface as interface
-    import src.factory as factory
-    from common.xdict import xdict
-    from src.parsers.parser import construct_args
-    import common.camera as camera
+    import origin_arctic.common.thing as thing
+    import origin_arctic.src.extraction.interface as interface
+    import origin_arctic.src.factory as factory
+    from origin_arctic.common.xdict import xdict
+    from origin_arctic.src.parsers.parser import construct_args
+    import origin_arctic.common.camera as camera
     from arctic_tools.process import get_arctic_item, arctic_pre_process
     from pytorch3d.transforms.rotation_conversions import axis_angle_to_matrix
 
@@ -56,21 +56,21 @@ def main(args=None, wrapper=None, cfg=None):
     logger.info(f"Seqs to process ({len(seqs)}): {seqs}")
 
     if args.extraction_mode in ["eval_pose"]:
-        from src.extraction.keys.eval_pose import KEYS
+        from origin_arctic.src.extraction.keys.eval_pose import KEYS
     elif args.extraction_mode in ["eval_field"]:
-        from src.extraction.keys.eval_field import KEYS
+        from origin_arctic.src.extraction.keys.eval_field import KEYS
     elif args.extraction_mode in ["submit_pose"]:
-        from src.extraction.keys.submit_pose import KEYS
+        from origin_arctic.src.extraction.keys.submit_pose import KEYS
     elif args.extraction_mode in ["submit_field"]:
-        from src.extraction.keys.submit_field import KEYS
+        from origin_arctic.src.extraction.keys.submit_field import KEYS
     elif args.extraction_mode in ["feat_pose"]:
-        from src.extraction.keys.feat_pose import KEYS
+        from origin_arctic.src.extraction.keys.feat_pose import KEYS
     elif args.extraction_mode in ["feat_field"]:
-        from src.extraction.keys.feat_field import KEYS
+        from origin_arctic.src.extraction.keys.feat_field import KEYS
     elif args.extraction_mode in ["vis_pose"]:
-        from src.extraction.keys.vis_pose import KEYS
+        from origin_arctic.src.extraction.keys.vis_pose import KEYS
     elif args.extraction_mode in ["vis_field"]:
-        from src.extraction.keys.vis_field import KEYS
+        from origin_arctic.src.extraction.keys.vis_field import KEYS
     else:
         assert False, f"Invalid extract ({args.extraction_mode})"
 

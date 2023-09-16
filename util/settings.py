@@ -465,7 +465,7 @@ def set_dino_args(args):
 
     return args
 
-from arctic_tools.extract_predicts import main as submit_main
+from extract_predicts import main as submit_main
 from models import build_model
 
 def submit_result(args, cfg):
