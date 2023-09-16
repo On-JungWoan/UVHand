@@ -87,9 +87,15 @@ def visualize_arctic_result(args, data, flag):
     root = op.join(args.coco_path, args.dataset_file)
     if args.method == 'arctic_sf':
         # imgnames = [op.join(root, data['meta_info.imgname'][0][2:])]
-        imgnames = [op.join(root, img[2:]) for img in data['meta_info.imgname']]
+        imgnames = [
+            op.join(root, img[2:]) if root not in img else img \
+            for img in data['meta_info.imgname']
+        ]
     else: #lstm
-        imgnames = [op.join(root, 'data/arctic_data/data/cropped_images', img) for img in data['meta_info.imgname']]
+        imgnames = [
+            op.join(root, 'data/arctic_data/data/cropped_images', img) if root not in img else img \
+            for img in data['meta_info.imgname']
+        ]
 
     num_frames = min(len(imgnames), data[f"{flag}.object.cam_t"].shape[0])
 
