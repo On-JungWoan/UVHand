@@ -167,7 +167,7 @@ def main(args):
 
     if args.resume:
         assert not args.resume_dir
-        load_resume(args, model_without_ddp, args.resume)
+        model_without_ddp, optimizer, lr_scheduler = load_resume(args, model_without_ddp, optimizer, lr_scheduler, args.resume)
 
     print("Start training")
     start_time = time.time()
@@ -195,7 +195,7 @@ def main(args):
 
             for resume in resume_list:
                 args.resume = resume
-                load_resume(args, model_without_ddp, resume)
+                model_without_ddp, optimizer, lr_scheduler = load_resume(args, model_without_ddp, optimizer, lr_scheduler, args.resume)
                 print(f"\n{'='*10} current epoch :{extract_epoch(args.resume)} {'='*10}")
                 if args.modelname == 'dino':
                     eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args)
