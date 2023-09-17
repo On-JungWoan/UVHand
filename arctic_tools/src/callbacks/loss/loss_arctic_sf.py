@@ -183,7 +183,7 @@ def compute_loss(pred, gt, meta_info, args, device='cuda'):
     return loss_dict
 
 
-def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, batch_size, window_size, device='cuda'):
+def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device='cuda'):
     # unpacking pred and gt
     root, mano_pose, mano_shape, obj_angle = pred
     root_l, root_r, root_o = root
