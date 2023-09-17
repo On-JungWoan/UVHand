@@ -34,6 +34,7 @@ class DeformableTransformer(nn.Module):
         self.two_stage_num_proposals = two_stage_num_proposals
         self.n_levels=num_feature_levels
         self.n_points=dec_n_points
+        self.two_stage_learn_xy = None
 
         encoder_layer = DeformableTransformerEncoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
@@ -66,10 +67,8 @@ class DeformableTransformer(nn.Module):
 
         # 기존 proposal이 root의 x,y를 예측하고,
         # 나머지 20개의 keypoint에 대한 x,y는 학습 가능하도록 변경
-        if two_stage_learn_xy:
+        if two_stage and two_stage_learn_xy:
             self.two_stage_learn_xy = nn.Embedding(1, 40)
-        else:
-            self.two_stage_learn_xy = None            
 
         self._reset_parameters()
 
@@ -86,7 +85,7 @@ class DeformableTransformer(nn.Module):
         normal_(self.level_embed)
 
         # learn_wh init
-        if self.two_stage_learn_xy:
+        if self.two_stage_learn_xy is not None:
             nn.init.constant_(self.two_stage_learn_xy.weight, math.log(0.05 / (1 - 0.05)))        
 
     def get_proposal_pos_embed(self, proposals):
