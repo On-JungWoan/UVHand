@@ -374,10 +374,19 @@ def set_training_scheduler(args, model, general_lr=None):
         general_lr = args.lr
 
     param_dicts = [
-        {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
-            "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
+            "params":
+                [p for n, p in model.named_parameters()
+                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": general_lr,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
             "lr": args.lr_backbone,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr * args.lr_linear_proj_mult,
         }
     ]
 
@@ -416,7 +425,12 @@ def load_resume(args, model, optimizer, lr_scheduler, resume):
         checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
         # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
         
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        except:
+            checkpoint['optimizer']['param_groups'] = optimizer.state_dict()['param_groups']
+            checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
+            optimizer.load_state_dict(checkpoint['optimizer'])
         # lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
     
     return model, optimizer, lr_scheduler
