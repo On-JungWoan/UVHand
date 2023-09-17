@@ -401,7 +401,7 @@ def set_training_scheduler(args, model, general_lr=None):
     return optimizer, lr_scheduler
 
 
-def load_resume(args, model, optimizer, lr_scheduler, resume):
+def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
     checkpoint = torch.load(resume, map_location='cpu')
     ckpt = checkpoint['model'].copy()
     for key in ckpt.keys():
@@ -421,7 +421,7 @@ def load_resume(args, model, optimizer, lr_scheduler, resume):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
-    if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint:
+    if optimizer is not None:
         checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
         # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
         
