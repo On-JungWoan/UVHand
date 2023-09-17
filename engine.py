@@ -707,7 +707,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
             f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
             for key, val in train_stat.items():
-                res = f'{key:35} : {round(val, 4)}\n'
+                res = f'{key:35} : {round(val, 8)}\n'
                 f.write(res)
                 print(res, end='')
             f.write('\n\n')            
