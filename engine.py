@@ -692,25 +692,25 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     if args.dataset_file == 'arctic':
         result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
 
-    
-    save_dir = os.path.join(f'{args.output_dir}/loss.txt')
-    epoch = extract_epoch(args.resume) if epoch is None else epoch
-    with open(save_dir, 'a') as f:
-        if args.test_viewpoint is not None:
-            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-        f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
-        for key, val in train_stat.items():
-            res = f'{key:35} : {round(val, 4)}\n'
-            f.write(res)
-            print(res, end='')
-        f.write('\n\n')
-
     # for wandb
     if args is not None and args.wandb:
         if args.distributed:
             if utils.get_local_rank() != 0:
                 return train_stat
+        
+        # save results
+        save_dir = os.path.join(f'{args.output_dir}/loss.txt')
+        epoch = extract_epoch(args.resume) if epoch is None else epoch
+        with open(save_dir, 'a') as f:
+            if args.test_viewpoint is not None:
+                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+            f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
+            for key, val in train_stat.items():
+                res = f'{key:35} : {round(val, 4)}\n'
+                f.write(res)
+                print(res, end='')
+            f.write('\n\n')            
         
         # check dataset
         if args.dataset_file == 'arctic':
