@@ -432,7 +432,7 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         print(lr_scheduler.state_dict())
         print('\n\n')
     else:
-        assert args.eval, 'You have to load state_dict of optimizer.'
+        assert args.eval or args.extraction_mode !='', 'You have to load state_dict of optimizer.'
     
     return model, optimizer, lr_scheduler
 

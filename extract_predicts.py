@@ -7,6 +7,7 @@ import torch
 from loguru import logger
 from tqdm import tqdm
 
+from util.tools import arctic_smoothing
 from arctic_tools.common.torch_utils import nanmean
 from arctic_tools.visualizer import visualize_arctic_result
 from arctic_tools.process import prepare_data, measure_error
@@ -96,31 +97,46 @@ def main(args=None, wrapper=None, cfg=None):
                 # extract outputs
                 outputs = wrapper(inputs['img'])
 
-
-                def test(target):
-                    pass
-
                 #
-                query_names = meta_info["query_names"]
-                K = meta_info["intrinsics"]
-                targets, meta_info = arctic_pre_process(args, targets, meta_info)
+                bs = args.test_batch_size
+                ws = args.window_size
+
+                # targets, meta_info = arctic_pre_process(args, targets, meta_info)
+                # origin_data = prepare_data(args, outputs, targets, meta_info, cfg)
+                # origin_stats = measure_error(origin_data, args.eval_metrics)
+                # print(nanmean(torch.tensor(origin_stats['cdev/ho'])).item())
 
                 # select query
-                root, mano_pose, mano_shape, obj_angle = get_arctic_item(outputs, cfg, args.device)
-                root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
-                mano_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
-                mano_shape = [targets['mano.beta.l'], targets['mano.beta.r']]
-                obj_angle = [targets['object.rot'].view(-1, 3), targets['object.radian'].view(-1, 1)]
-                pred = make_output(args, root, mano_pose, mano_shape, obj_angle, query_names, K)
+                root, mano_pose, mano_shape, obj = get_arctic_item(outputs, cfg, args.device)
 
-                data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
-                stats = measure_error(data, args.eval_metrics)
-                visualize_arctic_result(args, data, 'pred')
+                # root
+                if args.iter != 0:
+                    assert bs == 2
+                    root[0] = arctic_smoothing(root[0].view(2, -1, 3), args.iter)
+                    root[1] = arctic_smoothing(root[1].view(2, -1, 3), args.iter)
+                    root[2] = arctic_smoothing(root[2].view(2, -1, 3), args.iter)
+                    # mano
+                    mano_pose[0] = arctic_smoothing(mano_pose[0].view(2, -1, 48), args.iter)
+                    mano_pose[1] = arctic_smoothing(mano_pose[1].view(2, -1, 48), args.iter)
+                    mano_shape[0] = arctic_smoothing(mano_shape[0].view(2, -1, 10), args.iter)
+                    mano_shape[1] = arctic_smoothing(mano_shape[1].view(2, -1, 10), args.iter)
+                    # obj
+                    obj[0] = arctic_smoothing(obj[0].view(2, -1, 3), args.iter)
+                    obj[1] = arctic_smoothing(obj[1].view(2, -1, 1), args.iter)
 
-                print(nanmean(torch.tensor(stats['cdev/ho'])).item())
-                continue
+                # root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
+                # mano_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
+                # mano_shape = [targets['mano.beta.l'], targets['mano.beta.r']]
+                # obj_angle = [targets['object.rot'].view(-1, 3), targets['object.radian'].view(-1, 1)]
+                # pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
+
+                # data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
+                # stats = measure_error(data, args.eval_metrics)
+                # print(nanmean(torch.tensor(stats['cdev/ho'])).item())
+
+                # # visualize_arctic_result(args, data, 'pred')
+                # continue
                 
-                root, mano_pose, mano_shape, obj = get_arctic_item(outputs, cfg)
                 root_l, root_r, root_o = root
                 mano_pose_l, mano_pose_r = mano_pose
                 mano_shape_l, mano_shape_r = mano_shape
