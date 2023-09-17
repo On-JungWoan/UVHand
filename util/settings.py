@@ -419,12 +419,19 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         try:
             optimizer.load_state_dict(checkpoint['optimizer'])
         except:
-            print("\n\nNot using optimizer's ckpt!\n\n")
-            pass
-            # checkpoint['optimizer']['param_groups'] = optimizer.state_dict()['param_groups']
-            # checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
+            print("\n\nMissmatching of optimizer's ckpt!\n\n")
+            # for idx, items in enumerate(zip(optimizer.state_dict()['param_groups'], checkpoint['optimizer']['param_groups'])):
+            #     optim, check = items
+
+            #     unexpected_optim_params = list(set(optim['params']) - set(check['params']))
+            #     if len(unexpected_optim_params) > 0:
+            #         checkpoint['optimizer']['param_groups'][idx]['params'] += unexpected_optim_params
+                
+            #     unexpected_ckpt_params = list(set(check['params']) - set(optim['params']))
+            #     if len(unexpected_ckpt_params) > 0:
+            #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
             # optimizer.load_state_dict(checkpoint['optimizer'])
-        # lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
     
         print('\n\n')
         for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):

@@ -73,10 +73,17 @@ class HungarianMatcher(nn.Module):
         # out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
 
         # Also concat the target labels and boxes
-        # tgt_ids = torch.cat([v["labels"] for v in targets])
-        # tgt_bbox = torch.cat([v["boxes"] for v in targets])
-        tgt_ids = torch.tensor(sum(targets['labels'], [])).to(device)
-        tgt_key = torch.cat(targets['keypoints'], dim=0)
+        # tgt_ids = torch.tensor(sum(targets['labels'], [])).to(device)
+        # tgt_key = torch.cat(targets['keypoints'], dim=0)
+        
+        # validation info.
+        is_valid = targets['is_valid']
+
+        # check validation
+        tgt_ids = torch.tensor(
+            sum([t for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1], [])
+        ).to(device)
+        tgt_key = torch.cat([k for idx, k in enumerate(targets['keypoints']) if is_valid[idx] == 1], dim=0)        
 
         l_hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
         r_hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
@@ -116,7 +123,8 @@ class HungarianMatcher(nn.Module):
         C = C.view(bs, num_queries, -1).cpu()
 
         # sizes = [len(v["boxes"]) for v in targets]
-        sizes = [len(l) for l in targets['labels']]
+        # sizes = [len(l) for l in targets['labels']]
+        sizes = [len(t) for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1]
         
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]

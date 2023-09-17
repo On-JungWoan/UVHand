@@ -330,8 +330,8 @@ class DINO(nn.Module):
             layer_key_delta_unsig = key_embed(layer_hs)
             layer_obj_delta_unsig = obj_key_embed(layer_hs)
 
-            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()
-            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid()
+            layer_key_outputs_unsig = (layer_key_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid() * 2 - 1
+            layer_obj_outputs_unsig = (layer_obj_delta_unsig  + inverse_sigmoid(layer_ref_sig)).sigmoid() * 2 - 1
 
             outputs_hand_coord_list.append(layer_key_outputs_unsig)
             outputs_obj_coord_list.append(layer_obj_outputs_unsig)
@@ -385,7 +385,7 @@ class DINO(nn.Module):
                 for layer_id, (layer_box_embed, layer_class_embed, layer_hs_enc, layer_ref_enc) in enumerate(zip(self.enc_bbox_embed, self.enc_class_embed, hs_enc[:-1], ref_enc[:-1])):
                     layer_enc_delta_unsig = layer_box_embed(layer_hs_enc)
                     layer_enc_outputs_coord_unsig = layer_enc_delta_unsig + inverse_sigmoid(layer_ref_enc)
-                    layer_enc_outputs_coord = layer_enc_outputs_coord_unsig.sigmoid()
+                    layer_enc_outputs_coord = layer_enc_outputs_coord_unsig.sigmoid() * 2 - 1
 
                     layer_enc_outputs_class = layer_class_embed(layer_hs_enc)
                     enc_outputs_coord.append(layer_enc_outputs_coord)
@@ -458,8 +458,12 @@ class SetCriterion(nn.Module):
         src_logits = outputs['pred_logits']
 
         idx = self._get_src_permutation_idx(indices)
-        # target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
-        target_classes_o = torch.cat([torch.tensor(t).cuda()[J] for t, (_, J) in zip(targets['labels'], indices)])
+        
+        # target_classes_o = torch.cat([torch.tensor(t).cuda()[J] for t, (_, J) in zip(targets['labels'], indices)])
+
+        labels = [torch.tensor(t).cuda() for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
+        target_classes_o = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
+
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -501,8 +505,15 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         src_hand_key = outputs['pred_hand_key'][idx]
         src_obj_key = outputs['pred_obj_key'][idx]
-        target_keypoints = torch.cat([t[i] for t, (_, i) in zip(targets['keypoints'], indices)], dim=0)
-        target_labels = torch.cat([torch.tensor(t).cuda()[i] for t, (_, i) in zip(targets['labels'], indices)], dim=0)
+
+        labels = [torch.tensor(t).cuda() for i, t in enumerate(targets['labels']) if targets['is_valid'][i] == 1]
+        keypoints = [t for i, t in enumerate(targets['keypoints']) if targets['is_valid'][i] == 1]
+
+        target_keypoints = torch.cat([t[indices[i][1]] for i, t in enumerate(keypoints)]).to('cuda')
+        target_labels = torch.cat([torch.tensor(t)[indices[i][1]] for i, t in enumerate(labels)]).to('cuda')
+
+        # target_keypoints = torch.cat([t[i] for t, (_, i) in zip(targets['keypoints'], indices)], dim=0)
+        # target_labels = torch.cat([torch.tensor(t).cuda()[i] for t, (_, i) in zip(targets['labels'], indices)], dim=0)
 
         #
         hand_cal_idx = (target_labels == 12) + (target_labels == 13)
@@ -601,62 +612,65 @@ class SetCriterion(nn.Module):
         losses = {}
 
         # prepare for dn loss
-        # dn_meta = outputs['dn_meta']
+        dn_meta = outputs['dn_meta']
 
-        # if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
-        #     output_known_lbs_bboxes,single_pad, scalar = self.prep_for_dn(dn_meta)
+        if self.training and dn_meta and 'output_known_lbs_bboxes' in dn_meta:
+            output_known_lbs_bboxes,single_pad, scalar = self.prep_for_dn(dn_meta)
 
-        #     dn_pos_idx = []
-        #     dn_neg_idx = []
+            dn_pos_idx = []
+            dn_neg_idx = []
 
-        #     for i in range(len(targets['labels'])):
-        #         t = torch.range(0, len(targets['labels'][i]) - 1).long().cuda()
-        #         t = t.unsqueeze(0).repeat(scalar, 1)
-        #         tgt_idx = t.flatten()
-        #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
-        #         output_idx = output_idx.flatten()
+            for i in range(len(targets['labels'])):
+                if targets['is_valid'][i] != 1:
+                    continue
 
-        #         dn_pos_idx.append((output_idx, tgt_idx))
-        #         dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
-        #     # for i in range(len(targets)):
-        #     #     if len(targets[i]['labels']) > 0:
-        #     #         t = torch.range(0, len(targets[i]['labels']) - 1).long().cuda()
-        #     #         t = t.unsqueeze(0).repeat(scalar, 1)
-        #     #         tgt_idx = t.flatten()
-        #     #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
-        #     #         output_idx = output_idx.flatten()
-        #     #     else:
-        #     #         output_idx = tgt_idx = torch.tensor([]).long().cuda()
+                t = torch.range(0, len(targets['labels'][i]) - 1).long().cuda()
+                t = t.unsqueeze(0).repeat(scalar, 1)
+                tgt_idx = t.flatten()
+                output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
+                output_idx = output_idx.flatten()
 
-        #     #     dn_pos_idx.append((output_idx, tgt_idx))
-        #     #     dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
+                dn_pos_idx.append((output_idx, tgt_idx))
+                dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
+            # for i in range(len(targets)):
+            #     if len(targets[i]['labels']) > 0:
+            #         t = torch.range(0, len(targets[i]['labels']) - 1).long().cuda()
+            #         t = t.unsqueeze(0).repeat(scalar, 1)
+            #         tgt_idx = t.flatten()
+            #         output_idx = (torch.tensor(range(scalar)) * single_pad).long().cuda().unsqueeze(1) + t
+            #         output_idx = output_idx.flatten()
+            #     else:
+            #         output_idx = tgt_idx = torch.tensor([]).long().cuda()
 
-        #     # output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
-        #     # dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
-        #     # dn_arctic_pred = dn_data.search('pred.', replace_to='')
-        #     # dn_arctic_gt = dn_data.search('targets.', replace_to='')
+            #     dn_pos_idx.append((output_idx, tgt_idx))
+            #     dn_neg_idx.append((output_idx + single_pad // 2, tgt_idx))
 
-        #     dn_pred = get_arctic_item(output_known_lbs_bboxes, self.cfg, args.device)
+            # output_known_lbs_bboxes=dn_meta['output_known_lbs_bboxes']
+            # dn_data = prepare_data(args, output_known_lbs_bboxes, targets, meta_info, self.cfg)
+            # dn_arctic_pred = dn_data.search('pred.', replace_to='')
+            # dn_arctic_gt = dn_data.search('targets.', replace_to='')
 
-        #     l_dict = {}
-        #     for loss in self.losses:
-        #         kwargs = {}
-        #         if 'labels' in loss:
-        #             kwargs = {'log': False}
-        #         l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
-        #     l_dict.update(compute_small_loss(dn_pred, targets, meta_info, self.pre_process_models, args.img_res))
-        #     # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
-        #     l_dict = {k + f'_dn': v for k, v in l_dict.items()}
-        #     losses.update(l_dict)
-        # else:
-        #     l_dict = dict()
-        #     l_dict['loss_bbox_dn'] = torch.as_tensor(0.).to('cuda')
-        #     l_dict['loss_giou_dn'] = torch.as_tensor(0.).to('cuda')
-        #     l_dict['loss_ce_dn'] = torch.as_tensor(0.).to('cuda')
-        #     l_dict['loss_xy_dn'] = torch.as_tensor(0.).to('cuda')
-        #     l_dict['loss_hw_dn'] = torch.as_tensor(0.).to('cuda')
-        #     l_dict['cardinality_error_dn'] = torch.as_tensor(0.).to('cuda')
-        #     losses.update(l_dict)
+            # dn_pred = get_arctic_item(output_known_lbs_bboxes, self.cfg, args.device)
+
+            l_dict = {}
+            for loss in self.losses:
+                kwargs = {}
+                if 'labels' in loss:
+                    kwargs = {'log': False}
+                l_dict.update(self.get_loss(loss, output_known_lbs_bboxes, targets, dn_pos_idx, num_boxes*scalar,**kwargs))
+            # l_dict.update(compute_small_loss(dn_pred, targets, meta_info, self.pre_process_models, args.img_res))
+            # l_dict.update(compute_loss(dn_arctic_pred, dn_arctic_gt, meta_info, args))
+            l_dict = {k + f'_dn': v for k, v in l_dict.items()}
+            losses.update(l_dict)
+        else:
+            l_dict = dict()
+            l_dict['loss_bbox_dn'] = torch.as_tensor(0.).to('cuda')
+            l_dict['loss_giou_dn'] = torch.as_tensor(0.).to('cuda')
+            l_dict['loss_ce_dn'] = torch.as_tensor(0.).to('cuda')
+            l_dict['loss_xy_dn'] = torch.as_tensor(0.).to('cuda')
+            l_dict['loss_hw_dn'] = torch.as_tensor(0.).to('cuda')
+            l_dict['cardinality_error_dn'] = torch.as_tensor(0.).to('cuda')
+            losses.update(l_dict)
 
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
@@ -897,10 +911,8 @@ def build_dino(args, cfg):
     weight_dict = {
         'loss_ce': args.cls_loss_coef,
         'loss_hand_keypoint': args.bbox_loss_coef,
-        'loss_obj_keypoint': args.bbox_loss_coef,
-        # 'loss_ce': 1,
-        # 'class_error':1,
-        # 'cardinality_error':1,
+        'loss_obj_keypoint': args.bbox_loss_coef,        
+        # # 'loss_ce': 1,
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,
         "loss/object/cam_t":1.0,
@@ -911,23 +923,55 @@ def build_dino(args, cfg):
         "loss/mano/kp2d/l":5.0,
         "loss/mano/kp3d/l":5.0,
         "loss/mano/pose/l":10.0,
-        "loss/cd":1.0,
-        # "loss/cd":10.0,
-        "loss/mano/transl/l":1.0,
-        # "loss/mano/transl/l":10.0,
+        # # "loss/cd":1.0,
+        "loss/cd":10.0,
+        "loss/mano/transl/l":10.0,
         "loss/mano/beta/l":0.001,
         "loss/object/kp2d":1.0,
         "loss/object/kp3d":5.0,
         "loss/object/radian":1.0,
-        "loss/object/rot":1.0,
-        # "loss/object/rot":10.0,
+        "loss/object/rot":10.0,
         "loss/object/transl":1.0,
-        # "loss/object/transl":10.0,
-        # "loss/penetr": 0.1,
-        "loss/penetr": 0.005,
-        # "loss/smooth/2d": 10.0,
-        # "loss/smooth/3d": 10.0,
-    }    
+        # # "loss/object/transl":10.0,
+        # # "loss/penetr": 0.1,
+        # "loss/penetr": 0.05,
+        # "loss/smooth/2d": 1.0,
+        # "loss/smooth/3d": 1.0,
+    }
+    # {
+    #     'loss_ce': args.cls_loss_coef,
+    #     'loss_hand_keypoint': args.bbox_loss_coef,
+    #     'loss_obj_keypoint': args.bbox_loss_coef,
+    #     # 'loss_ce': 1,
+    #     # 'class_error':1,
+    #     # 'cardinality_error':1,
+    #     "loss/mano/cam_t/r":1.0,
+    #     "loss/mano/cam_t/l":1.0,
+    #     "loss/object/cam_t":1.0,
+    #     "loss/mano/kp2d/r":5.0,
+    #     "loss/mano/kp3d/r":5.0,
+    #     "loss/mano/pose/r":10.0,
+    #     "loss/mano/beta/r":0.001,
+    #     "loss/mano/kp2d/l":5.0,
+    #     "loss/mano/kp3d/l":5.0,
+    #     "loss/mano/pose/l":10.0,
+    #     "loss/cd":1.0,
+    #     # "loss/cd":10.0,
+    #     "loss/mano/transl/l":1.0,
+    #     # "loss/mano/transl/l":10.0,
+    #     "loss/mano/beta/l":0.001,
+    #     "loss/object/kp2d":1.0,
+    #     "loss/object/kp3d":5.0,
+    #     "loss/object/radian":1.0,
+    #     "loss/object/rot":1.0,
+    #     # "loss/object/rot":10.0,
+    #     "loss/object/transl":1.0,
+    #     # "loss/object/transl":10.0,
+    #     # "loss/penetr": 0.1,
+    #     "loss/penetr": 0.005,
+    #     # "loss/smooth/2d": 10.0,
+    #     # "loss/smooth/3d": 10.0,
+    # }    
     clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     

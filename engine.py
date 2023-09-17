@@ -52,7 +52,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0, 
                     wo_class_error=False, lr_scheduler=None, args=None, logger=None, ema_m=None):
-    scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
+    # scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
 
     try:
         need_tgt_for_training = args.use_dn
@@ -79,21 +79,21 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
         # samples, targets, meta_info = prefetcher.next()
         # continue
 
-        with torch.cuda.amp.autocast(enabled=args.amp):
-            if need_tgt_for_training:
-                outputs = model(samples, targets=targets) 
+        # with torch.cuda.amp.autocast(enabled=args.amp):
+        if need_tgt_for_training:
+            outputs = model(samples, targets=targets) 
 
-                # if outputs['dn_meta']['output_known_lbs_bboxes']['pred_logits'].isnan().sum() != 0:
-                #     outputs = model(samples, targets=targets) 
+            # if outputs['dn_meta']['output_known_lbs_bboxes']['pred_logits'].isnan().sum() != 0:
+            #     outputs = model(samples, targets=targets) 
 
-                loss_dict = criterion(outputs, targets, args, meta_info)
-            else:
-                raise Exception('Not implemented!')
-                outputs = model(samples)
-                data = prepare_data(args, outputs, targets, meta_info, cfg)
-                loss_dict = criterion(outputs, targets)
-            weight_dict = criterion.weight_dict
-            losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+            loss_dict = criterion(outputs, targets, args, meta_info)
+        else:
+            raise Exception('Not implemented!')
+            outputs = model(samples)
+            data = prepare_data(args, outputs, targets, meta_info, cfg)
+            loss_dict = criterion(outputs, targets)
+        weight_dict = criterion.weight_dict
+        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         # for arctic
         for k, v in loss_dict.items():
@@ -119,13 +119,14 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # amp backward function
         if args.amp:
-            optimizer.zero_grad()
-            scaler.scale(losses).backward()
-            if max_norm > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-            scaler.step(optimizer)
-            scaler.update()
+            raise Exception('Not implemeted!')
+            # optimizer.zero_grad()
+            # scaler.scale(losses).backward()
+            # if max_norm > 0:
+            #     scaler.unscale_(optimizer)
+            #     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            # scaler.step(optimizer)
+            # scaler.update()
         else:
             # original backward function
             optimizer.zero_grad()
@@ -157,7 +158,6 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
-    print(result)
 
     # for wandb
     if args is not None and args.wandb:
@@ -165,6 +165,20 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
             if utils.get_local_rank() != 0:
                 return train_stat
         
+        # save results
+        save_dir = os.path.join(f'{args.output_dir}/loss.txt')
+        epoch = extract_epoch(args.resume) if epoch is None else epoch
+        with open(save_dir, 'a') as f:
+            if args.test_viewpoint is not None:
+                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+            f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
+            for key, val in train_stat.items():
+                res = f'{key:35} : {round(val, 8)}\n'
+                f.write(res)
+                print(res, end='')
+            f.write('\n\n')  
+
         # check dataset
         if args.dataset_file == 'arctic':
             wandb.log(result, step=epoch)
@@ -205,11 +219,11 @@ def eval_dn(model, cfg, data_loader, device, wo_class_error=False, args=None, vi
         targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         # implement & calc loss
-        with torch.cuda.amp.autocast(enabled=args.amp):
-            if need_tgt_for_training:
-                outputs = model(samples, targets=targets)
-            else:
-                outputs = model(samples)
+        # with torch.cuda.amp.autocast(enabled=args.amp):
+        if need_tgt_for_training:
+            outputs = model(samples, targets=targets)
+        else:
+            outputs = model(samples)
 
         # vis or measure error
         data = prepare_data(args, outputs, targets, meta_info, cfg)

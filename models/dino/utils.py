@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch import nn
 
 
-def gen_encoder_output_proposals(memory:Tensor, memory_padding_mask:Tensor, spatial_shapes:Tensor, learnedwh=None):
+def gen_encoder_output_proposals(memory:Tensor, memory_padding_mask:Tensor, spatial_shapes:Tensor, learnedxy=None):
     """
     Input:
         - memory: bs, \sum{hw}, d_model
@@ -39,12 +39,12 @@ def gen_encoder_output_proposals(memory:Tensor, memory_padding_mask:Tensor, spat
         scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
         grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
 
-        # if learnedwh is not None:
-        #     wh = torch.ones_like(grid) * learnedwh.sigmoid() * (2.0 ** lvl)
-        # else:
-        #     wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)
-        # proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
-        proposal = grid.view(N_, -1, 2).repeat(1,1,21)
+        if learnedxy is not None:
+            xy = torch.ones_like(grid).repeat(1,1,1,20) * learnedxy.sigmoid() * (2.0 ** lvl)
+        else:
+            xy = (torch.ones_like(grid) * 0.05 * (2.0 ** lvl)).repeat(1,1,1,20)
+        proposal = torch.cat((grid, xy), -1).view(N_, -1, 42)
+        # proposal = grid.view(N_, -1, 2).repeat(1,1,21)
         proposals.append(proposal)
         _cur += (H_ * W_)
 

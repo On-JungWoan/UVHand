@@ -518,7 +518,7 @@ class SetArcticCriterion(nn.Module):
             # losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
 
         pred = get_arctic_item(outputs, self.cfg, args.device)
-        losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res, args.batch_size, args.window_size))
+        losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res))
         # arctic_pred = data.search('pred.', replace_to='')
         # arctic_gt = data.search('targets.', replace_to='')
         # losses.update(compute_loss(arctic_pred, arctic_gt, meta_info, args))
@@ -543,7 +543,7 @@ class SetArcticCriterion(nn.Module):
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
                 # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
-                l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res, args.batch_size, args.window_size)
+                l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res)
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
