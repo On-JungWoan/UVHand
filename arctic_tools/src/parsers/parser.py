@@ -25,7 +25,8 @@ def construct_args(parser):
     if args.eval:
         # extraction
         args.run_on = 'val'
-        args.extraction_mode = 'eval_pose'
+        # args.extraction_mode = 'eval_pose'
+        args.extraction_mode = ''
         # eval
         args.split = 'val'
         args.task = 'pose'
