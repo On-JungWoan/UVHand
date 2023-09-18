@@ -20,7 +20,7 @@ def get_general_args_parser():
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visualization', default=False, action='store_true')
     parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--resume_dir', default='', help='resume dir from checkpoint')
+    parser.add_argument('--smoother_resume', default='', help='resume from checkpoint')
     parser.add_argument('--val_batch_size', default=4, type=int)
     parser.add_argument('--eval_metrics', default=["aae","mpjpe.ra","mrrpe","success_rate","cdev","mdev","acc_err_pose"], nargs='+', \
                         help='Choose evaluation metrics.')
@@ -37,6 +37,11 @@ def get_general_args_parser():
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
     parser.add_argument('--dist_backend', default=None, help='Choose backend of distribtion mode.')
     parser.add_argument('--sgd', action='store_true')
+    parser.add_argument('--not_use_optim_ckpt', default=False, action='store_true')
+    parser.add_argument('--not_use_lr_scheduler_ckpt', default=False, action='store_true')
+    parser.add_argument('--onecyclelr', default=False, action='store_true')
+    parser.add_argument('--resume_dir', default='', help='resume dir from checkpoint')
+    parser.add_argument('--smooth_resume', default='', help='resume dir from checkpoint of smoothnet')
 
     # for debug
     parser.add_argument('--debug', default=False, action='store_true')
@@ -360,19 +365,13 @@ def get_dn_detr_args_parser(parser):
     return parser
 
 
-def match_name_keywords(n, name_keywords):
-    out = False
-    for b in name_keywords:
-        if b in n:
-            out = True
-            break
-    return out
-
-
 def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=None):
     if general_lr is None:
         general_lr = args.lr
 
+    # TODO
+    # 1. input proj 고려
+    # 2. model에 따른 param dict 고려
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
@@ -417,9 +416,7 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
-    if optimizer is not None:
-        # checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
-        # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
+    if not args.not_use_optim_ckpt:
         try:
             optimizer.load_state_dict(checkpoint['optimizer'])
         except:
@@ -435,7 +432,7 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
             #     if len(unexpected_ckpt_params) > 0:
             #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
             # optimizer.load_state_dict(checkpoint['optimizer'])
-    if lr_scheduler is not None:
+    if not args.not_use_lr_scheduler_ckpt:
         try:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         except:
@@ -450,14 +447,7 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
     return model, optimizer, lr_scheduler
 
 
-def extract_epoch(file_path):
-    file_name = file_path.split('/')[-1]
-    epoch = op.splitext(file_name)[0]
-
-    return int(epoch)
-
-
-def make_arctic_environments(args):
+def set_arctic_environments(args):
     check_dir = 'datasets/arctic/common/environments.py'
     env_dir = op.join(args.coco_path, args.dataset_file)
 
@@ -465,6 +455,7 @@ def make_arctic_environments(args):
         f.write(
             f"DATASET_ROOT = '{env_dir}'"
         )
+
 
 def set_dino_args(args):
     # load cfg file and update the args
@@ -499,19 +490,3 @@ def set_dino_args(args):
         args.debug = False
 
     return args
-
-from extract_predicts import main as submit_main
-from models import build_model
-
-def submit_result(args, cfg):
-    # build model
-    model, _ = build_model(args, cfg)
-    model.to(args.device)
-    model_without_ddp = model
-
-    # load ckpt
-    load_resume(args, model_without_ddp, args.resume)
-    model_without_ddp.eval()
-
-    # submit
-    submit_main(args, model_without_ddp, cfg)

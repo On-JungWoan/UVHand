@@ -1,9 +1,12 @@
+import os
 import cv2
+import wandb
 import torch
 import pickle
 import numpy as np
 import os.path as op
 from PIL import Image
+import util.misc as utils
 import matplotlib.pyplot as plt
 from pytorch3d.ops.knn import knn_points
 
@@ -79,7 +82,8 @@ def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='bas
         ]
     elif mode == 'smoothnet':
         items = [
-            'loss_left', 'loss_right', 'loss_obj'
+            # 'loss_left', 'loss_right', 'loss_obj'
+            'loss_CDev', 'loss_mano', 'loss_rot', 'loss_cam',
         ]
     elif mode == 'all':
         return dict((f'{flag}_{k}', float(v)) for k,v in loss_out.items())
@@ -579,6 +583,61 @@ def extract_feature(
             key = key.replace('.jpg', '')
             with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
                 pickle.dump(res, f)
+
+
+def save_results(args, epoch, result, stats, flag):
+    # for wandb
+    if args is not None:
+        if args.distributed:
+            if utils.get_local_rank() != 0:
+                return stats
+        
+        # save results
+        epoch = extract_epoch(args.resume) if epoch is None else epoch
+
+        if flag == 'train':
+            save_dir = os.path.join(f'{args.output_dir}/loss.txt')
+            with open(save_dir, 'a') as f:
+                if args.test_viewpoint is not None:
+                    f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+                f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+                f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
+                for key, val in stats.items():
+                    res = f'{key:35} : {round(val, 8)}\n'
+                    f.write(res)
+                    print(res, end='')
+                f.write('\n\n')
+        elif flag == 'eval':
+            save_dir = os.path.join(f'{args.output_dir}/results.txt')
+            with open(save_dir, 'a') as f:
+                if args.test_viewpoint is not None:
+                    f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
+
+                f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
+                f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
+
+                for key, val in stats.items():
+                    f.write(f'{key:30} : {val}\n')
+                f.write('\n\n')
+
+        if args.wandb:
+            wandb.log(result, step=epoch)    
+
+
+def match_name_keywords(n, name_keywords):
+    out = False
+    for b in name_keywords:
+        if b in n:
+            out = True
+            break
+    return out
+
+
+def extract_epoch(file_path):
+    file_name = file_path.split('/')[-1]
+    epoch = op.splitext(file_name)[0]
+
+    return int(epoch)
 
 
 # def old_test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False):

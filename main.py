@@ -30,16 +30,18 @@ import util.misc as utils
 import datasets.samplers as samplers
 from torch.utils.data import DataLoader
 from util.slconfig import SLConfig
-from models.smoothnet import ArcticSmoother, SmoothCriterion
 
 from models import build_model
 from datasets import build_dataset
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from engine import train_pose, test_pose, train_smoothnet, test_smoothnet, train_dn, eval_dn, eval_coco
+from engine import train_pose, test_pose, train_dn, eval_dn, eval_coco
+
+from util.tools import extract_epoch
+from util.scripts import smoothnet_main, submit_result
 from util.settings import (
     get_general_args_parser, get_deformable_detr_args_parser, get_dino_arg_parser,
-    load_resume, extract_epoch, set_training_scheduler, make_arctic_environments,
-    set_dino_args, submit_result
+    load_resume, set_training_scheduler, set_arctic_environments,
+    set_dino_args
 )
 
 
@@ -168,25 +170,25 @@ def main(args):
     if args.resume:
         assert not args.resume_dir
         model_without_ddp, optimizer, lr_scheduler = load_resume(args, model_without_ddp, args.resume, optimizer, lr_scheduler)
+    else:
+        print('\n\n')
+        for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
+            print(f"lr of {idx} optimizer : {opt_p['lr']}")
+        print(lr_scheduler.state_dict())
+        print('\n\n')
 
     print("Start training")
     start_time = time.time()
 
+
+    if args.train_smoothnet:
+        assert utils.get_local_size() == 1, 'Not implemented yet!'
+        smoothnet_main(model_without_ddp, data_loader_train, data_loader_val, args, cfg)
+        sys.exit(0)
+
+
     # for evaluation
     if args.eval:
-        # train smooth net
-        if args.train_smoothnet:
-            smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
-            WEIGHT_DICT = {
-                "loss_left": 1000.0,
-                "loss_right": 1000.0,
-                "loss_obj": 1000.0,
-            }
-            smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
-            optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)            
-            test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
-            sys.exit(0)
-
         # multiple evaluation
         if args.resume_dir:
             assert not args.resume
@@ -217,80 +219,53 @@ def main(args):
                 test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization)
         sys.exit(0)
 
+
     # for training
     else:
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 sampler_train.set_epoch(epoch)
 
-            # train smoothnet
-            if args.train_smoothnet:
-                smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
-                WEIGHT_DICT = {
-                    "loss_left": 1000.0,
-                    "loss_right": 1000.0,
-                    "loss_obj": 1000.0,
-                }
-                smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
-                optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)
-
-                train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
+            # origin training
+            # for dino
+            if args.modelname == 'dino':
+                train_dn(
+                    model, criterion, data_loader_train, optimizer, device, epoch,
+                    args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
+                )
                 if not args.onecyclelr:
                     lr_scheduler.step()
-                else:
-                    raise Exception('Not implemented yet!')
 
                 utils.save_on_master({
-                    'model': smoother.state_dict(),
+                    'model': model_without_ddp.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'lr_scheduler': lr_scheduler.state_dict(),
                     'epoch': epoch,
                     'args': args,
                 }, f'{args.output_dir}/{epoch}.pth')
 
-                test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args, vis=args.visualization, epoch=epoch)
 
-            # origin training
+            # for deformable detr
             else:
-                # for dino
-                if args.modelname == 'dino':
-                    train_dn(
-                        model, criterion, data_loader_train, optimizer, device, epoch,
-                        args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
-                    )
-                    if not args.onecyclelr:
-                        lr_scheduler.step()
-
-                    utils.save_on_master({
-                        'model': model_without_ddp.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': lr_scheduler.state_dict(),
-                        'epoch': epoch,
-                        'args': args,
-                    }, f'{args.output_dir}/{epoch}.pth')
-
-                    eval_dn(model, cfg, data_loader_val, device, wo_class_error=False, args=args, vis=args.visualization, epoch=epoch)
-
-                # for deformable detr
+                train_pose(
+                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
+                )
+                if not args.onecyclelr:
+                    lr_scheduler.step()
                 else:
-                    train_pose(
-                        model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
-                    )
-                    if not args.onecyclelr:
-                        lr_scheduler.step()
-                    else:
-                        raise Exception('Not implemented yet!')                        
+                    raise Exception('Not implemented yet!')                        
 
-                    utils.save_on_master({
-                        'model': model_without_ddp.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': lr_scheduler.state_dict(),
-                        'epoch': epoch,
-                        'args': args,
-                    }, f'{args.output_dir}/{epoch}.pth')
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                }, f'{args.output_dir}/{epoch}.pth')
 
-                    # evaluate
-                    test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
+                # evaluate
+                test_pose(model, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
             
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -322,7 +297,7 @@ if __name__ == '__main__':
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     # check arctic env
-    make_arctic_environments(args)
+    set_arctic_environments(args)
     from datasets import build_dataset
     import datasets.samplers as samplers
     from engine import train_pose, test_pose
