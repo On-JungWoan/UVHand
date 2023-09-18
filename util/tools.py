@@ -1,9 +1,12 @@
+import os
 import cv2
+import wandb
 import torch
 import pickle
 import numpy as np
 import os.path as op
 from PIL import Image
+import util.misc as utils
 import matplotlib.pyplot as plt
 from pytorch3d.ops.knn import knn_points
 
@@ -581,10 +584,6 @@ def extract_feature(
             with open(f'results/Assemblyhands/train/{key}.pkl', 'wb') as f:
                 pickle.dump(res, f)
 
-import os
-import util.misc as utils
-from util.settings import extract_epoch
-import wandb
 
 def save_results(args, epoch, result, stats, flag):
     # for wandb
@@ -624,6 +623,21 @@ def save_results(args, epoch, result, stats, flag):
         if args.wandb:
             wandb.log(result, step=epoch)    
 
+
+def match_name_keywords(n, name_keywords):
+    out = False
+    for b in name_keywords:
+        if b in n:
+            out = True
+            break
+    return out
+
+
+def extract_epoch(file_path):
+    file_name = file_path.split('/')[-1]
+    epoch = op.splitext(file_name)[0]
+
+    return int(epoch)
 
 
 # def old_test_pose(model, criterion, data_loader, device, cfg, args=None, vis=False, save_pickle=False):

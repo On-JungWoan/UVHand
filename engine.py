@@ -22,7 +22,6 @@ from typing import Iterable
 import matplotlib.pyplot as plt
 
 import util.misc as utils
-from util.settings import extract_epoch
 from datasets.data_prefetcher import data_prefetcher
 from datasets.arctic_prefetcher import data_prefetcher as arctic_prefetcher
 
@@ -390,11 +389,10 @@ def train_smoothnet(
     return train_stat
 
 
-def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, args=None, vis=False, epoch=None):
+def test_smoothnet(base_model, smoothnet, data_loader, device, cfg, args=None, vis=False, epoch=None):
     # set model and criterion
     base_model.eval()
     smoothnet.eval()
-    criterion.eval()
 
     # prefetcher settings
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
