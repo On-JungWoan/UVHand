@@ -135,6 +135,9 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             optimizer.step()
 
+        if args.onecyclelr:
+            lr_scheduler.step()
+
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         if 'class_error' in loss_dict_reduced:
             metric_logger.update(class_error=loss_dict_reduced['class_error'])
