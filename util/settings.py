@@ -20,6 +20,7 @@ def get_general_args_parser():
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visualization', default=False, action='store_true')
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--smoother_resume', default='', help='resume from checkpoint')
     parser.add_argument('--resume_dir', default='', help='resume dir from checkpoint')
     parser.add_argument('--val_batch_size', default=4, type=int)
     parser.add_argument('--eval_metrics', default=["aae","mpjpe.ra","mrrpe","success_rate","cdev","mdev","acc_err_pose"], nargs='+', \
@@ -37,6 +38,8 @@ def get_general_args_parser():
     parser.add_argument('--wandb', default=False, action='store_true', help='Use wandb')
     parser.add_argument('--dist_backend', default=None, help='Choose backend of distribtion mode.')
     parser.add_argument('--sgd', action='store_true')
+    parser.add_argument('--not_use_optim_ckpt', default=False, action='store_true')
+    parser.add_argument('--onecyclelr', default=False, action='store_true')
 
     # for debug
     parser.add_argument('--debug', default=False, action='store_true')
@@ -417,29 +420,30 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
-    if optimizer is not None:
-        # checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
-        # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
-        try:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-        except:
-            print("\n\nMissmatching of optimizer's ckpt!\n\n")
-            # for idx, items in enumerate(zip(optimizer.state_dict()['param_groups'], checkpoint['optimizer']['param_groups'])):
-            #     optim, check = items
+    if not args.not_use_optim_ckpt:
+        if optimizer is not None:
+            # checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
+            # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
+            try:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+            except:
+                print("\n\nMissmatching of optimizer's ckpt!\n\n")
+                # for idx, items in enumerate(zip(optimizer.state_dict()['param_groups'], checkpoint['optimizer']['param_groups'])):
+                #     optim, check = items
 
-            #     unexpected_optim_params = list(set(optim['params']) - set(check['params']))
-            #     if len(unexpected_optim_params) > 0:
-            #         checkpoint['optimizer']['param_groups'][idx]['params'] += unexpected_optim_params
-                
-            #     unexpected_ckpt_params = list(set(check['params']) - set(optim['params']))
-            #     if len(unexpected_ckpt_params) > 0:
-            #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
-            # optimizer.load_state_dict(checkpoint['optimizer'])
-    if lr_scheduler is not None:
-        try:
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        except:
-            print("\n\nMissmatching of lr_scheduler's ckpt!\n\n")
+                #     unexpected_optim_params = list(set(optim['params']) - set(check['params']))
+                #     if len(unexpected_optim_params) > 0:
+                #         checkpoint['optimizer']['param_groups'][idx]['params'] += unexpected_optim_params
+                    
+                #     unexpected_ckpt_params = list(set(check['params']) - set(optim['params']))
+                #     if len(unexpected_ckpt_params) > 0:
+                #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
+                # optimizer.load_state_dict(checkpoint['optimizer'])
+    # if lr_scheduler is not None:
+    #     try:
+    #         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    #     except:
+    #         print("\n\nMissmatching of lr_scheduler's ckpt!\n\n")
     
     print('\n\n')
     for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):

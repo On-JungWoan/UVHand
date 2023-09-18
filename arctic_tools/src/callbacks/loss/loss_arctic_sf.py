@@ -390,3 +390,137 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     # )
     
     return loss_dict
+
+
+def compute_smoothnet_loss(pred, gt, meta_info, pre_process_models, img_res, device='cuda'):
+    # unpacking pred and gt
+    root, mano_pose, mano_shape, obj_angle = pred
+    root_l, root_r, root_o = root
+    pred_betas_l, pred_betas_r = mano_shape
+    pred_rotmat_l, pred_rotmat_r = mano_pose
+    pred_rot, pred_radian = obj_angle
+
+    root_l = root_l.float()
+    root_r = root_r.float()
+    root_o = root_o.float()
+    pred_betas_l = pred_betas_l.float()
+    pred_betas_r = pred_betas_r.float()
+    pred_rotmat_l = pred_rotmat_l.float()
+    pred_rotmat_r = pred_rotmat_r.float()
+    pred_rot = pred_rot.view(-1, 3).float()
+    pred_radian = pred_radian.view(-1).float()
+
+    gt_pose_r = gt["mano.pose.r"].float()
+    gt_betas_r = gt["mano.beta.r"].float()
+    gt_pose_l = gt["mano.pose.l"].float()
+    gt_betas_l = gt["mano.beta.l"].float()
+    gt_rot = gt["object.rot"].view(-1, 3).float()
+    gt_radian = gt["object.radian"].view(-1).float()   
+
+    is_valid = gt["is_valid"].float()
+    right_valid = gt["right_valid"].float()
+    left_valid = gt["left_valid"].float()
+
+    K = meta_info["intrinsics"]
+    query_names = meta_info["query_names"]
+    avg_focal_length = (K[:, 0, 0] + K[:, 1, 1]) / 2.0
+    cam_t_r = camera.weak_perspective_to_perspective_torch(root_r, focal_length=avg_focal_length, img_res=img_res, min_s=0.1).float()
+    cam_t_l = camera.weak_perspective_to_perspective_torch(root_l, focal_length=avg_focal_length, img_res=img_res, min_s=0.1).float()
+    cam_t_o = camera.weak_perspective_to_perspective_torch(root_o, focal_length=avg_focal_length, img_res=img_res, min_s=0.1).float()
+
+    tmp_pred = {}
+    loss_dict = {}
+
+    # l hand
+    if sum(is_valid * left_valid) != 0:
+        # pre process
+        
+        mano_output_l = pre_process_models['mano_l'](
+            betas=pred_betas_l,
+            hand_pose=pred_rotmat_l[:, 3:],
+            global_orient=pred_rotmat_l[:, :3],
+        )
+        v3d_cam_l = mano_output_l.vertices + cam_t_l[:, None, :]
+        tmp_pred["mano.v3d.cam.l"] = v3d_cam_l
+        gt_pose_l = axis_angle_to_matrix(gt_pose_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+        pred_rotmat_l = axis_angle_to_matrix(pred_rotmat_l.reshape(-1, 3)).reshape(-1, 16, 3, 3)        
+
+        # calc loss
+        loss_dict["loss/mano/pose/l"], loss_dict["loss/mano/beta/l"] = mano_loss(
+            pred_rotmat_l,
+            pred_betas_l,
+            gt_pose_l,
+            gt_betas_l,
+            criterion=mse_loss,
+            is_valid=left_valid,
+        )
+        loss_dict["loss/mano/cam_t/l"] = vector_loss(
+            root_l,
+            gt["mano.cam_t.wp.l"],
+            mse_loss,
+            left_valid,
+        )
+    else:
+        loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float32).to(device)
+
+
+    # r hand
+    if sum(is_valid * right_valid) != 0:
+        # pre process
+        
+        mano_output_r = pre_process_models['mano_r'](
+            betas=pred_betas_r,
+            hand_pose=pred_rotmat_r[:, 3:],
+            global_orient=pred_rotmat_r[:, :3],
+        )
+        v3d_cam_r = mano_output_r.vertices + cam_t_r[:, None, :]
+        tmp_pred["mano.v3d.cam.r"] = v3d_cam_r
+        gt_pose_r = axis_angle_to_matrix(gt_pose_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)
+        pred_rotmat_r = axis_angle_to_matrix(pred_rotmat_r.reshape(-1, 3)).reshape(-1, 16, 3, 3)    
+
+        # calc loss
+        loss_dict["loss/mano/pose/r"], loss_dict["loss/mano/beta/r"] = mano_loss(
+            pred_rotmat_r,
+            pred_betas_r,
+            gt_pose_r,
+            gt_betas_r,
+            criterion=mse_loss,
+            is_valid=right_valid,
+        )
+        loss_dict["loss/mano/cam_t/r"] = vector_loss(
+            root_r,
+            gt["mano.cam_t.wp.r"],
+            mse_loss,
+            right_valid,
+        )
+    else:
+        loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float32).to(device)
+        loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float32).to(device)
+
+    # obj
+    # pre process
+    obj_output = pre_process_models['arti_head'].forward(
+        pred_radian.view(-1, 1), pred_rot, None, query_names
+    )
+    v3d_cam_o = obj_output["v"] + cam_t_o[:, None, :]
+    tmp_pred["object.v.cam"] = v3d_cam_o
+
+    # calc loss
+    loss_dict["loss/object/cam_t"] = vector_loss(
+        root_o, gt["object.cam_t.wp"], mse_loss, is_valid
+    )
+    loss_dict["loss/object/radian"] = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
+    loss_dict["loss/object/rot"] = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
+
+
+    # cdev
+    loss_cd = torch.tensor(0).to(torch.float32).to(device)
+    cd_ro, cd_lo = compute_contact_devi_loss(tmp_pred, gt)
+    if cd_ro is not None:
+        loss_cd += cd_ro
+    if cd_lo is not None:
+        loss_cd += cd_lo
+    loss_dict["loss/cd"] = loss_cd
+    
+    return loss_dict

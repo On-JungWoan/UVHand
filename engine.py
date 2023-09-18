@@ -26,11 +26,12 @@ from util.settings import extract_epoch
 from datasets.data_prefetcher import data_prefetcher
 from datasets.arctic_prefetcher import data_prefetcher as arctic_prefetcher
 
+from arctic_tools.common.xdict import xdict
 from arctic_tools.visualizer import visualize_arctic_result
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error, get_arctic_item, make_output
 from util.tools import (
     extract_feature, visualize_assembly_result, eval_assembly_result, stat_round,
-    create_loss_dict, create_arctic_score_dict, arctic_smoothing
+    create_loss_dict, create_arctic_score_dict, arctic_smoothing, save_results
 )
 from torch.cuda.amp import autocast
 # os.environ["CUB_HOME"] = os.getcwd() + '/cub-1.10.0'
@@ -162,36 +163,8 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
 
-    # for wandb
-    if args is not None and args.wandb:
-        if args.distributed:
-            if utils.get_local_rank() != 0:
-                return train_stat
-        
-        # save results
-        save_dir = os.path.join(f'{args.output_dir}/loss.txt')
-        epoch = extract_epoch(args.resume) if epoch is None else epoch
-        with open(save_dir, 'a') as f:
-            if args.test_viewpoint is not None:
-                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-            f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
-            for key, val in train_stat.items():
-                res = f'{key:35} : {round(val, 8)}\n'
-                f.write(res)
-                print(res, end='')
-            f.write('\n\n')  
-
-        # check dataset
-        if args.dataset_file == 'arctic':
-            wandb.log(result, step=epoch)
-        elif args.dataset_file == 'AssemblyHands':
-            wandb.log({
-                'loss' : loss_value,
-                'ce_loss' : train_stat['loss_ce'],
-                'hand': train_stat['loss_hand_keypoint'], 
-            }, step=epoch)    
-
+    # save results
+    save_results(args, epoch, result, train_stat, flag='train')
     return train_stat
 
 
@@ -271,30 +244,7 @@ def eval_dn(model, cfg, data_loader, device, wo_class_error=False, args=None, vi
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items() if meter.count > 0}
 
-    if args.distributed:
-        if utils.get_local_rank() != 0:
-            return stats
-
-    # save results
-    save_dir = os.path.join(f'{args.output_dir}/results.txt')
-    epoch = extract_epoch(args.resume) if epoch is None else epoch
-
-    with open(save_dir, 'a') as f:
-        if args.test_viewpoint is not None:
-            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-
-        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-        f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
-
-        for key, val in stats.items():
-            f.write(f'{key:30} : {val}\n')
-        f.write('\n\n')
-
-    # save wandb
-    if args is not None and args.wandb:
-        wandb.log(
-            create_arctic_score_dict(stats), step=epoch
-        )
+    save_results(args, epoch, create_arctic_score_dict(stats), stats, flag='eval')
     return stats
 
 
@@ -340,30 +290,38 @@ def train_smoothnet(
     # prefetcher settings
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
     samples, targets, meta_info = prefetcher.next()
+    # pbar = tqdm(data_loader)
     pbar = tqdm(range(len(data_loader)))
+
+    # import sys
+    # for _ in pbar:
+    #     samples, targets, meta_info = prefetcher.next()
+    # sys.exit(0)
 
     # start training
     for _ in pbar:
-        targets, meta_info = arctic_pre_process(args, targets, meta_info)
-
         # Inference baseline model
         with torch.no_grad():
+            targets, meta_info = arctic_pre_process(args, targets, meta_info)
             outputs = base_model(samples)
 
-            # select query
-            base_out = get_arctic_item(outputs, cfg, args.device)
-        
-        #
-        data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
-        pred_vl = data["pred.mano.v3d.cam.l"]
-        pred_vr = data["pred.mano.v3d.cam.r"]
-        pred_vo = data["pred.object.v.cam"]
+            arctic_out = get_arctic_item(outputs, cfg, args.device)
 
-        # smoothing
-        sm_l_v, sm_r_v, sm_o_v = smoothnet(pred_vl, pred_vr, pred_vo)
-        data.overwrite("pred.mano.v3d.cam.l", sm_l_v)
-        data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
-        data.overwrite("pred.object.v.cam", sm_o_v)
+            # # select query
+            # base_out = get_arctic_item(outputs, cfg, args.device)
+        
+        smoothed_out = smoothnet(arctic_out)
+        # #
+        # data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
+        # pred_vl = data["pred.mano.v3d.cam.l"]
+        # pred_vr = data["pred.mano.v3d.cam.r"]
+        # pred_vo = data["pred.object.v.cam"]
+
+        # # smoothing
+        # sm_l_v, sm_r_v, sm_o_v = smoothnet(pred_vl, pred_vr, pred_vo)
+        # data.overwrite("pred.mano.v3d.cam.l", sm_l_v)
+        # data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
+        # data.overwrite("pred.object.v.cam", sm_o_v)
         
         # # post process
         # query_names = meta_info["query_names"]
@@ -372,7 +330,7 @@ def train_smoothnet(
         # data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
 
         # calc losses
-        loss_dict = criterion(args, data, meta_info)
+        loss_dict = criterion(args, smoothed_out, targets, meta_info)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
@@ -419,23 +377,16 @@ def train_smoothnet(
         pbar.set_postfix(
             create_loss_dict(loss_value, loss_dict_reduced_scaled, round_value=True, mode='smoothnet')
         )
+        # del samples, targets, meta_info
+        # torch.cuda.empty_cache()
         samples, targets, meta_info = prefetcher.next()
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     train_stat = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     result = create_loss_dict(loss_value, train_stat, mode='smoothnet')
-    print(result)
 
-    # for wandb
-    if args is not None and args.wandb:
-        if args.distributed:
-            if utils.get_local_rank() != 0:
-                return train_stat
-        # check dataset
-        wandb.log(result, step=epoch)
-
-    # end training process
+    save_results(args, epoch, result, train_stat, flag='train')
     return train_stat
 
 
@@ -463,42 +414,48 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
 
             # select query
             base_out = get_arctic_item(outputs, cfg, args.device)
+            smoothed_out = smoothnet(base_out)
 
-            # # base output test
-            # # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!반드시 수정!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            # t_root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
-            # t_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
-            # t_beta = [targets['mano.beta.l'], targets['mano.beta.r']]
-            # t_obj = [targets["object.rot"], targets["object.radian"]]
-            # # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            # query_names = meta_info["query_names"]
-            # K = meta_info["intrinsics"]
-            # arctic_out = make_output(args, base_out[0], base_out[1], base_out[2], t_obj, query_names, K)
-            # base_data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
-            # visualize_arctic_result(args, base_data, 'pred')
-            # samples, targets, meta_info = prefetcher.next()
-            # continue
+            query_names = meta_info["query_names"]
+            K = meta_info["intrinsics"]
+            pred = make_output(args, *smoothed_out, query_names, K)
+            data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
+
+            # # # base output test
+            # # # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!반드시 수정!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # # t_root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
+            # # t_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
+            # # t_beta = [targets['mano.beta.l'], targets['mano.beta.r']]
+            # # t_obj = [targets["object.rot"], targets["object.radian"]]
+            # # # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            # # query_names = meta_info["query_names"]
+            # # K = meta_info["intrinsics"]
+            # # arctic_out = make_output(args, base_out[0], base_out[1], base_out[2], t_obj, query_names, K)
+            # # base_data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+            # # visualize_arctic_result(args, base_data, 'pred')
+            # # samples, targets, meta_info = prefetcher.next()
+            # # continue
             
-            #
-            data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
-            pred_vl = data["pred.mano.v3d.cam.l"]
-            pred_vr = data["pred.mano.v3d.cam.r"]
-            pred_vo = data["pred.object.v.cam"]
+            # #
+            # data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
+            # pred_vl = data["pred.mano.v3d.cam.l"]
+            # pred_vr = data["pred.mano.v3d.cam.r"]
+            # pred_vo = data["pred.object.v.cam"]
 
-            # smoothing
-            try:
-                sm_l_v, sm_r_v, sm_o_v = smoothnet(pred_vl, pred_vr, pred_vo)
-            except:
-                break
-            data.overwrite("pred.mano.v3d.cam.l", sm_l_v)
-            data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
-            data.overwrite("pred.object.v.cam", sm_o_v)
+            # # smoothing
+            # try:
+            #     sm_l_v, sm_r_v, sm_o_v = smoothnet(pred_vl, pred_vr, pred_vo)
+            # except:
+            #     break
+            # data.overwrite("pred.mano.v3d.cam.l", sm_l_v)
+            # data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
+            # data.overwrite("pred.object.v.cam", sm_o_v)
 
-            # # post process
-            # query_names = meta_info["query_names"]
-            # K = meta_info["intrinsics"]
-            # arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
-            # data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+            # # # post process
+            # # query_names = meta_info["query_names"]
+            # # K = meta_info["intrinsics"]
+            # # arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
+            # # data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
 
             # vis results
             if vis:
@@ -530,34 +487,7 @@ def test_smoothnet(base_model, smoothnet, criterion, data_loader, device, cfg, a
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-    # Only main process can reach out last line of this script.
-    if args.distributed:
-        if utils.get_local_rank() != 0:
-            return stats
-    
-    # save results to txt
-    save_dir = os.path.join(f'{args.output_dir}/results.txt')
-    epoch = extract_epoch(args.resume) if epoch is None else epoch
-    with open(save_dir, 'a') as f:
-        if args.test_viewpoint is not None:
-            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-        for key, val in stats.items():
-            f.write(f'{key:30} : {val}\n')
-        f.write('\n\n')
-
-    # save results to wandb
-    if args is not None and args.wandb:
-        if args.dataset_file == 'arctic':
-            wandb.log(
-                create_arctic_score_dict(stats), step=epoch
-            )
-        else:
-            wandb.log(
-                {
-                    'mpjpe' : stats['mpjpe'],
-                }, step=epoch
-            )            
+    save_results(args, epoch, create_arctic_score_dict(stats), stats, flag='eval')           
     return stats
 
 
@@ -710,36 +640,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
 
     # for wandb
-    if args is not None and args.wandb:
-        if args.distributed:
-            if utils.get_local_rank() != 0:
-                return train_stat
-        
-        # save results
-        save_dir = os.path.join(f'{args.output_dir}/loss.txt')
-        epoch = extract_epoch(args.resume) if epoch is None else epoch
-        with open(save_dir, 'a') as f:
-            if args.test_viewpoint is not None:
-                f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-            f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-            f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
-            for key, val in train_stat.items():
-                res = f'{key:35} : {round(val, 8)}\n'
-                f.write(res)
-                print(res, end='')
-            f.write('\n\n')            
-        
-        # check dataset
-        if args.dataset_file == 'arctic':
-            wandb.log(result, step=epoch)
-        elif args.dataset_file == 'AssemblyHands':
-            wandb.log({
-                'loss' : loss_value,
-                'ce_loss' : train_stat['loss_ce'],
-                'hand': train_stat['loss_hand_keypoint'], 
-            }, step=epoch)
-
-    # end training process
+    save_results(args, epoch, result, train_stat, flag='train')
     return train_stat
 
 
@@ -860,32 +761,7 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-    if args.distributed:
-        if utils.get_local_rank() != 0:
-            return stats
-    
-    save_dir = os.path.join(f'{args.output_dir}/results.txt')
-    epoch = extract_epoch(args.resume) if epoch is None else epoch
-    with open(save_dir, 'a') as f:
-        if args.test_viewpoint is not None:
-            f.write(f"{'='*10} {args.test_viewpoint} {'='*10}\n")
-        f.write(f"{'='*10} epoch : {epoch} {'='*10}\n\n")
-        f.write(f"{'='*9} {args.val_batch_size}*{args.window_size}, {args.iter}iter {'='*9}\n")
-        for key, val in stats.items():
-            f.write(f'{key:30} : {val}\n')
-        f.write('\n\n')
-
-    if args is not None and args.wandb:
-        if args.dataset_file == 'arctic':
-            wandb.log(
-                create_arctic_score_dict(stats), step=epoch
-            )
-        else:
-            wandb.log(
-                {
-                    'mpjpe' : stats['mpjpe'],
-                }, step=epoch
-            )            
+    save_results(args, epoch, create_arctic_score_dict(stats), stats, flag='eval')         
     return stats
 
 

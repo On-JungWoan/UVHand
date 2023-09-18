@@ -32,6 +32,8 @@ from torch.utils.data import DataLoader
 from util.slconfig import SLConfig
 from models.smoothnet import ArcticSmoother, SmoothCriterion
 
+from arctic_tools.common.body_models import build_mano_aa
+from arctic_tools.common.object_tensors import ObjectTensors
 from models import build_model
 from datasets import build_dataset
 from arctic_tools.src.factory import collate_custom_fn as lstm_fn
@@ -168,6 +170,12 @@ def main(args):
     if args.resume:
         assert not args.resume_dir
         model_without_ddp, optimizer, lr_scheduler = load_resume(args, model_without_ddp, args.resume, optimizer, lr_scheduler)
+    else:
+        print('\n\n')
+        for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
+            print(f"lr of {idx} optimizer : {opt_p['lr']}")
+        print(lr_scheduler.state_dict())
+        print('\n\n')
 
     print("Start training")
     start_time = time.time()
@@ -176,13 +184,21 @@ def main(args):
     if args.eval:
         # train smooth net
         if args.train_smoothnet:
+            raise Exception('Not implemented yet.')
             smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
             WEIGHT_DICT = {
-                "loss_left": 1000.0,
-                "loss_right": 1000.0,
-                "loss_obj": 1000.0,
+                "loss/cd":10.0,
+                "loss/mano/cam_t/r":1.0,
+                "loss/mano/cam_t/l":1.0,
+                "loss/object/cam_t":1.0,
+                "loss/mano/pose/r":10.0,
+                "loss/mano/beta/r":0.001,
+                "loss/mano/pose/l":10.0,
+                "loss/mano/beta/l":0.001,
+                "loss/object/radian":1.0,
+                "loss/object/rot":10.0,
             }
-            smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
+            smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT, args.device)
             optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)            
             test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
             sys.exit(0)
@@ -227,12 +243,27 @@ def main(args):
             if args.train_smoothnet:
                 smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
                 WEIGHT_DICT = {
-                    "loss_left": 1000.0,
-                    "loss_right": 1000.0,
-                    "loss_obj": 1000.0,
+                    "loss/cd":10.0,
+                    "loss/mano/cam_t/r":1.0,
+                    "loss/mano/cam_t/l":1.0,
+                    "loss/object/cam_t":1.0,
+                    "loss/mano/pose/r":10.0,
+                    "loss/mano/beta/r":0.001,
+                    "loss/mano/pose/l":10.0,
+                    "loss/mano/beta/l":0.001,
+                    "loss/object/radian":1.0,
+                    "loss/object/rot":10.0,
                 }
-                smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
-                optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)
+                obj_tensor = ObjectTensors()
+                obj_tensor.to(device)
+                pre_process_models = {
+                    "mano_r": build_mano_aa(is_rhand=True).to(device),
+                    "mano_l": build_mano_aa(is_rhand=False).to(device),
+                    "arti_head": obj_tensor
+                }                
+                smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT, pre_process_models).to(device)
+                # optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)
+                optimizer, lr_scheduler = set_training_scheduler(args, smoother)
 
                 train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
                 if not args.onecyclelr:
