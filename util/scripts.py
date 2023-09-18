@@ -24,6 +24,10 @@ def smoothnet_main(model, data_loader_train, data_loader_val, args, cfg):
         "loss/mano/beta/l":0.001,
         "loss/object/radian":1.0,
         "loss/object/rot":10.0,
+        "loss/mano/transl/l":1.0,
+        "loss/object/transl":1.0,
+        "acc/h":1.0,
+        "acc/o":1.0,
     }
     obj_tensor = ObjectTensors()
     obj_tensor.to(device)

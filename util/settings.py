@@ -20,7 +20,6 @@ def get_general_args_parser():
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visualization', default=False, action='store_true')
     parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--smoother_resume', default='', help='resume from checkpoint')
     parser.add_argument('--val_batch_size', default=4, type=int)
     parser.add_argument('--eval_metrics', default=["aae","mpjpe.ra","mrrpe","success_rate","cdev","mdev","acc_err_pose"], nargs='+', \
                         help='Choose evaluation metrics.')

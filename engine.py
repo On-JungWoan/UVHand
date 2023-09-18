@@ -25,6 +25,7 @@ import util.misc as utils
 from datasets.data_prefetcher import data_prefetcher
 from datasets.arctic_prefetcher import data_prefetcher as arctic_prefetcher
 
+from arctic_tools.common.torch_utils import nanmean
 from arctic_tools.common.xdict import xdict
 from arctic_tools.visualizer import visualize_arctic_result
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error, get_arctic_item, make_output
@@ -312,7 +313,24 @@ def train_smoothnet(
 
             # # select query
             # base_out = get_arctic_item(outputs, cfg, args.device)
-        
+
+            # masking
+            p_mask = 0.05
+            scale = [0.1, 0.1, 0.1, 1] # root, pose, shape, obj
+            for idx, out in enumerate(arctic_out):
+                for param in out:
+                    mask = torch.cuda.FloatTensor(param.shape).uniform_() > (1-p_mask)
+                    param[mask] += torch.randn(param[mask].shape).cuda() * scale[idx]
+
+        # query_names = meta_info["query_names"]
+        # K = meta_info["intrinsics"]
+        # pred = make_output(args, *arctic_out, query_names, K)
+        # with torch.no_grad():
+        #     data = prepare_data(args, None, targets, meta_info, cfg, pred)
+        # stat = measure_error(data, args.eval_metrics)
+        # print(nanmean(torch.tensor(stat['cdev/ho'])))
+        # visualize_arctic_result(args, data.to('cpu'), 'pred')
+
         smoothed_out = smoothnet(arctic_out)
         # #
         # data = prepare_data(args, outputs, targets, meta_info, cfg).to(device)
@@ -326,14 +344,14 @@ def train_smoothnet(
         # data.overwrite("pred.mano.v3d.cam.r", sm_r_v)
         # data.overwrite("pred.object.v.cam", sm_o_v)
         
-        # # post process
-        # query_names = meta_info["query_names"]
-        # K = meta_info["intrinsics"]
-        # arctic_out = make_output(args, sm_root, sm_pose, sm_shape, sm_angle, query_names, K)
-        # data = prepare_data(args, None, targets, meta_info, cfg, arctic_out)
+        # post process
+        query_names = meta_info["query_names"]
+        K = meta_info["intrinsics"]
+        pred = make_output(args, *smoothed_out, query_names, K)
+        data = prepare_data(args, None, targets, meta_info, cfg, pred, flag='train')
 
         # calc losses
-        loss_dict = criterion(args, smoothed_out, targets, meta_info)
+        loss_dict = criterion(args, data, targets, meta_info)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 

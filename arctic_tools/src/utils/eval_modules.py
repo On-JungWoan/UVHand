@@ -346,13 +346,13 @@ def eval_acc_pose(pred, targets, meta_info):
 
     # pad nan to start and end of tensor
     acc_r = torch.cat(
-        (torch.tensor([float("nan")]), acc_r, torch.tensor([float("nan")]))
+        (torch.tensor([float("nan")]).cuda(), acc_r, torch.tensor([float("nan")]).cuda())
     )
     acc_l = torch.cat(
-        (torch.tensor([float("nan")]), acc_l, torch.tensor([float("nan")]))
+        (torch.tensor([float("nan")]).cuda(), acc_l, torch.tensor([float("nan")]).cuda())
     )
     acc_h = torch.cat(
-        (torch.tensor([float("nan")]), acc_h, torch.tensor([float("nan")]))
+        (torch.tensor([float("nan")]).cuda(), acc_h, torch.tensor([float("nan")]).cuda())
     )
 
     metric_dict = xdict()
