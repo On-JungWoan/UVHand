@@ -298,9 +298,13 @@ def train_smoothnet(
     # sys.exit(0)
 
     # start training
+    # for samples, targets, meta_info in pbar:
     for _ in pbar:
         # Inference baseline model
         with torch.no_grad():
+            # samples = samples.to(device)
+            # targets = xdict(targets).to(device)
+            # meta_info = xdict(meta_info).to(device)            
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
             outputs = base_model(samples)
 

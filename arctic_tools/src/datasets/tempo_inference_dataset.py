@@ -46,22 +46,24 @@ class TempoInferenceDataset(ArcticDataset):
     def _load_data(self, args, split):
         root = op.join(args.coco_path, args.dataset_file)
 
-        # load image features
-        data_p = f"{root}/data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
+        if args.feature_type != 'origin':
+            # load image features
+            data_p = f"{root}/data/arctic_data/data/feat/{args.img_feat_version}/{args.setup}_{split}.pt"
 
-        assert op.exists(
-            data_p
-        ), f"Not found {data_p}; NOTE: only use ArcticDataset for single-frame model to evaluate and extract."
-        logger.info(f"Loading {data_p}")
-        data = torch.load(data_p)
-        imgnames = data["imgnames"]
-        vecs_list = data["feat_vec"]
-        vec_dict = {}
-        for imgname, vec in zip(imgnames, vecs_list):
-            key = "/".join(imgname.split("/")[-4:])
-            vec_dict[key] = vec
-        self.vec_dict = vec_dict
-        assert len(imgnames) == len(vec_dict.keys())
+            assert op.exists(
+                data_p
+            ), f"Not found {data_p}; NOTE: only use ArcticDataset for single-frame model to evaluate and extract."
+            logger.info(f"Loading {data_p}")
+            data = torch.load(data_p)
+            imgnames = data["imgnames"]
+            vecs_list = data["feat_vec"]
+            vec_dict = {}
+            for imgname, vec in zip(imgnames, vecs_list):
+                key = "/".join(imgname.split("/")[-4:])
+                vec_dict[key] = vec
+            self.vec_dict = vec_dict
+            assert len(imgnames) == len(vec_dict.keys())
+            self.imgnames = imgnames
 
         # # all imgnames for this split
         # # override the original self.imgnames
@@ -73,7 +75,7 @@ class TempoInferenceDataset(ArcticDataset):
         # #     imgname.replace("/data/arctic_data/", "/arctic_data/")
         # #     for imgname in imgnames
         # # ]
-        self.imgnames = imgnames
+        
         self.aug_data = False
         self.window_size = args.window_size
 
