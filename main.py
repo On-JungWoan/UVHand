@@ -155,7 +155,7 @@ def main(args):
 
     # lr_backbone_names = ["backbone.0", "backbone.neck", "input_proj", "transformer.encoder"]
 
-    optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp)
+    optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp, len_data_loader_train = len(data_loader_train))
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -183,7 +183,7 @@ def main(args):
                 "loss_obj": 1000.0,
             }
             smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
-            optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)            
+            optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)            
             test_smoothnet(model, smoother, criterion, data_loader_val, device, cfg, args=args, vis=args.visualization)
             sys.exit(0)
 
@@ -232,10 +232,13 @@ def main(args):
                     "loss_obj": 1000.0,
                 }
                 smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT)
-                optimizer, lr_scheduler = set_training_scheduler(args, smoother, 0.001)
+                optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)
 
                 train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
-                lr_scheduler.step()
+                if not args.onecyclelr:
+                    lr_scheduler.step()
+                else:
+                    raise Exception('Not implemented yet!')
 
                 utils.save_on_master({
                     'model': smoother.state_dict(),
@@ -255,6 +258,8 @@ def main(args):
                         model, criterion, data_loader_train, optimizer, device, epoch,
                         args.clip_max_norm, wo_class_error=False, lr_scheduler=lr_scheduler, args=args,                 
                     )
+                    if not args.onecyclelr:
+                        lr_scheduler.step()
 
                     utils.save_on_master({
                         'model': model_without_ddp.state_dict(),
@@ -271,7 +276,10 @@ def main(args):
                     train_pose(
                         model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
                     )
-                    lr_scheduler.step()
+                    if not args.onecyclelr:
+                        lr_scheduler.step()
+                    else:
+                        raise Exception('Not implemented yet!')                        
 
                     utils.save_on_master({
                         'model': model_without_ddp.state_dict(),

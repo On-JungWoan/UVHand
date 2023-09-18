@@ -369,7 +369,7 @@ def match_name_keywords(n, name_keywords):
     return out
 
 
-def set_training_scheduler(args, model, general_lr=None):
+def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=None):
     if general_lr is None:
         general_lr = args.lr
 
@@ -387,7 +387,12 @@ def set_training_scheduler(args, model, general_lr=None):
     else:
         optimizer = torch.optim.AdamW(param_dicts, lr=general_lr,
                                       weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+        
+    if args.onecyclelr:
+        assert len_data_loader_train is not None
+        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len_data_loader_train, epochs=12, pct_start=0.2)
+    else:
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
     return optimizer, lr_scheduler
 
@@ -415,7 +420,6 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
     if optimizer is not None:
         # checkpoint['optimizer']['param_groups'][0]['lr'] = args.lr
         # checkpoint['optimizer']['param_groups'][1]['lr'] = args.lr_backbone
-        
         try:
             optimizer.load_state_dict(checkpoint['optimizer'])
         except:
@@ -431,15 +435,17 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
             #     if len(unexpected_ckpt_params) > 0:
             #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
             # optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    if lr_scheduler is not None:
+        try:
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        except:
+            print("\n\nMissmatching of lr_scheduler's ckpt!\n\n")
     
-        print('\n\n')
-        for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
-            print(f"lr of {idx} optimizer : {opt_p['lr']}")
-        print(lr_scheduler.state_dict())
-        print('\n\n')
-    else:
-        assert args.eval or args.extraction_mode !='', 'You have to load state_dict of optimizer.'
+    print('\n\n')
+    for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
+        print(f"lr of {idx} optimizer : {opt_p['lr']}")
+    print(lr_scheduler.state_dict())
+    print('\n\n')
     
     return model, optimizer, lr_scheduler
 
