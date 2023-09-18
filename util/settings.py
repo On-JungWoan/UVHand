@@ -415,7 +415,7 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
-    if not args.not_use_optim_ckpt:
+    if not args.not_use_optim_ckpt and optimizer is not None:
         try:
             optimizer.load_state_dict(checkpoint['optimizer'])
         except:
@@ -431,17 +431,18 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
             #     if len(unexpected_ckpt_params) > 0:
             #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
             # optimizer.load_state_dict(checkpoint['optimizer'])
-    if not args.not_use_lr_scheduler_ckpt:
+    if not args.not_use_lr_scheduler_ckpt and lr_scheduler is not None:
         try:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         except:
             print("\n\nMissmatching of lr_scheduler's ckpt!\n\n")
     
-    print('\n\n')
-    for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
-        print(f"lr of {idx} optimizer : {opt_p['lr']}")
-    print(lr_scheduler.state_dict())
-    print('\n\n')
+    if optimizer is not None and lr_scheduler is not None:
+        print('\n\n')
+        for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
+            print(f"lr of {idx} optimizer : {opt_p['lr']}")
+        print(lr_scheduler.state_dict())
+        print('\n\n')
     
     return model, optimizer, lr_scheduler
 
