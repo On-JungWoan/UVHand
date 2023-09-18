@@ -246,7 +246,7 @@ def prepare_interfield(targets, max_dist):
     targets["idx.ol"] = dist_ol_idx
     return targets
 
-def prepare_data(args, outputs, targets, meta_info, cfg, pred=None):
+def prepare_data(args, outputs, targets, meta_info, cfg, pred=None, flag='eval'):
     targets = xdict(targets)
     meta_info = xdict(meta_info)
 
@@ -293,7 +293,8 @@ def prepare_data(args, outputs, targets, meta_info, cfg, pred=None):
     data.merge(pred.prefix("pred."))
     data.merge(targets.prefix("targets."))
     data.merge(meta_info.prefix("meta_info."))
-    data = data.to("cpu")
+    if flag=='eval':
+        data = data.to("cpu")
 
     return data
 

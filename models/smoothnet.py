@@ -207,9 +207,12 @@ class SmoothCriterion(nn.Module):
         self.weight_dict = weight_dict
         self.pre_process_models = pre_process_models
 
-    def forward(self, args, pred, targets, meta_info):
+    def forward(self, args, data, targets, meta_info):
+        arctic_pred = data.search('pred.', replace_to='')
+        arctic_gt = data.search('targets.', replace_to='')
+
         losses = {}
-        losses.update(compute_smoothnet_loss(pred, targets, meta_info, self.pre_process_models, args.img_res))
+        losses.update(compute_smoothnet_loss(arctic_pred, arctic_gt, meta_info, self.pre_process_models, args.img_res))
 
         return losses
 
