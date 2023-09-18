@@ -38,7 +38,10 @@ def smoothnet_main(model, data_loader_train, data_loader_val, args, cfg):
     }                
     smoother_criterion = SmoothCriterion(args.batch_size, args.window_size, WEIGHT_DICT, pre_process_models).to(device)
     # optimizer, lr_scheduler = set_training_scheduler(args, smoother, general_lr=0.001)
-    optimizer, lr_scheduler = set_training_scheduler(args, smoother, len_data_loader_train=len(data_loader_train))
+    if data_loader_train is not None:
+        optimizer, lr_scheduler = set_training_scheduler(args, smoother, len_data_loader_train=len(data_loader_train))
+    else:
+        optimizer = lr_scheduler = None
 
     if args.smooth_resume:
         smoother, optimizer, lr_scheduler = load_resume(args, smoother, args.smooth_resume, optimizer, lr_scheduler)

@@ -156,8 +156,10 @@ def main(args):
                                 pin_memory=True)
 
     # lr_backbone_names = ["backbone.0", "backbone.neck", "input_proj", "transformer.encoder"]
-
-    optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp, len_data_loader_train = len(data_loader_train))
+    if args.eval or args.train_smoothnet:
+        optimizer = lr_scheduler = None
+    else:
+        optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp, len_data_loader_train = len(data_loader_train))
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -183,6 +185,8 @@ def main(args):
 
     if args.train_smoothnet:
         assert utils.get_local_size() == 1, 'Not implemented yet!'
+        if args.eval:
+            data_loader_train = None
         smoothnet_main(model_without_ddp, data_loader_train, data_loader_val, args, cfg)
         sys.exit(0)
 
