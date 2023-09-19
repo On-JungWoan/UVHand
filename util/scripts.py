@@ -26,8 +26,8 @@ def smoothnet_main(model, data_loader_train, data_loader_val, args, cfg):
         "loss/object/rot":10.0,
         "loss/mano/transl/l":1.0,
         "loss/object/transl":1.0,
-        "acc/h":1.0,
-        "acc/o":1.0,
+        "acc/h":0.1,
+        "acc/o":0.1,
     }
     obj_tensor = ObjectTensors()
     obj_tensor.to(device)
@@ -48,12 +48,14 @@ def smoothnet_main(model, data_loader_train, data_loader_val, args, cfg):
 
     # for evaluation
     if args.eval:
+        smoother.batch_size = args.val_batch_size
         test_smoothnet(model, smoother, data_loader_val, device, cfg, args=args, vis=args.visualization)    
         sys.exit(0)
 
     # for train
     else:
-        for epoch in range(args.start_epoch, args.epochs):         
+        for epoch in range(args.start_epoch, args.epochs):
+            smoother.batch_size = args.batch_size
             train_smoothnet(model, smoother, smoother_criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args=args, cfg=cfg)
             if not args.onecyclelr:
                 lr_scheduler.step()
@@ -66,6 +68,7 @@ def smoothnet_main(model, data_loader_train, data_loader_val, args, cfg):
                 'args': args,
             }, f'{args.output_dir}/{epoch}.pth')
 
+            smoother.batch_size = args.val_batch_size
             test_smoothnet(model, smoother, data_loader_val, device, cfg, args=args, vis=args.visualization, epoch=epoch)
 
 
