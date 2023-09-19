@@ -5,7 +5,7 @@ from arctic_tools.common.object_tensors import ObjectTensors
 from arctic_tools.src.callbacks.loss.loss_arctic_sf import compute_smoothnet_loss
 
 class SmootherResBlock(nn.Module):
-    def __init__(self, in_channels, hidden_channels, dropout=0.5):
+    def __init__(self, in_channels, hidden_channels, dropout=0.9):
         super().__init__()
         self.linear1 = nn.Linear(in_channels, hidden_channels)
         self.linear2 = nn.Linear(hidden_channels, in_channels)
@@ -28,7 +28,7 @@ class SmootherResBlock(nn.Module):
 class Smoother(nn.Module):
     def __init__(self, window_size, output_size, 
                  hidden_size=512, res_hidden_size=256, 
-                 num_blocks=3, dropout=0.5):
+                 num_blocks=3, dropout=0.9):
         super().__init__()
         self.window_size = window_size
         self.output_size = output_size
@@ -66,7 +66,7 @@ class Smoother(nn.Module):
 class MotionSmoother(nn.Module):
     def __init__(self, window_size, output_size, 
                  hidden_size=512, res_hidden_size=256, 
-                 num_blocks=3, dropout=0.5):
+                 num_blocks=3, dropout=0.9):
         super().__init__()
         self.window_size = window_size
         self.output_size = output_size

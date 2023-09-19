@@ -15,19 +15,17 @@ def smoothnet_main(model, data_loader_train, data_loader_val, args, cfg):
     smoother = ArcticSmoother(args.batch_size, args.window_size).to(device)
     WEIGHT_DICT = {
         "loss/cd":10.0,
-        "loss/mano/cam_t/r":1.0,
-        "loss/mano/cam_t/l":1.0,
-        "loss/object/cam_t":1.0,
-        "loss/mano/pose/r":10.0,
-        "loss/mano/beta/r":0.001,
-        "loss/mano/pose/l":10.0,
-        "loss/mano/beta/l":0.001,
-        "loss/object/radian":1.0,
-        "loss/object/rot":10.0,
-        "loss/mano/transl/l":1.0,
-        "loss/object/transl":1.0,
-        "acc/h":0.1,
-        "acc/o":0.1,
+        # "loss/mano/cam_t/r":1.0,
+        # "loss/mano/cam_t/l":1.0,
+        # "loss/object/cam_t":1.0,
+        # "loss/mano/pose/r":10.0,
+        # "loss/mano/beta/r":0.001,
+        # "loss/mano/pose/l":10.0,
+        # "loss/mano/beta/l":0.001,
+        # "loss/object/radian":1.0,
+        # "loss/object/rot":10.0,
+        "acc/h":1,
+        "acc/o":1,
     }
     obj_tensor = ObjectTensors()
     obj_tensor.to(device)
