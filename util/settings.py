@@ -365,20 +365,45 @@ def get_dn_detr_args_parser(parser):
     return parser
 
 
+from util.tools import match_name_keywords
 def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=None):
     if general_lr is None:
         general_lr = args.lr
 
-    # TODO
-    # 1. input proj 고려
-    # 2. model에 따른 param dict 고려
-    param_dicts = [
-        {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
-        {
-            "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
-            "lr": args.lr_backbone,
-        }
-    ]
+    try:
+        param_dict_type = args.param_dict_type
+    except:
+        param_dict_type = 'default'
+    if param_dict_type == 'default':
+        param_dicts = [
+            {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
+            {
+                "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
+                "lr": args.lr_backbone,
+            }
+        ]
+    elif param_dict_type == 'ddetr_in_mmdet':
+        param_dicts = [
+            # general
+            {
+                "params":
+                    [p for n, p in model.named_parameters()
+                        if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+                "lr": args.lr,
+            },
+            # backbone
+            {
+                "params": [p for n, p in model.named_parameters() 
+                        if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
+                "lr": args.lr_backbone,
+            },
+            # input proj
+            {
+                "params": [p for n, p in model.named_parameters() 
+                        if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+                "lr": args.lr * args.lr_linear_proj_mult,
+            }
+        ]        
 
     if args.sgd:
         optimizer = torch.optim.SGD(param_dicts, lr=general_lr, momentum=0.9,

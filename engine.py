@@ -282,7 +282,7 @@ def test_debug(args, targets, samples, B=0, h=224, w=224):
             x = int( t[j][0] * w )
             y = int( t[j][1] * h )
             cv2.line(img, (x, y), (x, y), color[i], 5)
-    # plt.imshow(img)
+    # plt.imsave('test.png', img)
     plt.imshow(img)
 
     # samples, targets, meta_info = prefetcher.next()
