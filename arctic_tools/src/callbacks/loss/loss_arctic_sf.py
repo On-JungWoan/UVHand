@@ -438,72 +438,72 @@ def compute_smoothnet_loss(pred, gt, meta_info, pre_process_models, img_res, dev
 
     loss_dict = {}
 
-    # l hand
-    if sum(is_valid * left_valid) != 0:
-        # calc loss
-        loss_dict["loss/mano/pose/l"], loss_dict["loss/mano/beta/l"] = mano_loss(
-            pred_rotmat_l,
-            pred_betas_l,
-            gt_pose_l,
-            gt_betas_l,
-            criterion=mse_loss,
-            is_valid=left_valid,
-        )
-        loss_dict["loss/mano/cam_t/l"] = vector_loss(
-            pred["mano.cam_t.wp.l"],
-            gt["mano.cam_t.wp.l"],
-            mse_loss,
-            left_valid,
-        )
-    else:
-        loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float32).to(device)
-        loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float32).to(device)
+    # # l hand
+    # if sum(is_valid * left_valid) != 0:
+    #     # calc loss
+    #     loss_dict["loss/mano/pose/l"], loss_dict["loss/mano/beta/l"] = mano_loss(
+    #         pred_rotmat_l,
+    #         pred_betas_l,
+    #         gt_pose_l,
+    #         gt_betas_l,
+    #         criterion=mse_loss,
+    #         is_valid=left_valid,
+    #     )
+    #     loss_dict["loss/mano/cam_t/l"] = vector_loss(
+    #         pred["mano.cam_t.wp.l"],
+    #         gt["mano.cam_t.wp.l"],
+    #         mse_loss,
+    #         left_valid,
+    #     )
+    # else:
+    #     loss_dict["loss/mano/pose/l"] = loss_dict["loss/mano/beta/l"] = torch.tensor(0).to(torch.float32).to(device)
+    #     loss_dict["loss/mano/cam_t/l"] = torch.tensor(0).to(torch.float32).to(device)
 
 
-    # r hand
-    if sum(is_valid * right_valid) != 0:      
-        # calc loss
-        loss_dict["loss/mano/pose/r"], loss_dict["loss/mano/beta/r"] = mano_loss(
-            pred_rotmat_r,
-            pred_betas_r,
-            gt_pose_r,
-            gt_betas_r,
-            criterion=mse_loss,
-            is_valid=right_valid,
-        )
-        loss_dict["loss/mano/cam_t/r"] = vector_loss(
-            pred["mano.cam_t.wp.r"],
-            gt["mano.cam_t.wp.r"],
-            mse_loss,
-            right_valid,
-        )
-        loss_dict["loss/object/transl"] = vector_loss(
-            pred["object.cam_t.wp"] - pred["mano.cam_t.wp.r"],
-            gt["object.cam_t.wp"] - gt["mano.cam_t.wp.r"],
-            mse_loss,
-            right_valid * is_valid,
-        )
-    else:
-        loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float32).to(device)
-        loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float32).to(device)
-        loss_dict["loss/object/transl"] = torch.tensor(0).to(torch.float32).to(device)
+    # # r hand
+    # if sum(is_valid * right_valid) != 0:      
+    #     # calc loss
+    #     loss_dict["loss/mano/pose/r"], loss_dict["loss/mano/beta/r"] = mano_loss(
+    #         pred_rotmat_r,
+    #         pred_betas_r,
+    #         gt_pose_r,
+    #         gt_betas_r,
+    #         criterion=mse_loss,
+    #         is_valid=right_valid,
+    #     )
+    #     loss_dict["loss/mano/cam_t/r"] = vector_loss(
+    #         pred["mano.cam_t.wp.r"],
+    #         gt["mano.cam_t.wp.r"],
+    #         mse_loss,
+    #         right_valid,
+    #     )
+    #     loss_dict["loss/object/transl"] = vector_loss(
+    #         pred["object.cam_t.wp"] - pred["mano.cam_t.wp.r"],
+    #         gt["object.cam_t.wp"] - gt["mano.cam_t.wp.r"],
+    #         mse_loss,
+    #         right_valid * is_valid,
+    #     )
+    # else:
+    #     loss_dict["loss/mano/pose/r"] = loss_dict["loss/mano/beta/r"] = torch.tensor(0).to(torch.float32).to(device)
+    #     loss_dict["loss/mano/cam_t/r"] = torch.tensor(0).to(torch.float32).to(device)
+    #     loss_dict["loss/object/transl"] = torch.tensor(0).to(torch.float32).to(device)
     
-    if sum(is_valid * left_valid) != 0 and sum(is_valid * right_valid) != 0:
-        loss_dict["loss/mano/transl/l"] = vector_loss(
-            pred["mano.cam_t.wp.l"] - pred["mano.cam_t.wp.r"],
-            gt["mano.cam_t.wp.l"] - gt["mano.cam_t.wp.r"],
-            mse_loss,
-            right_valid * left_valid,
-        )
-    else:
-        loss_dict["loss/mano/transl/l"] = torch.tensor(0).to(torch.float32).to(device)
+    # if sum(is_valid * left_valid) != 0 and sum(is_valid * right_valid) != 0:
+    #     loss_dict["loss/mano/transl/l"] = vector_loss(
+    #         pred["mano.cam_t.wp.l"] - pred["mano.cam_t.wp.r"],
+    #         gt["mano.cam_t.wp.l"] - gt["mano.cam_t.wp.r"],
+    #         mse_loss,
+    #         right_valid * left_valid,
+    #     )
+    # else:
+    #     loss_dict["loss/mano/transl/l"] = torch.tensor(0).to(torch.float32).to(device)
 
-    # obj
-    loss_dict["loss/object/cam_t"] = vector_loss(
-        pred["object.cam_t.wp"], gt["object.cam_t.wp"], mse_loss, is_valid
-    )
-    loss_dict["loss/object/radian"] = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
-    loss_dict["loss/object/rot"] = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
+    # # obj
+    # loss_dict["loss/object/cam_t"] = vector_loss(
+    #     pred["object.cam_t.wp"], gt["object.cam_t.wp"], mse_loss, is_valid
+    # )
+    # loss_dict["loss/object/radian"] = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
+    # loss_dict["loss/object/rot"] = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
 
 
     # cdev

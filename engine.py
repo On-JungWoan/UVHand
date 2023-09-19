@@ -333,11 +333,13 @@ def train_smoothnet(
 
             # masking
             p_mask = 0.05
-            scale = [0.1, 0.1, 0.1, 1] # root, pose, shape, obj
+            scale = [[0.1, 0.1, 0.1], 0.1, 0.1, [5, 0.1]] # root(l, r, o), pose, shape, obj(rot, rad)
             for idx, out in enumerate(arctic_out):
-                for param in out:
+                for p_idx, param in enumerate(out):
+                    s = scale[idx][p_idx] if isinstance(scale[idx], list) else scale[idx]
+
                     mask = torch.cuda.FloatTensor(param.shape).uniform_() > (1-p_mask)
-                    param[mask] += torch.randn(param[mask].shape).cuda() * scale[idx]
+                    param[mask] += torch.randn(param[mask].shape).cuda() * s
 
         # query_names = meta_info["query_names"]
         # K = meta_info["intrinsics"]
@@ -347,6 +349,8 @@ def train_smoothnet(
         # stat = measure_error(data, args.eval_metrics)
         # print(nanmean(torch.tensor(stat['cdev/ho'])))
         # visualize_arctic_result(args, data.to('cpu'), 'pred')
+        # samples, targets, meta_info = prefetcher.next()
+        # continue
 
         smoothed_out = smoothnet(arctic_out)
         # #
