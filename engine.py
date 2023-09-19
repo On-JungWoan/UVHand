@@ -74,6 +74,11 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
+        test_debug(args, targets, samples, B=0, h=224, w=224)
+
+        samples, targets, meta_info = prefetcher.next()
+        continue
+
         targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         # test_debug(targets, meta_info, B=19, h=400, w=300)
@@ -249,16 +254,22 @@ def eval_dn(model, cfg, data_loader, device, wo_class_error=False, args=None, vi
 
 
 # just testing
-def test_debug(targets, meta_info, B=0, h=224, w=224):
+def test_debug(args, targets, samples, B=0, h=224, w=224):
+    from arctic_tools.common.data_utils import denormalize_images
     from PIL import Image
     import cv2
 
+    root = os.path.join(args.coco_path, args.dataset_file)
+
     test = targets['keypoints'][B].view(-1, 21, 2)
 
-    imgname = meta_info['imgname'][B]
-    img = Image.open('/home/unist/Desktop/hdd/arctic/data/arctic_data/data/cropped_images/' + imgname)
-    img = img.resize((w,h))
-    img = np.array(img)
+    # imgname = meta_info['imgname'][B]
+    # img = Image.open(f'{root}/data/arctic_data/data/cropped_images/' + imgname)
+    # img = img.resize((w,h))
+    # img = np.array(img)
+    img = denormalize_images(samples[B])[0].permute(1,2,0).cpu().numpy()
+    img = (img*255).astype(np.uint8)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     color = [(255,0,0), (0,255,0), (0,0,255)]
     for i, t in enumerate(test):
@@ -266,7 +277,8 @@ def test_debug(targets, meta_info, B=0, h=224, w=224):
             x = int( t[j][0] * w )
             y = int( t[j][1] * h )
             cv2.line(img, (x, y), (x, y), color[i], 5)
-    plt.imshow(img)
+    # plt.imshow(img)
+    plt.imsave('test1.png', img)
 
     # samples, targets, meta_info = prefetcher.next()
     # continue

@@ -76,7 +76,7 @@ class TempoInferenceDataset(ArcticDataset):
         # #     for imgname in imgnames
         # # ]
         
-        self.aug_data = False
+        self.aug_data = False if not args.use_augm else True
         self.window_size = args.window_size
 
     def _process_imgnames(self, seq, split):
