@@ -432,11 +432,15 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
             #     if len(unexpected_ckpt_params) > 0:
             #         checkpoint['optimizer']['param_groups'][idx]['params'] = list(set(check['params']) - set(unexpected_ckpt_params))
             # optimizer.load_state_dict(checkpoint['optimizer'])
+    else:
+        print("Not using optim ckpt!")
     if not args.not_use_lr_scheduler_ckpt and lr_scheduler is not None:
         try:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         except:
             print("\n\nMissmatching of lr_scheduler's ckpt!\n\n")
+    else:
+        print("Not using lr ckpt!")
     
     if optimizer is not None and lr_scheduler is not None:
         print('\n\n')
