@@ -356,10 +356,13 @@ class ArcticDataset(Dataset):
         #         xy = np.dot(np.linalg.inv(t), tmp)                
         #         # xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
 
-        #         x = int(xy[0]/840 * 224)
-        #         y = int(xy[1]/600 * 224)
+        #         x = int((xy[0]/840) * 224)
+        #         # y = int((160*xy[1]/(600*224)) + 32/224)
+        #         y = int(
+        #             224*((xy[1]/(600*224)*160) + 32/224)
+        #         )
         #         cv2.line(test_img, (x, y), (x, y), color[b], 5)
-        # plt.imsave('test1.png', test_img)
+        # plt.imshow(test_img)
 
         for b in range(
             len(keypoints)):
@@ -367,7 +370,9 @@ class ArcticDataset(Dataset):
                 xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
 
                 x = (xy[0]/840)
-                y = (xy[1]/600)
+                y = (
+                    160*xy[1]/(600*224) + 32/224
+                )
                 keypoints[b][k_idx][0] = x
                 keypoints[b][k_idx][1] = y
         keypoints = keypoints.view(-1, 42)

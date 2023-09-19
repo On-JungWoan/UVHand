@@ -74,16 +74,21 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
-        test_debug(args, targets, samples, B=0, h=224, w=224)
+        # test_debug(args, targets, samples, B=0, h=224, w=224)
 
-        samples, targets, meta_info = prefetcher.next()
-        continue
+        # # from cfg import Config
+        # # cfg = Config(args)
+        # # targets, meta_info = arctic_pre_process(args, targets, meta_info)
+        
+        # # data = xdict()
+        # # data.merge(xdict(targets).prefix("targets."))
+        # # data.merge(xdict(meta_info).prefix("meta_info."))
+        # # visualize_arctic_result(args, data.to('cpu'), 'targets')
 
-        targets, meta_info = arctic_pre_process(args, targets, meta_info)
-
-        # test_debug(targets, meta_info, B=19, h=400, w=300)
         # samples, targets, meta_info = prefetcher.next()
         # continue
+
+        targets, meta_info = arctic_pre_process(args, targets, meta_info)
 
         # with torch.cuda.amp.autocast(enabled=args.amp):
         if need_tgt_for_training:
@@ -278,7 +283,7 @@ def test_debug(args, targets, samples, B=0, h=224, w=224):
             y = int( t[j][1] * h )
             cv2.line(img, (x, y), (x, y), color[i], 5)
     # plt.imshow(img)
-    plt.imsave('test1.png', img)
+    plt.imshow(img)
 
     # samples, targets, meta_info = prefetcher.next()
     # continue
