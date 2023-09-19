@@ -41,6 +41,7 @@ def get_general_args_parser():
     parser.add_argument('--onecyclelr', default=False, action='store_true')
     parser.add_argument('--resume_dir', default='', help='resume dir from checkpoint')
     parser.add_argument('--smooth_resume', default='', help='resume dir from checkpoint of smoothnet')
+    parser.add_argument('--use_augm', default=False, action='store_true')
 
     # for debug
     parser.add_argument('--debug', default=False, action='store_true')

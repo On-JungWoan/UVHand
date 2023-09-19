@@ -15,6 +15,7 @@ from common.data_utils import read_img
 from common.object_tensors import ObjectTensors
 from src.datasets.dataset_utils import get_valid, pad_jts2d
 from arctic_tools.common.data_utils import unormalize_kp2d
+from arctic_tools.common.data_utils import transform, get_transform
 
 from cfg import Config as cfg
 
@@ -139,7 +140,7 @@ class ArcticDataset(Dataset):
             self.aug_data,
             args.flip_prob,
             args.noise_factor,
-            args.rot_factor,
+            90, #args.rot_factor,
             args.scale_factor,
         )
 
@@ -167,7 +168,6 @@ class ArcticDataset(Dataset):
         # test = unnormalize_2d_kp(bbox2d_t, args.img_res)
         # test[:, 0] = (test[:, 0] * (840/224)).astype(np.int64)
         # (test[:, 0] * (840/224)).astype(np.int64)
-
 
         joints2d_r = data_utils.j2d_processing(
             joints2d_r, center, scale, augm_dict, args.img_res
@@ -337,10 +337,37 @@ class ArcticDataset(Dataset):
         keypoints = unormalize_kp2d(keypoints, args.img_res)
 
         # re-normalize
-        for b in range(len(keypoints)):
+        # import cv2
+        # import copy
+        # import matplotlib.pyplot as plt
+        # from arctic_tools.common.data_utils import denormalize_images, transform
+
+        # test_img = copy.deepcopy(img)
+        # test_img = denormalize_images(test_img)[0].permute(1,2,0).cpu().numpy()
+        # test_img = (test_img*255).astype(np.uint8)
+        # test_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
+
+        # color = [(255,0,0), (0,255,0), (0,0,255)]
+        # t = get_transform(center, augm_dict['sc']*scale, [args.img_res, args.img_res], rot=0)
+        # for b in range(len(keypoints)):
+        #     for k_idx in range(len(keypoints[b])):
+        #         tmp = torch.ones(3)
+        #         tmp[:2] = keypoints[b][k_idx]
+        #         xy = np.dot(np.linalg.inv(t), tmp)                
+        #         # xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
+
+        #         x = int(xy[0]/840 * 224)
+        #         y = int(xy[1]/600 * 224)
+        #         cv2.line(test_img, (x, y), (x, y), color[b], 5)
+        # plt.imsave('test1.png', test_img)
+
+        for b in range(
+            len(keypoints)):
             for k_idx in range(len(keypoints[b])):
-                x = keypoints[b][k_idx][0] / args.img_res * 840 / 840
-                y = (keypoints[b][k_idx][1] - 32) / args.img_res * 840 / 600
+                xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
+
+                x = (xy[0]/840)
+                y = (xy[1]/600)
                 keypoints[b][k_idx][0] = x
                 keypoints[b][k_idx][1] = y
         keypoints = keypoints.view(-1, 42)
