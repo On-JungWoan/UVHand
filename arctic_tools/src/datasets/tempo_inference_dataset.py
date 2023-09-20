@@ -76,7 +76,8 @@ class TempoInferenceDataset(ArcticDataset):
         # #     for imgname in imgnames
         # # ]
         
-        self.aug_data = False if not args.use_augm else True
+        self.aug_data = False if not args.use_augm or split == 'val' else True
+        print(f'\n\n{split} dataset use augmn : {self.aug_data}\n\n')
         self.window_size = args.window_size
 
     def _process_imgnames(self, seq, split):

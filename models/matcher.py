@@ -68,8 +68,6 @@ class ArcticMatcher(nn.Module):
 
             # We flatten to compute the cost matrices in a batch
             out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()
-            out_hand = outputs['pred_hand_key'].flatten(0, 1)
-            out_obj = outputs['pred_obj_key'].flatten(0, 1)
 
             # validation info.
             is_valid = targets['is_valid']
@@ -78,7 +76,6 @@ class ArcticMatcher(nn.Module):
             tgt_ids = torch.tensor(
                 sum([t for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1], [])
             ).to(device)
-            tgt_key = torch.cat([k for idx, k in enumerate(targets['keypoints']) if is_valid[idx] == 1], dim=0)
 
             l_hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
             r_hand_idx = torch.zeros_like(tgt_ids, dtype=torch.bool)
@@ -100,17 +97,23 @@ class ArcticMatcher(nn.Module):
             cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
             # Compute the L1 cost between boxes
-            cost_keypoints = torch.zeros_like(cost_class).to(device)
-            cost_l_hand = torch.cdist(out_hand, tgt_key[l_hand_idx], p=1)
-            cost_r_hand = torch.cdist(out_hand, tgt_key[r_hand_idx], p=1)
-            cost_obj = torch.cdist(out_obj, tgt_key[obj_idx], p=1)
+            if 'keypoints' in targets.keys():
+                out_hand = outputs['pred_hand_key'].flatten(0, 1)
+                out_obj = outputs['pred_obj_key'].flatten(0, 1)
+                tgt_key = torch.cat([k for idx, k in enumerate(targets['keypoints']) if is_valid[idx] == 1], dim=0)
+                
+                cost_keypoints = torch.zeros_like(cost_class).to(device)
+                cost_l_hand = torch.cdist(out_hand, tgt_key[l_hand_idx], p=1)
+                cost_r_hand = torch.cdist(out_hand, tgt_key[r_hand_idx], p=1)
+                cost_obj = torch.cdist(out_obj, tgt_key[obj_idx], p=1)
 
-            cost_keypoints[:, l_hand_idx] = cost_l_hand
-            cost_keypoints[:, r_hand_idx] = cost_r_hand
-            cost_keypoints[:, obj_idx] = cost_obj
+                cost_keypoints[:, l_hand_idx] = cost_l_hand
+                cost_keypoints[:, r_hand_idx] = cost_r_hand
+                cost_keypoints[:, obj_idx] = cost_obj
 
-            # C = self.cost_class * cost_class
-            C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
+                C = self.cost_keypoint * cost_keypoints + self.cost_class * cost_class
+            else:
+                C = self.cost_class * cost_class
             C = C.view(bs, num_queries, -1).cpu()
 
             sizes = [len(t) for idx, t in enumerate(targets['labels']) if is_valid[idx] == 1]

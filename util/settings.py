@@ -373,7 +373,11 @@ def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=N
     try:
         param_dict_type = args.param_dict_type
     except:
-        param_dict_type = 'default'
+        if args.modelname == 'deformable_detr':
+            param_dict_type = 'ddetr_in_mmdet'
+        else:
+            param_dict_type = 'default'
+
     if param_dict_type == 'default':
         param_dicts = [
             {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
