@@ -253,12 +253,10 @@ def main(args):
             # for deformable detr
             else:
                 train_pose(
-                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg
+                    model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args, cfg=cfg, lr_scheduler=lr_scheduler
                 )
                 if not args.onecyclelr:
-                    lr_scheduler.step()
-                else:
-                    raise Exception('Not implemented yet!')                        
+                    lr_scheduler.step()                
 
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
