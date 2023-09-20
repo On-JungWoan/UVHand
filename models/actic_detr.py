@@ -638,8 +638,8 @@ def build(args, cfg):
     # }        
     loss_weights = {
         'loss_ce': args.cls_loss_coef,
-        'loss_hand_keypoint': args.keypoint_loss_coef,
-        'loss_obj_keypoint': args.keypoint_loss_coef,        
+        # 'loss_hand_keypoint': args.keypoint_loss_coef,
+        # 'loss_obj_keypoint': args.keypoint_loss_coef,        
         # # 'loss_ce': 1,
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,
@@ -666,6 +666,9 @@ def build(args, cfg):
         # "loss/smooth/2d": 1.0,
         # "loss/smooth/3d": 1.0,
     }
+    if args.two_stage:
+        loss_weights['loss_hand_keypoint'] = args.keypoint_loss_coef
+        loss_weights['loss_obj_keypoint'] = args.keypoint_loss_coef
 
     if args.aux_loss:
         aux_weight_dict = {}
@@ -674,9 +677,12 @@ def build(args, cfg):
         aux_weight_dict.update({k + f'_interm': v for k, v in loss_weights.items()})
         loss_weights.update(aux_weight_dict)
 
+    if args.two_stage:
+        losses = ['labels', 'boxes']
+    else:
+        losses = ['labels']
+
     # losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
-    # losses = ['labels', 'cardinality', 'boxes']
-    losses = ['labels']
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
 
     obj_tensor = ObjectTensors()
