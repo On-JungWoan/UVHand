@@ -418,7 +418,7 @@ def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=N
         
     if args.onecyclelr:
         assert len_data_loader_train is not None
-        ep = 24 if args.modelname == 'deformable_detr' else 12
+        ep = 36 if args.modelname == 'deformable_detr' else 12
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len_data_loader_train, epochs=ep, pct_start=0.2)
     else:
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
