@@ -169,7 +169,7 @@ def augm_params(is_train, flip_prob, noise_factor, rot_factor, scale_factor):
         )
         # but it is zero with probability 3/5
         # if np.random.uniform() <= 0.6:
-        if np.random.uniform() <= 0.4:
+        if np.random.uniform() <= 0.2:
             rot = 0
 
     augm_dict = {}
