@@ -20,10 +20,26 @@ from arctic_tools.common.data_utils import transform, get_transform
 from cfg import Config as cfg
 
 class ArcticDataset(Dataset):
+    def __init__(self, args, split, seq=None):
+        self._load_data(args, split, seq)
+        self._process_imgnames(seq, split)
+        logger.info(
+            f"ImageDataset Loaded {self.split} split, num samples {len(self.imgnames)}"
+        )
+        print(f'\n\n{self.split} dataset use augmn : {self.aug_data}\n\n')
+
     def __getitem__(self, index):
         imgname = self.imgnames[index]
         data = self.getitem(imgname)
-        return data
+
+        for i in range(1, 3):
+            for k, v in data[i].items():
+                if isinstance(v, torch.Tensor):
+                    data[i][k] = v.unsqueeze(0)
+
+        return (
+            {'img':data[0].unsqueeze(0)}, data[1], data[2]
+        )
 
     def getitem(self, imgname, load_rgb=True):
         args = self.args
@@ -139,9 +155,9 @@ class ArcticDataset(Dataset):
         augm_dict = data_utils.augm_params(
             self.aug_data,
             args.flip_prob,
-            args.noise_factor,
-            90, #args.rot_factor,
-            args.scale_factor,
+            0.8, # args.noise_factor(0.4),
+            90, #args.rot_factor(30),
+            0.5, # args.scale_factor(0.25),
         )
 
         use_gt_k = args.use_gt_k
@@ -378,12 +394,14 @@ class ArcticDataset(Dataset):
                     keypoints[b][k_idx][1] = y
             keypoints = keypoints.view(-1, 42)
 
-            if args.method == 'arctic_lstm':
-                targets["labels"] = [(label)]
-                targets['keypoints'] = [keypoints]
-            else:
-                targets["labels"] = torch.tensor(label)
-                targets['keypoints'] = keypoints
+            targets["labels"] = [(label)]
+            targets['keypoints'] = [keypoints]
+            # if args.method == 'arctic_lstm':
+            #     targets["labels"] = [(label)]
+            #     targets['keypoints'] = [keypoints]
+            # else:
+            #     targets["labels"] = torch.tensor(label)
+            #     targets['keypoints'] = keypoints
             # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])
         else:
             assert isinstance(left_valid, np.int64)
@@ -395,10 +413,11 @@ class ArcticDataset(Dataset):
             if right_valid == 1:
                 label.append(hand_idx[1])
 
-            if args.method == 'arctic_lstm':
-                targets["labels"] = [(label)]
-            else:
-                targets["labels"] = torch.tensor(label)   
+            targets["labels"] = [(label)]
+            # if args.method == 'arctic_lstm':
+            #     targets["labels"] = [(label)]
+            # else:
+            #     targets["labels"] = torch.tensor(label)   
 
         return inputs, targets, meta_info
 
@@ -461,13 +480,6 @@ class ArcticDataset(Dataset):
         self.kp3d_cano = object_tensors.obj_tensors["kp_bottom"]
         self.obj_names = object_tensors.obj_tensors["names"]
         self.egocam_k = None
-
-    def __init__(self, args, split, seq=None):
-        self._load_data(args, split, seq)
-        self._process_imgnames(seq, split)
-        logger.info(
-            f"ImageDataset Loaded {self.split} split, num samples {len(self.imgnames)}"
-        )
 
     def __len__(self):
         return len(self.imgnames)
