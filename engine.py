@@ -534,7 +534,7 @@ def test_smoothnet(base_model, smoothnet, data_loader, device, cfg, args=None, v
 
 def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0, args=None, cfg=None):
+                    device: torch.device, epoch: int, max_norm: float = 0, args=None, cfg=None, lr_scheduler=None):
     # scaler = torch.cuda.amp.GradScaler(enabled=True)
 
     model.train()
@@ -641,6 +641,9 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         optimizer.step()
+
+        if args.onecyclelr:
+            lr_scheduler.step()
 
         # logger update
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
