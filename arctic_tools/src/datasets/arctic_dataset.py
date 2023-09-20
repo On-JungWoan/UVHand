@@ -321,69 +321,84 @@ class ArcticDataset(Dataset):
         hand_idx = cfg(args).hand_idx
         label.append(obj2idx[meta_info['query_names']])
 
-        small_obj_idx = [idx for idx in range(32) if idx %3 != 0]
-        keypoints = targets['object.kp2d.norm'][small_obj_idx].unsqueeze(0)
-        
-        assert isinstance(left_valid, np.int64)
-        assert isinstance(right_valid, np.int64)
-        # l hand
-        if left_valid == 1:
-            label.append(hand_idx[0])
-            keypoints = torch.cat([targets["mano.j2d.norm.l"].unsqueeze(0), keypoints])
-        # r hand
-        if right_valid == 1:
-            label.append(hand_idx[1])
-            keypoints = torch.cat([targets["mano.j2d.norm.r"].unsqueeze(0), keypoints])
-        keypoints = unormalize_kp2d(keypoints, args.img_res)
+        if args.modelname == 'dino' or args.two_stage:
+            small_obj_idx = [idx for idx in range(32) if idx %3 != 0]
+            keypoints = targets['object.kp2d.norm'][small_obj_idx].unsqueeze(0)
+            
+            assert isinstance(left_valid, np.int64)
+            assert isinstance(right_valid, np.int64)
+            # l hand
+            if left_valid == 1:
+                label.append(hand_idx[0])
+                keypoints = torch.cat([targets["mano.j2d.norm.l"].unsqueeze(0), keypoints])
+            # r hand
+            if right_valid == 1:
+                label.append(hand_idx[1])
+                keypoints = torch.cat([targets["mano.j2d.norm.r"].unsqueeze(0), keypoints])
+            keypoints = unormalize_kp2d(keypoints, args.img_res)
 
-        # re-normalize
-        # import cv2
-        # import copy
-        # import matplotlib.pyplot as plt
-        # from arctic_tools.common.data_utils import denormalize_images, transform
+            # re-normalize
+            # import cv2
+            # import copy
+            # import matplotlib.pyplot as plt
+            # from arctic_tools.common.data_utils import denormalize_images, transform
 
-        # test_img = copy.deepcopy(img)
-        # test_img = denormalize_images(test_img)[0].permute(1,2,0).cpu().numpy()
-        # test_img = (test_img*255).astype(np.uint8)
-        # test_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
+            # test_img = copy.deepcopy(img)
+            # test_img = denormalize_images(test_img)[0].permute(1,2,0).cpu().numpy()
+            # test_img = (test_img*255).astype(np.uint8)
+            # test_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
 
-        # color = [(255,0,0), (0,255,0), (0,0,255)]
-        # t = get_transform(center, augm_dict['sc']*scale, [args.img_res, args.img_res], rot=0)
-        # for b in range(len(keypoints)):
-        #     for k_idx in range(len(keypoints[b])):
-        #         tmp = torch.ones(3)
-        #         tmp[:2] = keypoints[b][k_idx]
-        #         xy = np.dot(np.linalg.inv(t), tmp)                
-        #         # xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
+            # color = [(255,0,0), (0,255,0), (0,0,255)]
+            # t = get_transform(center, augm_dict['sc']*scale, [args.img_res, args.img_res], rot=0)
+            # for b in range(len(keypoints)):
+            #     for k_idx in range(len(keypoints[b])):
+            #         tmp = torch.ones(3)
+            #         tmp[:2] = keypoints[b][k_idx]
+            #         xy = np.dot(np.linalg.inv(t), tmp)                
+            #         # xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
 
-        #         x = int((xy[0]/840) * 224)
-        #         # y = int((160*xy[1]/(600*224)) + 32/224)
-        #         y = int(
-        #             224*((xy[1]/(600*224)*160) + 32/224)
-        #         )
-        #         cv2.line(test_img, (x, y), (x, y), color[b], 5)
-        # plt.imshow(test_img)
+            #         x = int((xy[0]/840) * 224)
+            #         # y = int((160*xy[1]/(600*224)) + 32/224)
+            #         y = int(
+            #             224*((xy[1]/(600*224)*160) + 32/224)
+            #         )
+            #         cv2.line(test_img, (x, y), (x, y), color[b], 5)
+            # plt.imshow(test_img)
 
-        for b in range(
-            len(keypoints)):
-            for k_idx in range(len(keypoints[b])):
-                xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
+            for b in range(
+                len(keypoints)):
+                for k_idx in range(len(keypoints[b])):
+                    xy = transform(keypoints[b][k_idx], center, augm_dict['sc']*scale, [args.img_res, args.img_res], invert=1, rot=0)
 
-                x = (xy[0]/840)
-                y = (
-                    160*xy[1]/(600*224) + 32/224
-                )
-                keypoints[b][k_idx][0] = x
-                keypoints[b][k_idx][1] = y
-        keypoints = keypoints.view(-1, 42)
+                    x = (xy[0]/840)
+                    y = (
+                        160*xy[1]/(600*224) + 32/224
+                    )
+                    keypoints[b][k_idx][0] = x
+                    keypoints[b][k_idx][1] = y
+            keypoints = keypoints.view(-1, 42)
 
-        if args.method == 'arctic_lstm':
-            targets["labels"] = [(label)]
-            targets['keypoints'] = [keypoints]
+            if args.method == 'arctic_lstm':
+                targets["labels"] = [(label)]
+                targets['keypoints'] = [keypoints]
+            else:
+                targets["labels"] = torch.tensor(label)
+                targets['keypoints'] = keypoints
+            # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])
         else:
-            targets["labels"] = torch.tensor(label)
-            targets['keypoints'] = keypoints
-        # targets["obj_hand_valid"] = torch.cat([targets["is_valid"].unsqueeze(0), targets["left_valid"].unsqueeze(0), targets["right_valid"].unsqueeze(0)])
+            assert isinstance(left_valid, np.int64)
+            assert isinstance(right_valid, np.int64)
+            # l hand
+            if left_valid == 1:
+                label.append(hand_idx[0])
+            # r hand
+            if right_valid == 1:
+                label.append(hand_idx[1])
+
+            if args.method == 'arctic_lstm':
+                targets["labels"] = [(label)]
+            else:
+                targets["labels"] = torch.tensor(label)   
 
         return inputs, targets, meta_info
 

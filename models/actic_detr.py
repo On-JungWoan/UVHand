@@ -675,7 +675,8 @@ def build(args, cfg):
         loss_weights.update(aux_weight_dict)
 
     # losses = ['labels', 'cardinality', 'mano_poses', 'mano_betas', 'cam', 'obj_rotation']
-    losses = ['labels', 'cardinality', 'boxes']
+    # losses = ['labels', 'cardinality', 'boxes']
+    losses = ['labels']
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
 
     obj_tensor = ObjectTensors()
