@@ -155,8 +155,8 @@ class ArcticDataset(Dataset):
         augm_dict = data_utils.augm_params(
             self.aug_data,
             args.flip_prob,
-            0.8, # args.noise_factor(0.4),
-            90, #args.rot_factor(30),
+            0.4, # args.noise_factor(0.4),
+            180, #args.rot_factor(30),
             0.5, # args.scale_factor(0.25),
         )
 

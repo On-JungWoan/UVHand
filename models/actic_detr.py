@@ -195,11 +195,11 @@ class DeformableDETR(nn.Module):
 
                 # encoder input의 30% masking
                 src_input = self.input_proj[l](src) # 모든 feature의 output dim -> hidden dim으로 projection
-                # if self.two_stage:
-                #     src_mask = torch.cuda.FloatTensor(src_input.shape).uniform_() > 0.3
-                #     srcs.append(src_input*src_mask)
-                # else:
-                srcs.append(src_input)
+                if self.training:
+                    src_mask = torch.cuda.FloatTensor(src_input.shape).uniform_() > 0.3
+                    srcs.append(src_input*src_mask)
+                else:
+                    srcs.append(src_input)
                 
                 masks.append(mask)
                 assert mask is not None
@@ -215,11 +215,11 @@ class DeformableDETR(nn.Module):
                     pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
 
                     # encoder input의 30% masking
-                    # if self.two_stage:
-                    #     src_mask = torch.cuda.FloatTensor(src.shape).uniform_() > 0.3
-                    #     srcs.append(src*src_mask) # B, C, (28 & 14 & 7 & 4)
-                    # else:
-                    srcs.append(src)
+                    if self.training:
+                        src_mask = torch.cuda.FloatTensor(src.shape).uniform_() > 0.3
+                        srcs.append(src*src_mask) # B, C, (28 & 14 & 7 & 4)
+                    else:
+                        srcs.append(src)
 
                     masks.append(mask)
                     pos.append(pos_l)
