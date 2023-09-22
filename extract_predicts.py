@@ -2,6 +2,7 @@ import json
 import os.path as op
 import sys
 from pprint import pformat
+import pickle
 
 import torch
 from loguru import logger
@@ -82,7 +83,12 @@ def main(args=None, wrapper=None, cfg=None):
         logger.info(f"Processing seq {seq} {seq_idx + 1}/{len(seqs)}")
         out_list = []
         val_loader = factory.fetch_dataloader(args, "val", seq)
-        val_loader.dataset[0]
+        # val_loader.dataset[0]
+
+        roots = []
+        mano_poses = []
+        mano_shapes = []
+        objes = []
 
         with torch.no_grad():
             for idx, batch in tqdm(enumerate(val_loader), total=len(val_loader)):
@@ -97,44 +103,138 @@ def main(args=None, wrapper=None, cfg=None):
                 # extract outputs
                 outputs = wrapper(inputs['img'])
 
-                #
-                bs = args.test_batch_size
-                ws = args.window_size
+                # ####
+                # import cv2
+                # import matplotlib.pyplot as plt
+                # (h, w) = inputs['img'].shape[-2:]
+                # (cX, cY) = (w // 2, h // 2)
+                # M = cv2.getRotationMatrix2D((cX, cY), 45, 1.0)
+                # for i in range(len(inputs['img'])):
+                #     inputs['img'][i] = torch.tensor(cv2.warpAffine(inputs['img'][i].permute(1,2,0).cpu().numpy(), M, (w, h))).cuda().permute(2,0,1)
+                # ####
 
+                # #### req ####
                 # targets, meta_info = arctic_pre_process(args, targets, meta_info)
                 # origin_data = prepare_data(args, outputs, targets, meta_info, cfg)
                 # origin_stats = measure_error(origin_data, args.eval_metrics)
-                # print(nanmean(torch.tensor(origin_stats['cdev/ho'])).item())
+                # cdev = nanmean(torch.tensor(origin_stats['cdev/ho'])).item()
+                # print(f'cdev : {cdev}')
+                # #### req ####
 
                 # select query
                 root, mano_pose, mano_shape, obj = get_arctic_item(outputs, cfg, args.device)
+                pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
 
-                # root
-                if args.iter != 0:
-                    assert bs == 2
-                    root[0] = arctic_smoothing(root[0].view(2, -1, 3), args.iter)
-                    root[1] = arctic_smoothing(root[1].view(2, -1, 3), args.iter)
-                    root[2] = arctic_smoothing(root[2].view(2, -1, 3), args.iter)
-                    # mano
-                    mano_pose[0] = arctic_smoothing(mano_pose[0].view(2, -1, 48), args.iter)
-                    mano_pose[1] = arctic_smoothing(mano_pose[1].view(2, -1, 48), args.iter)
-                    mano_shape[0] = arctic_smoothing(mano_shape[0].view(2, -1, 10), args.iter)
-                    mano_shape[1] = arctic_smoothing(mano_shape[1].view(2, -1, 10), args.iter)
-                    # obj
-                    obj[0] = arctic_smoothing(obj[0].view(2, -1, 3), args.iter)
-                    obj[1] = arctic_smoothing(obj[1].view(2, -1, 1), args.iter)
+                # ####
+                # roots.append(root)
+                # mano_poses.append(mano_pose)
+                # mano_shapes.append(mano_shape)
+                # objes.append(obj)
+                # continue
+                # ####
 
-                # root = [targets['mano.cam_t.wp.l'], targets['mano.cam_t.wp.r'], targets['object.cam_t.wp']]
-                # mano_pose = [targets['mano.pose.l'], targets['mano.pose.r']]
-                # mano_shape = [targets['mano.beta.l'], targets['mano.beta.r']]
-                # obj_angle = [targets['object.rot'].view(-1, 3), targets['object.radian'].view(-1, 1)]
-                # pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
+                if not (targets['right_valid'].sum() == 0 and targets['left_valid'].sum() == 0):
+                    # if True:
+                    # if seq not in ['s05/box_use_02', 's05/espressomachine_use_01', 's05/notebook_grab_01', 's05/phone_use_03', 's05/phone_use_04', 's05/waffleiron_grab_01']:
+                    if seq in ['s05/box_grab_01', 's05/laptop_grab_01']:
 
-                # data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
-                # stats = measure_error(data, args.eval_metrics)
-                # print(nanmean(torch.tensor(stats['cdev/ho'])).item())
+                        with open(op.join(args.output_dir, 'pkl', f"{seq.replace('/', '_')}.pkl"), 'rb') as f:
+                            global_avg = pickle.load(f)
+                        root_stat, pose_stat, shape_stat, obj_stat = global_avg
+                        root_mean, root_bound = root_stat
+                        pose_mean, pose_bound = pose_stat
+                        shape_mean, shape_bound = shape_stat
+                        obj_mean, obj_bound = obj_stat
 
-                # # visualize_arctic_result(args, data, 'pred')
+                        def find_outlier(res, bound, targets, out_idx, no_valid=False):
+                            assert len(res) == len(bound)
+
+                            for i, r in enumerate(res):
+                                b, c = r.shape
+
+                                low, up = bound[i]
+                                if no_valid:
+                                    valid = torch.ones_like(targets['left_valid']).type(torch.bool)
+                                else:
+                                    valid = targets['left_valid'] if i == 0 else targets['right_valid'].type(torch.bool)
+                                    # valid = valid.view(-1, 1).repeat(1, c)
+                                    valid = valid.type(torch.bool)
+
+                                r = r.mean(-1)
+                                low = low.mean(-1)
+                                up = up.mean(-1)
+
+                                out_idx += (((r>up) + (r<low)) * valid)
+                            return out_idx
+
+                        bs = targets['right_valid'].shape[0]
+                        out_idx = torch.zeros(bs).type(torch.bool).cuda()
+                        out_idx = find_outlier(root, root_bound, targets, out_idx)
+                        out_idx = find_outlier(mano_pose, pose_bound, targets, out_idx)
+                        out_idx = find_outlier(mano_shape, shape_bound, targets, out_idx)
+                        out_idx = find_outlier(obj, obj_bound, targets, out_idx, no_valid=True)
+                        num_outlier = out_idx.sum()
+                        # print(f'num_outlier ; {num_outlier.item()}')
+
+                        p_l = pred['mano.v3d.cam.l'].view(bs, 1, -1).permute(1,2,0)
+                        p_r = pred['mano.v3d.cam.r'].view(bs, 1, -1).permute(1,2,0)
+                        p_o = pred['object.v.cam'].view(bs, 1, -1).permute(1,2,0)
+                        acc_l = p_l[:,:,:-2] - 2 * p_l[:,:,1:-1] + p_l[:,:,2:]
+                        acc_r = p_r[:,:,:-2] - 2 * p_r[:,:,1:-1] + p_r[:,:,2:]
+                        acc_o = p_o[:,:,:-2] - 2 * p_o[:,:,1:-1] + p_o[:,:,2:]
+                        acc_l = acc_l.view(-1, bs-2)
+                        acc_r = acc_r.view(-1, bs-2)
+                        acc_o = acc_o.view(-1, bs-2)
+                        max_l = abs(acc_l.mean(0)).max().item()
+                        max_r = abs(acc_r.mean(0)).max().item()
+                        max_o = abs(acc_o.mean(0)).max().item()
+                        # print(
+                        #     round(max_l, 4),
+                        #     round(max_r, 4),
+                        #     round(max_o, 4),
+                        #     end = '\n'
+                        # )
+
+                        # if False:
+                        if num_outlier >= 1:
+                        # if (max_l>0.04) or (max_r>0.04) or (max_o>0.04):
+                        # if cdev >= 75:
+                        # if (num_outlier >= 20 and ((max_l>0.04) or (max_r>0.04) or (max_o>0.04))):
+                            # or ((max_l>0.075) or (max_r>0.075) or (max_o>0.075)) or \
+                            #     cdev >= 85:
+                            global_avg = root_mean, pose_mean, shape_mean, obj_mean
+                            out = root, mano_pose, mano_shape, obj
+                            
+                            for list_idx, avg_list in enumerate(global_avg):
+                                for item_idx, avg in enumerate(avg_list):
+                                    # out[list_idx][item_idx][out_idx] = avg.view(1, -1).repeat(num_outlier, 1)
+                                    out[list_idx][item_idx] = avg.view(1, -1).repeat(bs, 1)
+
+                            # #### req ####
+                            # pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
+                            # data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
+                            # stats = measure_error(data, args.eval_metrics)
+                            # print(nanmean(torch.tensor(stats['cdev/ho'])).item())
+                            # #### req ####
+                            # visualize_arctic_result(args, origin_data, 'pred')
+
+                # ####
+                # # root
+                # if args.iter != 0:
+                #     assert bs == 2
+                #     root[0] = arctic_smoothing(root[0].view(2, -1, 3), args.iter)
+                #     root[1] = arctic_smoothing(root[1].view(2, -1, 3), args.iter)
+                #     root[2] = arctic_smoothing(root[2].view(2, -1, 3), args.iter)
+                #     # mano
+                #     mano_pose[0] = arctic_smoothing(mano_pose[0].view(2, -1, 48), args.iter)
+                #     mano_pose[1] = arctic_smoothing(mano_pose[1].view(2, -1, 48), args.iter)
+                #     mano_shape[0] = arctic_smoothing(mano_shape[0].view(2, -1, 10), args.iter)
+                #     mano_shape[1] = arctic_smoothing(mano_shape[1].view(2, -1, 10), args.iter)
+                #     # obj
+                #     obj[0] = arctic_smoothing(obj[0].view(2, -1, 3), args.iter)
+                #     obj[1] = arctic_smoothing(obj[1].view(2, -1, 1), args.iter)
+                # ####
+
                 # continue
                 
                 root_l, root_r, root_o = root
@@ -200,6 +300,51 @@ def main(args=None, wrapper=None, cfg=None):
                 out_dict = out_dict.subset(KEYS)
                 out_list.append(out_dict)
 
+        # ####
+        # def make_stat(res, cnt):
+        #     mean_list = []
+        #     bound_list = []
+
+        #     for i in range(cnt):
+        #         stack_tensor = torch.cat([r[i] for r in res])
+        #         mean_list.append(stack_tensor.mean(0))
+
+        #         q1 = torch.quantile(stack_tensor, 0.25, dim=0)
+        #         q3 = torch.quantile(stack_tensor, 0.75, dim=0)
+        #         upper = q1 - 1.5 * (q3 - q1)
+        #         under = q3 + 1.5 * (q3 - q1)
+        #         bound_list.append((upper, under))
+        #     return mean_list, bound_list
+
+        # root = make_stat(roots, 3)
+        # pose = make_stat(mano_poses, 2)
+        # shape = make_stat(mano_shapes, 2)
+        # obj = make_stat(objes, 2)
+
+        # # roots_0_mean = torch.cat([r[0] for r in roots]).mean(0)
+        # # roots_1_mean = torch.cat([r[1] for r in roots]).mean(0)
+        # # roots_2_mean = torch.cat([r[2] for r in roots]).mean(0)
+        # # poses_0_mean = torch.cat([r[0] for r in mano_poses]).mean(0)
+        # # poses_1_mean = torch.cat([r[1] for r in mano_poses]).mean(0)
+        # # shapes_0_mean = torch.cat([r[0] for r in mano_shapes]).mean(0)
+        # # shapes_1_mean = torch.cat([r[1] for r in mano_shapes]).mean(0)
+        # # obj_0_mean = torch.cat([r[0] for r in objes]).mean(0)
+        # # obj_1_mean = torch.cat([r[1] for r in objes]).mean(0)
+        
+        # # root = [roots_0_mean, roots_1_mean, roots_2_mean]
+        # # pose = [poses_0_mean, poses_1_mean]
+        # # shape = [shapes_0_mean, shapes_1_mean]
+        # # obj = [obj_0_mean, obj_1_mean]  
+
+        # from pathlib import Path
+        # save_path = op.join(args.output_dir, 'pkl')
+        # Path(save_path).mkdir(parents=True, exist_ok=True)
+        # with open(save_path+f"/{seq.replace('/', '_')}.pkl", 'wb') as f:
+        #     pickle.dump([root, pose, shape, obj], f)
+        # ####
+
+        # continue
+        
         out = interface.std_interface(out_list)
         interface.save_results(out, out_dir)
         logger.info("Done")

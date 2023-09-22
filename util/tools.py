@@ -27,7 +27,10 @@ def arctic_smoothing(target, count):
 
 
 def create_loss_dict(loss_value, loss_out, flag='', round_value=False, mode='baseline'):
-    res_dict = {'loss' : loss_value}
+    if not 'loss' in loss_out:
+        res_dict = {'loss' : loss_value}
+    else:
+        res_dict = {'loss' : loss_out['loss']}
 
     loss_keys = {
         # arctic
