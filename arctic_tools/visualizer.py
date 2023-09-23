@@ -76,7 +76,8 @@ def visualize_arctic_result(args, data, flag):
     args.headless = False
     viewer = ARCTICViewer(
         interactive=not args.headless,
-        size=(2048, 2048),
+        # size=(2048, 2048),
+        size=(1000, 1000),
         render_types=["rgb", "video"],
     )
 
