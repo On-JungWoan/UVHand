@@ -174,11 +174,12 @@ def main(args):
         assert not args.resume_dir
         model_without_ddp, optimizer, lr_scheduler = load_resume(args, model_without_ddp, args.resume, optimizer, lr_scheduler)
     else:
-        print('\n\n')
-        for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
-            print(f"lr of {idx} optimizer : {opt_p['lr']}")
-        print(lr_scheduler.state_dict())
-        print('\n\n')
+        if not args.eval:
+            print('\n\n')
+            for idx, opt_p in enumerate(optimizer.state_dict()['param_groups']):
+                print(f"lr of {idx} optimizer : {opt_p['lr']}")
+            print(lr_scheduler.state_dict())
+            print('\n\n')
 
     print("Start training")
     start_time = time.time()

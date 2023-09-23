@@ -22,7 +22,7 @@ from typing import Dict, List
 from util.misc import NestedTensor, is_main_process
 
 from .position_encoding import build_position_encoding
-
+from models.swin_transformer import build_swin_transformer
 
 class FrozenBatchNorm2d(torch.nn.Module):
     """
@@ -112,8 +112,12 @@ class Backbone(BackboneBase):
 class Joiner(nn.Sequential):
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
-        self.strides = backbone.strides
-        self.num_channels = backbone.num_channels
+        if backbone.__class__.__name__ != 'SwinTransformer':
+            self.strides = backbone.strides
+            self.num_channels = backbone.num_channels
+        else:
+            self.strides = [8,16,32]
+            self.num_channels = [384, 768, 1536]
 
     def forward(self, tensor_list: NestedTensor):
         xs = self[0](tensor_list)    # {'0': tensor([[[[2.2110e-0...ackward1>), '1': tensor([[[[0.4087, 0...ackward1>), '2': tensor([[[[1.0197e-0...ackward1>)}
@@ -128,11 +132,18 @@ class Joiner(nn.Sequential):
 
         return out, pos
 
-
 def build_backbone(args):
     position_embedding = build_position_encoding(args)
     train_backbone = args.lr_backbone > 0
     return_interm_layers = args.num_feature_levels > 1
-    backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
+    if args.backbone in ['swin_T_224_1k', 'swin_B_224_22k', 'swin_B_384_22k', 'swin_L_224_22k', 'swin_L_384_22k']:
+        return_interm_indices = [1, 2, 3]
+        pretrain_img_size = int(args.backbone.split('_')[-2])
+        backbone = build_swin_transformer(args.backbone, \
+                    pretrain_img_size=pretrain_img_size, \
+                    out_indices=tuple(return_interm_indices), \
+                dilation=args.dilation, use_checkpoint=False)
+    else:
+        backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
     model = Joiner(backbone, position_embedding)
     return model

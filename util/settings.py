@@ -5,6 +5,7 @@ import torch
 import argparse
 import numpy as np
 import os.path as op
+from collections import OrderedDict
 from util.slconfig import DictAction, SLConfig
 
 
@@ -378,6 +379,9 @@ def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=N
         else:
             param_dict_type = 'default'
 
+    if 'swin' in args.backbone:
+        param_dict_type = 'swin'
+
     if param_dict_type == 'default':
         param_dicts = [
             {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -407,7 +411,18 @@ def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=N
                         if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
                 "lr": args.lr * args.lr_linear_proj_mult,
             }
-        ]        
+        ]
+    elif param_dict_type == 'swin':
+        param_dicts = [
+            {
+                "params": [p for n, p in model.named_parameters() if ("backbone" not in n and "input_proj" not in n) and p.requires_grad],
+                "lr": args.lr,
+            },
+            {
+                "params": [p for n, p in model.named_parameters() if ("backbone" in n or "input_proj" in n) and p.requires_grad],
+                "lr": args.lr_backbone,
+            }
+        ]
 
     if args.sgd:
         optimizer = torch.optim.SGD(param_dicts, lr=general_lr, momentum=0.9,
@@ -446,6 +461,21 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
+    if 'swin' in args.backbone:
+        if 'backbone' in args.not_use_params:
+            print('load backbone ckpt!!')
+            backbone_ckpt_path = 'weights/backbone/checkpoint0029_4scale_swin.pth'
+            checkpoint = torch.load(backbone_ckpt_path, map_location='cpu')['model']
+            checkpoint = OrderedDict([k,v] for k,v in checkpoint.items() if 'backbone' in k)
+            missing_keys, unexpected_keys = model.load_state_dict(checkpoint, strict=False)
+            assert len(unexpected_keys) == 0
+
+        for n, p in model.named_parameters():
+            if ('backbone' not in n) and ('input_proj' not in n):
+                p.requires_grad = False
+                print(f'[freeze] {n}')
+
+
     if not args.not_use_optim_ckpt and optimizer is not None:
         try:
             optimizer.load_state_dict(checkpoint['optimizer'])
