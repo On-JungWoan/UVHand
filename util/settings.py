@@ -433,7 +433,7 @@ def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=N
         
     if args.onecyclelr:
         assert len_data_loader_train is not None
-        ep = 36 if args.modelname == 'deformable_detr' else 12
+        ep = 16 if args.modelname == 'deformable_detr' else 12
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len_data_loader_train, epochs=ep, pct_start=0.2)
     else:
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
@@ -461,19 +461,19 @@ def load_resume(args, model, resume, optimizer=None, lr_scheduler=None):
         for key in unexpected_keys:
             print(f'unexpected_keys : {key}')
     
-    if 'swin' in args.backbone:
-        if 'backbone' in args.not_use_params:
-            print('load backbone ckpt!!')
-            backbone_ckpt_path = 'weights/backbone/checkpoint0029_4scale_swin.pth'
-            checkpoint = torch.load(backbone_ckpt_path, map_location='cpu')['model']
-            checkpoint = OrderedDict([k,v] for k,v in checkpoint.items() if 'backbone' in k)
-            missing_keys, unexpected_keys = model.load_state_dict(checkpoint, strict=False)
-            assert len(unexpected_keys) == 0
+    # if 'swin' in args.backbone:
+    #     if 'backbone' in args.not_use_params:
+    #         print('load backbone ckpt!!')
+    #         backbone_ckpt_path = 'weights/backbone/checkpoint0029_4scale_swin.pth'
+    #         checkpoint = torch.load(backbone_ckpt_path, map_location='cpu')['model']
+    #         checkpoint = OrderedDict([k,v] for k,v in checkpoint.items() if 'backbone' in k)
+    #         missing_keys, unexpected_keys = model.load_state_dict(checkpoint, strict=False)
+    #         assert len(unexpected_keys) == 0
 
-        for n, p in model.named_parameters():
-            if ('backbone' not in n) and ('input_proj' not in n):
-                p.requires_grad = False
-                print(f'[freeze] {n}')
+    #     for n, p in model.named_parameters():
+    #         if ('backbone' not in n) and ('input_proj' not in n):
+    #             p.requires_grad = False
+    #             print(f'[freeze] {n}')
 
 
     if not args.not_use_optim_ckpt and optimizer is not None:
