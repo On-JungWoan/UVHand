@@ -142,7 +142,7 @@ def build_backbone(args):
         backbone = build_swin_transformer(args.backbone, \
                     pretrain_img_size=pretrain_img_size, \
                     out_indices=tuple(return_interm_indices), \
-                dilation=args.dilation, use_checkpoint=False)
+                dilation=args.dilation, use_checkpoint=True)
     else:
         backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
     model = Joiner(backbone, position_embedding)
