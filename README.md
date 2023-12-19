@@ -1,3 +1,26 @@
+# Paper
+
+- ARCTIC: A Dataset for Dexterous Bimanual Hand-Object Manipulation
+
+  <https://download.is.tue.mpg.de/arctic/arctic_april_24.pdf>
+
+<br>
+<br>
+
+
+# Experiments
+
+| Method                | CDev [mm] (*)     | MRRPE [mm]         | MDev [mm] | ACC [m/s^2]         | MPJPE [mm] | AAE [˚]  | Success Rate [%] |
+|:---------------------:|:--------:|:-------------:|:----:|:-----------:|:-----:|:----:|:------------:|
+| ARCTIC-baseline (SF)   | 44.7     | 28.3/36.2     | 11.8 | 5.0/9.1     | 19.2  | 6.4  | 53.9         |
+| ARCTIC-baseline (LSTM) | 43.3     | 31.8/35.0     | 8.6  | 3.5/5.7     | 20.0  | 6.6  | 53.5         |
+| Ours*                 | **36.7** | 35.7/**32.3** | 9.42 | **5.1**/7.7 | 22.5  | 6.5 | **63.9**     |
+
+> (*) means main matric.
+
+<br>
+<br>
+
 # Installation
 
 ### 1. cuda 11.6 설치
@@ -7,7 +30,7 @@
   
 #### 1-2. cuda-toolkit에 맞는 cudnn & nvidia driver 설치
 
-> 이미 설치되었다면 생략해도 됩니다.
+> 이미 설치되었다면 생략
 
 #### 1-3. cuda home 변경
 
@@ -25,7 +48,7 @@ source ~/.bashrc
 
 <br>
 
-### 2. git clone 받기
+### 2. git clone
 
 ```
 git clone https://github.com/On-JungWoan/2023-ICCV-Hand-Challenge.git --branch master
