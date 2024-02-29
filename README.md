@@ -86,7 +86,7 @@ arctic/
 ```
 
 #### 3-2. Dowload the necessary files
-Download the file linked below under the directory `2023-ICCV-Hand-Challenge/`.
+Download the file linked below under the directory `UVHand/`.
 > <https://drive.google.com/drive/folders/1mzXYXG92Yr2vHpE41yFhZztsu100V4R6?usp=sharing>
 
 ```
