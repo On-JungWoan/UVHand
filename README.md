@@ -1,8 +1,13 @@
-# Paper
+# Papers
 
-- ARCTIC: A Dataset for Dexterous Bimanual Hand-Object Manipulation
+- "EgoHANDS: benchmarks and challenges for egocentric hand pose estimation under hand-object interaction". In European Conference on Computer Vision (**ECCV**), 2024. (Submitted)
 
-  <https://download.is.tue.mpg.de/arctic/arctic_april_24.pdf>
+<br>
+<br>
+
+# Datasets
+
+- Zicong Fan, Omid Taheri, Dimitrios Tzionas, Muhammed Kocabas, Manuel Kaufmann, Michael J. Black, and Otmar Hilliges. "ARCTIC: A Dataset for Dexterous Bimanual Hand-Object Manipulation". In Computer Vision and Pattern Recognition (**CVPR**), 2023.  [[pdf]](https://download.is.tue.mpg.de/arctic/arctic_april_24.pdf)
 
 <br>
 <br>
