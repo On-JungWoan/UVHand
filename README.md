@@ -56,8 +56,8 @@ source ~/.bashrc
 ### 2. git clone
 
 ```
-git clone https://github.com/On-JungWoan/2023-ICCV-Hand-Challenge.git --branch master
-cd 2023-ICCV-Hand-Challenge
+git clone https://github.com/On-JungWoan/UVHand.git --branch master
+cd UVHand
 ```
 
 <br>
@@ -90,7 +90,7 @@ Download the file linked below under the directory `UVHand/`.
 > <https://drive.google.com/drive/folders/1mzXYXG92Yr2vHpE41yFhZztsu100V4R6?usp=sharing>
 
 ```
-2023-ICCV-Hand-Challenge/
+UVHand/
     data/
     mano/
 ```
