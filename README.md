@@ -1,6 +1,6 @@
 # Papers
 
-- "EgoHANDS: benchmarks and challenges for egocentric hand pose estimation under hand-object interaction". In European Conference on Computer Vision (**ECCV**), 2024. (Submitted)
+- Z. Fan, T. Ohkawa, L. Yang, N. Lin, Z. Zhou, S. Zhou, J. Liang, Z. Gao, X. Zhang, X. Zhang, F. Li, L. Zheng, F. Lu, K. Zeid, B. Leibe, **J. On**, S. Baek, A. Prakash, S. Gupta, K. He, Y. Sato, O. Hilliges, H. Chang, A. Yao. "EgoHANDS: benchmarks and challenges for egocentric hand pose estimation under hand-object interaction". In European Conference on Computer Vision (**ECCV**), 2024. [[pdf]](https://arxiv.org/pdf/2403.16428.pdf) (Submitted)
 
 <br>
 <br>
