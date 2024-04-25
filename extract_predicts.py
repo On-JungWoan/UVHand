@@ -131,17 +131,19 @@ def main(args=None, wrapper=None, cfg=None):
                 # ####
 
                 #### req ####
-                targets, meta_info = arctic_pre_process(args, targets, meta_info)
-                origin_data = prepare_data(args, outputs, targets, meta_info, cfg)
-                origin_stats = measure_error(origin_data, args.eval_metrics)
-                cdev = nanmean(torch.tensor(origin_stats['cdev/ho'])).item()
-                print(f'cdev : {cdev}')
+                # targets, meta_info = arctic_pre_process(args, targets, meta_info)
+                # origin_data = prepare_data(args, outputs, targets, meta_info, cfg)
+                # origin_stats = measure_error(origin_data, args.eval_metrics)
+                # cdev = nanmean(torch.tensor(origin_stats['cdev/ho'])).item()
+                # print(f'cdev : {cdev}')
                 #### req ####
 
+                #### req ####
                 # select query
                 root, mano_pose, mano_shape, obj = get_arctic_item(outputs, cfg, args.device)
-                pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
-                visualize_arctic_result(args, origin_data, 'pred')
+                # pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
+                # visualize_arctic_result(args, origin_data, 'pred')
+                #### req ####
 
                 # if cdev >= 100:
                     # out = root, mano_pose, mano_shape, obj
@@ -172,106 +174,108 @@ def main(args=None, wrapper=None, cfg=None):
                 # #### for test ####
 
                 # ####
-                # if cdev < 100:
-                #     roots.append(root)
-                #     mano_poses.append(mano_pose)
-                #     mano_shapes.append(mano_shape)
-                #     objes.append(obj)
-                # continue
+                # roots.append(root)
+                # mano_poses.append(mano_pose)
+                # mano_shapes.append(mano_shape)
+                # objes.append(obj)
+                # # continue
                 # ####
 
                 # if not (targets['right_valid'].sum() == 0 and targets['left_valid'].sum() == 0):
-                #     if True:
-                #     # if seq not in ['s05/box_use_02', 's05/espressomachine_use_01', 's05/notebook_grab_01', 's05/phone_use_03', 's05/phone_use_04', 's05/waffleiron_grab_01']:
-                #     # if seq in ['s05/box_grab_01', 's05/laptop_grab_01']:
+                # if True:
+                # if seq not in ['s05/box_use_02', 's05/espressomachine_use_01', 's05/notebook_grab_01', 's05/phone_use_03', 's05/phone_use_04', 's05/waffleiron_grab_01']:
+                # if seq in ['s05/box_grab_01', 's05/laptop_grab_01']:
 
-                #         # #### req ####
-                #         with open(op.join(args.output_dir, 'pkl', f"{seq.replace('/', '_')}.pkl"), 'rb') as f:
-                #             global_avg = pickle.load(f)
-                #         root_stat, pose_stat, shape_stat, obj_stat = global_avg
-                #         root_mean, root_bound = root_stat
-                #         pose_mean, pose_bound = pose_stat
-                #         shape_mean, shape_bound = shape_stat
-                #         obj_mean, obj_bound = obj_stat
-                #         # #### req ####
+                #     # #### req ####
+                #     with open(op.join(args.output_dir, 'pkl', f"{seq.replace('/', '_')}.pkl"), 'rb') as f:
+                #         global_avg = pickle.load(f)
+                #     root_stat, pose_stat, shape_stat, obj_stat = global_avg
+                #     root_mean, root_bound = root_stat
+                #     pose_mean, pose_bound = pose_stat
+                #     shape_mean, shape_bound = shape_stat
+                #     obj_mean, obj_bound = obj_stat
+                #     # #### req ####
 
-                #         def find_outlier(res, bound, targets, out_idx, no_valid=False):
-                #             assert len(res) == len(bound)
+                #     def find_outlier(res, bound, targets, out_idx, no_valid=True):
+                #         assert len(res) == len(bound)
 
-                #             for i, r in enumerate(res):
-                #                 b, c = r.shape
+                #         for i, r in enumerate(res):
+                #             b, c = r.shape
 
-                #                 low, up = bound[i]
-                #                 if no_valid:
-                #                     valid = torch.ones_like(targets['left_valid']).type(torch.bool)
-                #                 else:
-                #                     valid = targets['left_valid'] if i == 0 else targets['right_valid'].type(torch.bool)
-                #                     # valid = valid.view(-1, 1).repeat(1, c)
-                #                     valid = valid.type(torch.bool)
+                #             low, up = bound[i]
+                #             if no_valid:
+                #                 # valid = torch.ones_like(targets['left_valid']).type(torch.bool)
+                #                 valid = torch.ones(res[0].shape[0]).type(torch.bool).cuda()
+                #             else:
+                #                 valid = targets['left_valid'] if i == 0 else targets['right_valid'].type(torch.bool)
+                #                 # valid = valid.view(-1, 1).repeat(1, c)
+                #                 valid = valid.type(torch.bool)
 
-                #                 r = r.mean(-1)
-                #                 low = low.mean(-1)
-                #                 up = up.mean(-1)
+                #             r = r.mean(-1)
+                #             low = low.mean(-1)
+                #             up = up.mean(-1)
 
-                #                 out_idx += (((r>up) + (r<low)) * valid)
-                #             return out_idx
+                #             out_idx += (((r>up) + (r<low)) * valid)
+                #         return out_idx
 
-                #         # #### req ####
-                #         bs = targets['right_valid'].shape[0]
-                #         out_idx = torch.zeros(bs).type(torch.bool).cuda()
-                #         out_idx = find_outlier(root, root_bound, targets, out_idx)
-                #         out_idx = find_outlier(mano_pose, pose_bound, targets, out_idx)
-                #         out_idx = find_outlier(mano_shape, shape_bound, targets, out_idx)
-                #         out_idx = find_outlier(obj, obj_bound, targets, out_idx, no_valid=True)
-                #         num_outlier = out_idx.sum()
-                #         # print(f'num_outlier ; {num_outlier.item()}')
+                #     # #### req ####
+                #     # bs = targets['right_valid'].shape[0]
+                #     bs = root[0].shape[0]
+                #     out_idx = torch.zeros(bs).type(torch.bool).cuda()
+                #     out_idx = find_outlier(root, root_bound, targets, out_idx)
+                #     out_idx = find_outlier(mano_pose, pose_bound, targets, out_idx)
+                #     out_idx = find_outlier(mano_shape, shape_bound, targets, out_idx)
+                #     out_idx = find_outlier(obj, obj_bound, targets, out_idx, no_valid=True)
+                #     num_outlier = out_idx.sum()
+                #     # print(f'num_outlier ; {num_outlier.item()}')
 
-                #         p_l = pred['mano.v3d.cam.l'].view(bs, 1, -1).permute(1,2,0)
-                #         p_r = pred['mano.v3d.cam.r'].view(bs, 1, -1).permute(1,2,0)
-                #         p_o = pred['object.v.cam'].view(bs, 1, -1).permute(1,2,0)
-                #         acc_l = p_l[:,:,:-2] - 2 * p_l[:,:,1:-1] + p_l[:,:,2:]
-                #         acc_r = p_r[:,:,:-2] - 2 * p_r[:,:,1:-1] + p_r[:,:,2:]
-                #         acc_o = p_o[:,:,:-2] - 2 * p_o[:,:,1:-1] + p_o[:,:,2:]
-                #         acc_l = acc_l.view(-1, bs-2)
-                #         acc_r = acc_r.view(-1, bs-2)
-                #         acc_o = acc_o.view(-1, bs-2)
-                #         max_l = abs(acc_l.mean(0)).max().item()
-                #         max_r = abs(acc_r.mean(0)).max().item()
-                #         max_o = abs(acc_o.mean(0)).max().item()
-                #         # print(
-                #         #     round(max_l, 4),
-                #         #     round(max_r, 4),
-                #         #     round(max_o, 4),
-                #         #     end = '\n'
-                #         # )
+                #     p_l = pred['mano.v3d.cam.l'].view(bs, 1, -1).permute(1,2,0)
+                #     p_r = pred['mano.v3d.cam.r'].view(bs, 1, -1).permute(1,2,0)
+                #     p_o = pred['object.v.cam'].view(bs, 1, -1).permute(1,2,0)
+                #     acc_l = p_l[:,:,:-2] - 2 * p_l[:,:,1:-1] + p_l[:,:,2:]
+                #     acc_r = p_r[:,:,:-2] - 2 * p_r[:,:,1:-1] + p_r[:,:,2:]
+                #     acc_o = p_o[:,:,:-2] - 2 * p_o[:,:,1:-1] + p_o[:,:,2:]
+                #     acc_l = acc_l.view(-1, bs-2)
+                #     acc_r = acc_r.view(-1, bs-2)
+                #     acc_o = acc_o.view(-1, bs-2)
+                #     max_l = abs(acc_l.mean(0)).max().item()
+                #     max_r = abs(acc_r.mean(0)).max().item()
+                #     max_o = abs(acc_o.mean(0)).max().item()
+                #     # print(
+                #     #     round(max_l, 4),
+                #     #     round(max_r, 4),
+                #     #     round(max_o, 4),
+                #     #     end = '\n'
+                #     # )
+                #     #### req ####
+
+                #     # if False:
+                #     if num_outlier >= 1:
+                #     # if (max_l>0.04) or (max_r>0.04) or (max_o>0.04):
+                #     # if cdev >= 100:
+                #     # if (num_outlier >= 1 or ((max_l>0.02) or (max_r>0.02) or (max_o>0.02))) \
+                #         # or ((max_l>0.075) or (max_r>0.075) or (max_o>0.075)):
+                #         #     cdev >= 85:
+
+                #         #### req ####
+                #         global_avg = root_mean, pose_mean, shape_mean, obj_mean
+                #         out = root, mano_pose, mano_shape, obj
+                        
+                #         for list_idx, avg_list in enumerate(global_avg):
+                #             for item_idx, avg in enumerate(avg_list):
+                #                 # out[list_idx][item_idx][out_idx] = avg.view(1, -1).repeat(num_outlier, 1)
+                #                 out[list_idx][item_idx] = avg.view(1, -1).repeat(bs, 1)
+                #         print('changed')
                 #         #### req ####
 
-                #         # if False:
-                #         # if num_outlier >= 1:
-                #         # if (max_l>0.04) or (max_r>0.04) or (max_o>0.04):
-                #         if cdev >= 100:
-                #         # if (num_outlier >= 20 and ((max_l>0.04) or (max_r>0.04) or (max_o>0.04))):
-                #             # or ((max_l>0.075) or (max_r>0.075) or (max_o>0.075)) or \
-                #             #     cdev >= 85:
-
-                #             #### req ####
-                #             global_avg = root_mean, pose_mean, shape_mean, obj_mean
-                #             out = root, mano_pose, mano_shape, obj
-                            
-                #             for list_idx, avg_list in enumerate(global_avg):
-                #                 for item_idx, avg in enumerate(avg_list):
-                #                     # out[list_idx][item_idx][out_idx] = avg.view(1, -1).repeat(num_outlier, 1)
-                #                     out[list_idx][item_idx] = avg.view(1, -1).repeat(bs, 1)
-                #             #### req ####
-
-                #             #### req ####
-                #             pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
-                #             data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
-                #             stats = measure_error(data, args.eval_metrics)
-                #             print(nanmean(torch.tensor(stats['cdev/ho'])).item())
-                #             #### req ####
-                #             # visualize_arctic_result(args, data, 'pred')
-                #             # visualize_arctic_result(args, origin_data, 'pred')
+                #         #### req ####
+                #         # pred = make_output(args, root, mano_pose, mano_shape, obj, query_names, K)
+                #         # data = prepare_data(args, None, targets, meta_info, cfg, pred=pred)
+                #         # stats = measure_error(data, args.eval_metrics)
+                #         # print(nanmean(torch.tensor(stats['cdev/ho'])).item())
+                #         #### req ####
+                #         # visualize_arctic_result(args, data, 'pred')
+                #         # visualize_arctic_result(args, origin_data, 'pred')
 
                 # ####
                 # # root
@@ -299,7 +303,7 @@ def main(args=None, wrapper=None, cfg=None):
                 #     # visualize_arctic_result(args, origin_data, 'pred')                    
                 # ####
 
-                continue
+                # continue
                 
                 root_l, root_r, root_o = root
                 mano_pose_l, mano_pose_r = mano_pose
@@ -387,13 +391,13 @@ def main(args=None, wrapper=None, cfg=None):
         # # obj = [obj_0_mean, obj_1_mean]  
 
         # from pathlib import Path
-        # save_path = op.join(args.output_dir, 'best_pkl')
+        # save_path = op.join(args.output_dir, 'pkl')
         # Path(save_path).mkdir(parents=True, exist_ok=True)
         # with open(save_path+f"/{seq.replace('/', '_')}.pkl", 'wb') as f:
         #     pickle.dump([root, pose, shape, obj], f)
         # ####
 
-        continue
+        # continue
         
         out = interface.std_interface(out_list)
         interface.save_results(out, out_dir)
