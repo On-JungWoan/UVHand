@@ -11,6 +11,12 @@ import os
 import sys
 sys.path = ["./arctic_tools"] + sys.path
 
+# env settings
+env_file = 'datasets/arctic/common/environments.py'
+if not os.path.isfile(env_file):
+    with open(env_file, 'w') as f:
+        f.write('')
+
 import time
 import torch
 import random
@@ -300,10 +306,7 @@ if __name__ == '__main__':
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    # check arctic env
+    # make arctic env
     set_arctic_environments(args)
-    from datasets import build_dataset
-    import datasets.samplers as samplers
-    from engine import train_pose, test_pose
 
     main(args)
