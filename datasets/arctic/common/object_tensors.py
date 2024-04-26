@@ -16,7 +16,7 @@ from .torch_utils import pad_tensor_list
 from .xdict import xdict
 
 # root directory
-from .environments import DATASET_ROOT
+from . import environments as env
 
 # objects to consider for training so far
 OBJECTS = [
@@ -162,7 +162,7 @@ def construct_obj(object_model_p):
     json_p = op.join(object_model_p, "object_params.json")
     obj_name = op.basename(object_model_p)
 
-    top_sub_p = op.join(DATASET_ROOT, f"data/arctic_data/data/meta/object_vtemplates/{obj_name}/top_keypoints_300.json")
+    top_sub_p = op.join(env.DATASET_ROOT, f"data/arctic_data/data/meta/object_vtemplates/{obj_name}/top_keypoints_300.json")
     bottom_sub_p = top_sub_p.replace("top_", "bottom_")
     with open(top_sub_p, "r") as f:
         sub_top = np.array(json.load(f)["keypoints"])
@@ -206,7 +206,7 @@ def construct_obj(object_model_p):
     obj.parts = torch.LongTensor(parts)
     obj.parts_sub = torch.LongTensor(parts_sub)
 
-    with open(op.join(DATASET_ROOT, "data/arctic_data/data/meta/object_meta.json"), "r") as f:
+    with open(op.join(env.DATASET_ROOT, "data/arctic_data/data/meta/object_meta.json"), "r") as f:
         object_meta = json.load(f)
     obj.diameter = torch.FloatTensor(np.array(object_meta[obj.obj_name]["diameter"]))
     obj.bbox_top = torch.FloatTensor(bbox_top)
@@ -221,7 +221,7 @@ def construct_obj(object_model_p):
 def construct_obj_tensors(object_names):
     obj_list = []
     for k in object_names:
-        object_model_p = op.join(DATASET_ROOT, f"data/arctic_data/data/meta/object_vtemplates/%s" % (k))
+        object_model_p = op.join(env.DATASET_ROOT, f"data/arctic_data/data/meta/object_vtemplates/%s" % (k))
         obj = construct_obj(object_model_p)
         obj_list.append(obj)
 
