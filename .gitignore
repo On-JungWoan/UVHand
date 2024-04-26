@@ -1,0 +1,13 @@
+# cache files
+__pycache__/*
+*.pyc
+
+# Deformable Attetion
+*.egg
+*.so
+*.o
+models/ops/MultiScaleDeformableAttention.egg-info/SOURCES.txt
+
+# large files
+data/*
+mano/*
