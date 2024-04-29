@@ -1,3 +1,6 @@
+# exp
+exps/
+
 # large files
 *.pth
 data/*
