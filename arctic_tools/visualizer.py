@@ -117,7 +117,7 @@ def visualize_arctic_result(args, data, flag):
 
     save_foler = op.join(f'results/{args.dataset_file}/{args.setup}')
     if not op.isdir(save_foler):
-        os.mkdir(save_foler)
+        os.makedirs(save_foler, exist_ok=True)
 
     viewer.check_format(batch)
     viewer.render_seq(batch, out_folder=save_foler)
