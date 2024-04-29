@@ -105,3 +105,43 @@ conda activate hand
 pip install -r requirements.txt
 sh install.sh
 ```
+
+<br>
+
+### 5. Additional Settings
+
+To shoot the trouble, you need to follow the next several steps.
+
+- step 1)
+
+```
+# Type the following command
+vi /home/<user_name>/anaconda3/envs/<env_name>/lib/<python_version>/site-packages/smplx/body_models.py
+```
+
+- step 2)
+
+```
+# uncomment L1681
+
+joints = self.vertex_joint_selector(vertices, joints)
+```
+
+- step 3)
+
+```
+# comment L144~145, L1051~1052, L1911~1912
+
+# print(f'WARNING: You are using a {self.name()} model, with only'
+#       ' 10 shape coefficients.')
+
+...
+
+# print(f'WARNING: You are using a {self.name()} model, with only'
+#       ' 10 shape and 10 expression coefficients.')
+
+...
+
+# print(f'WARNING: You are using a {self.name()} model, with only'
+#       ' 10 shape and 10 expression coefficients.')
+```
