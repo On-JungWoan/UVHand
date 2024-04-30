@@ -10,6 +10,7 @@ mano/*
 /home/user/ojw/UVHand/models/ops/build/*
 
 # Environments
+cub-1.10.0/
 .vscode/
 datasets/arctic/common/environments.py
 .env
@@ -21,6 +22,7 @@ env.bak/
 venv.bak/
 
 # cache files
+*.ini
 __pycache__/*
 *.pyc
 
