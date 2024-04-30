@@ -739,7 +739,7 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
         if args.visualization:
             # assert samples.tensors.shape[0] == 1
             if args.dataset_file == 'arctic':
-                visualize_arctic_result(args, data, 'pred')
+                visualize_arctic_result(args, data, 'pred', iter=_)
             elif args.dataset_file == 'AssemblyHands':
                 visualize_assembly_result(args, cfg, outputs, targets, data_loader)
         else:

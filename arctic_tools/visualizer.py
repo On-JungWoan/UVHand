@@ -37,28 +37,26 @@ def construct_meshes(data, flag, device):
     v3d_l, f3d_l = seal_mano_mesh(v3d_l, f3d_l, False)
 
     # AIT meshes
-    hand_color = "white"
-    object_color = "light-blue"
     right = {
         "v3d": v3d_r.numpy(),
         "f3d": f3d_r.numpy(),
         "vc": None,
         "name": "right",
-        "color": hand_color,
+        "color": "light-blue",
     }
     left = {
         "v3d": v3d_l.numpy(),
         "f3d": f3d_l.numpy(),
         "vc": None,
         "name": "left",
-        "color": hand_color,
+        "color": "red",
     }
     obj = {
         "v3d": v3d_o.numpy(),
         "f3d": f3d_o,
         "vc": None,
         "name": "object",
-        "color": object_color,
+        "color": "white",
     }
 
     meshes = viewer_utils.construct_viewer_meshes(
@@ -72,8 +70,8 @@ def construct_meshes(data, flag, device):
     )
     return meshes, data
 
-def visualize_arctic_result(args, data, flag):
-    args.headless = False
+def visualize_arctic_result(args, data, flag, iter=0):
+    args.headless = True # aitviewer 작동 안해서 interactive 안됨
     viewer = ARCTICViewer(
         interactive=not args.headless,
         # size=(2048, 2048),
@@ -100,11 +98,23 @@ def visualize_arctic_result(args, data, flag):
 
     num_frames = min(len(imgnames), data[f"{flag}.object.cam_t"].shape[0])
 
-    # setup camera
+
+
+    ##################
+    ## setup camera ##
+    ##################
+    # TODO : Camera parameter는 추후 SLAM output으로 바꿔주기
+    
+    ## intrinsic params ##
     focal = 1000.0
-    rows = 224
-    cols = 224
+    rows = data['meta_info.center'][0][0] * 2
+    cols = data['meta_info.center'][0][1] * 2
     K = np.array([[focal, 0, rows / 2.0], [0, focal, cols / 2.0], [0, 0, 1]])
+    # rows = 224
+    # cols = 224
+    # K = np.array([[focal, 0, rows / 2.0], [0, focal, cols / 2.0], [0, 0, 1]])
+    
+    ## extrinsic params ##
     cam_t = data[f"{flag}.object.cam_t"]
     cam_t = cam_t[:num_frames]
     Rt = np.zeros((num_frames, 3, 4))
@@ -112,12 +122,19 @@ def visualize_arctic_result(args, data, flag):
     Rt[:, :3, :3] = np.eye(3)
     Rt[:, 1:3, :3] *= -1.0
 
+
+
     data = ViewerData(Rt=Rt, K=K, cols=cols, rows=rows, imgnames=imgnames)
     batch = meshes_all, data
 
-    save_foler = op.join(f'results/{args.dataset_file}/{args.setup}')
+    save_foler = op.join(f'{args.output_dir}/visualization/iter_{iter}')
     if not op.isdir(save_foler):
         os.makedirs(save_foler, exist_ok=True)
 
     viewer.check_format(batch)
     viewer.render_seq(batch, out_folder=save_foler)
+    
+    # destrory windows
+    viewer.v.on_close()
+    viewer.v.window.close()
+    viewer.v.window.destroy()
