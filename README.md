@@ -28,10 +28,10 @@
 
 # Installation
 
-### 1. Install cuda 11.6
-#### 1-1. Install CUDA-toolkit 11.6
+### 1. Install cuda 11.7
+#### 1-1. Install CUDA-toolkit 11.7
 
-  - [Install Link](https://developer.nvidia.com/cuda-11-6-0-download-archive?target_os=Linux&target_arch=x[…]tion=Ubuntu&target_version=20.04&target_type=runfile_local)
+  - [Install Link](https://developer.nvidia.com/cuda-11-7-0-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04)
   
 #### 1-2. Install cudnn & nvidia driver suitable for cuda-toolkit
 
@@ -44,8 +44,8 @@
 sudo vi ~/.bashrc
 
 # Add following two lines to the end of `.bashrc`.
-export PATH="/usr/local/cuda-11.0/bin:$PATH"
-export LD_LIBRARY_PATH="/usr/local/cuda-11.0/lib64:$LD_LIBRARY_PATH"
+export PATH="/usr/local/cuda-11.7/bin:$PATH"
+export LD_LIBRARY_PATH="/usr/local/cuda-11.7/lib64:$LD_LIBRARY_PATH"
 
 # Apply them to current terminal
 source ~/.bashrc
@@ -102,6 +102,45 @@ UVHand/
 ```
 conda env create -n hand python==3.10
 conda activate hand
-pip install -r requirements.txt
 sh install.sh
+```
+
+<br>
+
+### 5. Additional Settings
+
+To shoot the trouble, you need to follow the next several steps.
+
+- step 1)
+
+```
+# Type the following command
+vi /home/<user_name>/anaconda3/envs/<env_name>/lib/<python_version>/site-packages/smplx/body_models.py
+```
+
+- step 2)
+
+```
+# uncomment L1681
+
+joints = self.vertex_joint_selector(vertices, joints)
+```
+
+- step 3)
+
+```
+# comment L144~145, L1051~1052, L1911~1912
+
+# print(f'WARNING: You are using a {self.name()} model, with only'
+#       ' 10 shape coefficients.')
+
+...
+
+# print(f'WARNING: You are using a {self.name()} model, with only'
+#       ' 10 shape and 10 expression coefficients.')
+
+...
+
+# print(f'WARNING: You are using a {self.name()} model, with only'
+#       ' 10 shape and 10 expression coefficients.')
 ```
