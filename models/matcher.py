@@ -94,7 +94,10 @@ class ArcticMatcher(nn.Module):
             gamma = 2.0
             neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
             pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
-            cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
+            if len(tgt_ids) == 0:
+                return 0    # Class loss is not used if there are no valid labels
+            else:
+                cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
             # Compute the L1 cost between boxes
             if 'keypoints' in targets.keys():

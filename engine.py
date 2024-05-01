@@ -562,6 +562,11 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         if samples is None:
             samples, targets = prefetcher.next()
             continue
+        
+        # no valid samples
+        if targets['is_valid'].sum() == 0:
+            samples, targets = prefetcher.next()
+            continue
 
         # arctic pre process
         if args.dataset_file == 'arctic':
