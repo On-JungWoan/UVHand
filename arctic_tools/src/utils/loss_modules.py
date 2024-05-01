@@ -285,3 +285,10 @@ def mano_loss(pred_rotmat, pred_betas, gt_rotmat, gt_betas, criterion, is_valid=
     loss_regr_pose = vector_loss(pred_rotmat, gt_rotmat, criterion, is_valid)
     loss_regr_betas = vector_loss(pred_betas, gt_betas, criterion, is_valid)
     return loss_regr_pose, loss_regr_betas
+
+def obj_smt_loss(v_object):
+    bs = v_object.shape[0]
+    sm_loss = l1_loss(v_object[0], v_object[1]).sum()
+    for i in range(1, bs-1):
+        sm_loss += l1_loss(v_object[i], v_object[i+1]).sum()
+    return sm_loss

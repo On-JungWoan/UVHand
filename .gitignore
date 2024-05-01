@@ -2,6 +2,7 @@
 exps/
 
 # large files
+weights/
 *.pth
 data/*
 mano/*
@@ -20,6 +21,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+wandb/
 
 # cache files
 *.ini

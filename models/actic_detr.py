@@ -386,7 +386,7 @@ class SetArcticCriterion(nn.Module):
         self.cfg = cfg
         self.pre_process_models = pre_process_models
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_labels(self, outputs, targets, indices, num_boxes, log=False):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -501,21 +501,21 @@ class SetArcticCriterion(nn.Module):
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         # num_boxes = sum(len(t["labels"]) for t in targets)
-        try:
-            num_boxes = sum([v.shape[-1] for v in targets['labels']])
-        except:
-            num_boxes = sum([len(v) for v in targets['labels']])
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
-
-        # Compute all the requested losses
         losses = {}
-        for loss in self.losses:
-            kwargs = {}
-            losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
-            # losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
+        if isinstance(indices, list):
+            num_boxes = sum([len(v) for v in targets['labels']])
+            num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
+            if is_dist_avail_and_initialized():
+                torch.distributed.all_reduce(num_boxes)
+            num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+
+            # Compute all the requested losses
+            for loss in self.losses:
+                kwargs = {}
+                losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
+                # losses.update(self.get_loss(loss, outputs, targets, idx, num_boxes, **kwargs))
+        else:
+            assert isinstance(indices, int)
 
         pred = get_arctic_item(outputs, self.cfg, args.device)
         losses.update(compute_small_loss(pred, targets, meta_info, self.pre_process_models, args.img_res))
@@ -529,20 +529,23 @@ class SetArcticCriterion(nn.Module):
                 indices = self.matcher(aux_outputs, targets)
                 # idx = self.select_indices(cfg, aux_outputs, targets, device)
 
+                if isinstance(indices, list):
+                    for loss in self.losses:
+                        kwargs = {}
+                        if loss == 'labels':
+                            # Logging is enabled only for the last layer
+                            kwargs['log'] = False
+                        l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
+                        l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
+                        losses.update(l_dict)
+                    # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
+                else:
+                    assert isinstance(indices, int)
+                    
                 # aux_data = prepare_data(args, aux_outputs, targets, meta_info, self.cfg)
                 # aux_arctic_pred = aux_data.search('pred.', replace_to='')
                 # aux_arctic_gt = aux_data.search('targets.', replace_to='')
                 aux_pred = get_arctic_item(aux_outputs, self.cfg, args.device)
-
-                for loss in self.losses:
-                    kwargs = {}
-                    if loss == 'labels':
-                        # Logging is enabled only for the last layer
-                        kwargs['log'] = False
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
-                    l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
-                    losses.update(l_dict)
-                # l_dict = compute_loss(aux_arctic_pred, aux_arctic_gt, meta_info, args)
                 l_dict = compute_small_loss(aux_pred, targets, meta_info, self.pre_process_models, args.img_res)
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)
@@ -641,6 +644,8 @@ def build(args, cfg):
         # 'loss_hand_keypoint': args.keypoint_loss_coef,
         # 'loss_obj_keypoint': args.keypoint_loss_coef,        
         # # 'loss_ce': 1,
+        "loss/object/v3d_smoothing":0.1,
+        
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,
         "loss/object/cam_t":1.0,
