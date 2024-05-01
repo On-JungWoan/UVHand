@@ -144,3 +144,33 @@ joints = self.vertex_joint_selector(vertices, joints)
 # print(f'WARNING: You are using a {self.name()} model, with only'
 #       ' 10 shape and 10 expression coefficients.')
 ```
+
+<br>
+<br>
+
+# Train
+
+```
+# just for me
+# The following running command will be updated.
+
+PUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./tools/run_h2otr.sh \
+--dataset_file arctic \
+--method arctic_lstm \
+--feature_type origin \
+--coco_path ~/datasets \
+--backbone swin_L_384_22k \
+--split_window \
+--full_validation \
+--output_dir weights/arctic/smoothing_test \
+--resume weights/arctic/old/434.pth \
+--start_epoch 435 \
+--epochs 500 \
+--lr 2e-5 \
+--lr_backbone 2e-5 \
+--onecyclelr \
+--batch_size 1 \
+--val_batch_size 64 \
+--window_size 32 \
+--wandb
+```
