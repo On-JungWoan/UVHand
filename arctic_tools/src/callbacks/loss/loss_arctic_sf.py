@@ -356,6 +356,7 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     kp2d_o = tf.project2d_batch(K, kp3d_cam_o)
     pred_kp2d_o = data_utils.normalize_kp2d(kp2d_o, img_res)
     tmp_pred["object.v.cam"] = v3d_cam_o
+    
 
     # calc loss
     loss_dict["loss/object/kp2d"] = vector_loss(
@@ -368,6 +369,12 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     loss_dict["loss/object/radian"] = vector_loss(pred_radian, gt_radian, mse_loss, is_valid)
     loss_dict["loss/object/rot"] = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
 
+    # exp regarding obj smoothing
+    bs = v3d_cam_o.shape[0]
+    sm_loss = 0
+    for i in range(bs-1):
+        sm_loss += l1_loss(v3d_cam_o[i], v3d_cam_o[i+1]).sum()
+    loss_dict["loss/object/v3d_smoothing"] = sm_loss
 
     # cdev
     loss_cd = torch.tensor(0).to(torch.float32).to(device)
