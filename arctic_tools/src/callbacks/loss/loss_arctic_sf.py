@@ -15,7 +15,8 @@ from arctic_tools.src.utils.loss_modules import (
     object_kp3d_loss,
     vector_loss,
     compute_penetration_loss,
-    compute_smooth_loss
+    compute_smooth_loss,
+    obj_smt_loss
 )
 from arctic_tools.src.utils.eval_modules import compute_error_accel, eval_acc_pose
 
@@ -370,11 +371,7 @@ def compute_small_loss(pred, gt, meta_info, pre_process_models, img_res, device=
     loss_dict["loss/object/rot"] = vector_loss(pred_rot, gt_rot, mse_loss, is_valid)
 
     # exp regarding obj smoothing
-    bs = v3d_cam_o.shape[0]
-    sm_loss = 0
-    for i in range(bs-1):
-        sm_loss += l1_loss(v3d_cam_o[i], v3d_cam_o[i+1]).sum()
-    loss_dict["loss/object/v3d_smoothing"] = sm_loss
+    loss_dict["loss/object/v3d_smoothing"] = obj_smt_loss(v3d_cam_o)
 
     # cdev
     loss_cd = torch.tensor(0).to(torch.float32).to(device)
