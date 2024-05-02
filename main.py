@@ -26,6 +26,7 @@ import numpy as np
 import os.path as op
 from pathlib import Path
 import matplotlib.pyplot as plt
+import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 
 import json
@@ -74,7 +75,7 @@ def main(args):
     print(args)
     cfg = Config(args)
     
-    device = torch.device(args.device)
+    device = torch.device(f'{args.device}:{dist.get_rank()}')
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()

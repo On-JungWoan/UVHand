@@ -11,6 +11,14 @@ import matplotlib.pyplot as plt
 from pytorch3d.ops.knn import knn_points
 
 
+def prefetcher_next(prefetcher, dataset_name='arctic'):
+    if dataset_name == 'arctic':
+        return prefetcher.next()
+    else:
+        t1, t2 = prefetcher.next()
+        return t1, t2, 0
+
+
 def arctic_smoothing(target, count):
     # B, x1, x2 =target.shape
     B, f, x = target.shape
