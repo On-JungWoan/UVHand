@@ -31,8 +31,10 @@ from arctic_tools.visualizer import visualize_arctic_result
 from arctic_tools.process import arctic_pre_process, prepare_data, measure_error, get_arctic_item, make_output
 from util.tools import (
     extract_feature, visualize_assembly_result, eval_assembly_result, stat_round,
-    create_loss_dict, create_arctic_score_dict, arctic_smoothing, save_results
+    create_loss_dict, create_arctic_score_dict, arctic_smoothing, save_results,
+    prefetcher_next
 )
+import torch.distributed as dist
 from torch.cuda.amp import autocast
 # os.environ["CUB_HOME"] = os.getcwd() + '/cub-1.10.0'
 
@@ -70,7 +72,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
     print(header)
 
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
-    samples, targets, meta_info = prefetcher.next()
+    samples, targets, meta_info = prefetcher_next(prefetcher)
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
@@ -165,7 +167,7 @@ def train_dn(model: torch.nn.Module, criterion: torch.nn.Module,
                 round_value=True, mode='small'
             )
         )
-        samples, targets, meta_info = prefetcher.next()        
+        samples, targets, meta_info = prefetcher_next(prefetcher)
 
 
     # gather the stats from all processes
@@ -190,7 +192,7 @@ def eval_dn(model, cfg, data_loader, device, wo_class_error=False, args=None, vi
 
     # set prefetcher
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
-    samples, targets, meta_info = prefetcher.next()
+    samples, targets, meta_info = prefetcher_next(prefetcher)
 
     # set logger
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -248,7 +250,7 @@ def eval_dn(model, cfg, data_loader, device, wo_class_error=False, args=None, vi
             if _ == args.num_debug:
                 print("BREAK!"*5)
                 break
-        samples, targets, meta_info = prefetcher.next()
+        samples, targets, meta_info = prefetcher_next(prefetcher)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -306,7 +308,7 @@ def train_smoothnet(
 
     # prefetcher settings
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
-    samples, targets, meta_info = prefetcher.next()
+    samples, targets, meta_info = prefetcher_next(prefetcher)
     # pbar = tqdm(data_loader)
     pbar = tqdm(range(len(data_loader)))
 
@@ -421,7 +423,7 @@ def train_smoothnet(
         )
         # del samples, targets, meta_info
         # torch.cuda.empty_cache()
-        samples, targets, meta_info = prefetcher.next()
+        samples, targets, meta_info = prefetcher_next(prefetcher)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -439,7 +441,7 @@ def test_smoothnet(base_model, smoothnet, data_loader, device, cfg, args=None, v
 
     # prefetcher settings
     prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
-    samples, targets, meta_info = prefetcher.next()
+    samples, targets, meta_info = prefetcher_next(prefetcher)
 
     # set logger
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -522,7 +524,7 @@ def test_smoothnet(base_model, smoothnet, data_loader, device, cfg, args=None, v
                     break
 
         # next step
-        samples, targets, meta_info = prefetcher.next()
+        samples, targets, meta_info = prefetcher_next(prefetcher)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -549,25 +551,25 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
     print_freq = 10
 
     # prefetcher settings
-    if args.dataset_file == 'arctic':
+    dataset_name = args.dataset_file
+    if dataset_name == 'arctic':
         prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
-        samples, targets, meta_info = prefetcher.next()
     else:
         prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-        samples, targets = prefetcher.next()
+    samples, targets, meta_info = prefetcher_next(prefetcher)
     pbar = tqdm(range(len(data_loader)))
 
     for _ in pbar:
-        # not exist images
-        if samples is None:
-            samples, targets = prefetcher.next()
+        # for not valid samples
+        num_err = torch.tensor(0).to(f'cuda:{dist.get_rank()}')
+        if (samples is None) or (targets['is_valid'].sum() == 0):
+            print(f"Not valid samples in {dist.get_rank()}")
+            num_err += 1
+        dist.barrier()
+        dist.all_reduce(num_err)
+        if num_err >= 1:
             continue
-        
-        # no valid samples
-        if targets['is_valid'].sum() == 0:
-            samples, targets = prefetcher.next()
-            continue
-
+            
         # arctic pre process
         if args.dataset_file == 'arctic':
             targets, meta_info = arctic_pre_process(args, targets, meta_info)
@@ -579,12 +581,8 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
             )
 
             # next samples
-            if args.dataset_file == 'arctic':
-                samples, targets, meta_info = prefetcher.next()
-                continue
-            else:
-                samples, targets = prefetcher.next()
-                continue
+            samples, targets, meta_info = prefetcher_next(prefetcher)
+            continue
 
         # with torch.cuda.amp.autocast(enabled=True):
         # Training script begin from here
@@ -672,15 +670,15 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
                     round_value=True, mode='small'
                 )
             )
-            samples, targets, meta_info = prefetcher.next()
         elif args.dataset_file == 'AssemblyHands':
             pbar.set_postfix({
                 'loss' : loss_value,
                 'ce_loss' : loss_dict_reduced_scaled['loss_ce'].item(),
                 'hand': loss_dict_reduced_scaled['loss_hand_keypoint'].item(), 
             })
-            samples, targets = prefetcher.next()
-
+        
+        samples, targets, meta_info = prefetcher_next(prefetcher)
+    
     if args.extract:
         return 0
 
@@ -691,7 +689,9 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         result = create_loss_dict(loss_value, train_stat, flag='train', mode='small')
 
     # for wandb
-    save_results(args, epoch, result, train_stat, flag='train')
+    save_results(args, epoch, result, train_stat, flag='train')    
+    del prefetcher, samples, targets, meta_info
+    torch.cuda.empty_cache()
     return train_stat
 
 
@@ -701,10 +701,9 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
 
     if args.dataset_file == 'arctic':
         prefetcher = arctic_prefetcher(data_loader, device, prefetch=True)
-        samples, targets, meta_info = prefetcher.next()
     else:
         prefetcher = data_prefetcher(data_loader, device, prefetch=True)
-        samples, targets = prefetcher.next()
+    samples, targets, meta_info = prefetcher_next(prefetcher)
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     pbar = tqdm(range(len(data_loader)))
@@ -722,12 +721,8 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
             )
 
             # next samples
-            if args.dataset_file == 'arctic':
-                samples, targets, meta_info = prefetcher.next()
-                continue
-            else:
-                samples, targets = prefetcher.next()
-                continue
+            samples, targets, meta_info = prefetcher_next(prefetcher)
+            continue
 
         # Testing script begin from here
         # with torch.cuda.amp.autocast(enabled=True):
@@ -775,7 +770,7 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
                     print(replace_cdev)
 
                     visualize_arctic_result(args, test_data, 'pred')
-                    samples, targets, meta_info = prefetcher.next()
+                    samples, targets, meta_info = prefetcher_next(prefetcher)
                     # continue
 
                 # measure error
@@ -801,10 +796,7 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
             if args.num_debug == _:
                 break
 
-        if args.dataset_file == 'arctic':
-            samples, targets, meta_info = prefetcher.next()
-        else:
-            samples, targets = prefetcher.next()
+        samples, targets, meta_info = prefetcher_next(prefetcher)
 
     if args.extract:
         return 0
@@ -812,7 +804,9 @@ def test_pose(model, data_loader, device, cfg, args=None, vis=False, save_pickle
     metric_logger.synchronize_between_processes()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-    save_results(args, epoch, create_arctic_score_dict(stats), stats, flag='eval')         
+    save_results(args, epoch, create_arctic_score_dict(stats), stats, flag='eval')
+    del prefetcher, samples, targets, meta_info
+    torch.cuda.empty_cache()    
     return stats
 
 
