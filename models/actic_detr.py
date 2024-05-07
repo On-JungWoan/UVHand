@@ -644,7 +644,7 @@ def build(args, cfg):
         # 'loss_hand_keypoint': args.keypoint_loss_coef,
         # 'loss_obj_keypoint': args.keypoint_loss_coef,        
         # # 'loss_ce': 1,
-        "loss/object/v3d_smoothing":0.1,
+        "loss/object/v3d_smoothing":0.0005,
         
         "loss/mano/cam_t/r":1.0,
         "loss/mano/cam_t/l":1.0,

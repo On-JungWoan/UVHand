@@ -568,6 +568,7 @@ def train_pose(model: torch.nn.Module, criterion: torch.nn.Module,
         dist.barrier()
         dist.all_reduce(num_err)
         if num_err >= 1:
+            samples, targets, meta_info = prefetcher_next(prefetcher)
             continue
             
         # arctic pre process

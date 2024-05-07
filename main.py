@@ -54,6 +54,12 @@ from util.settings import (
 
 # main script
 def main(args):
+    input_cmd = ''
+    for ag in sys.argv:
+        input_cmd += (ag + ' ')
+    with open(os.path.join(args.output_dir, 'running_cmd.sh'), 'w') as f:
+        f.write(f'python {input_cmd}')
+    
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
@@ -75,7 +81,10 @@ def main(args):
     print(args)
     cfg = Config(args)
     
-    device = torch.device(f'{args.device}:{dist.get_rank()}')
+    if args.distributed:
+        device = torch.device(f'{args.device}:{dist.get_rank()}')
+    else:
+        device = torch.device(args.device)
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
