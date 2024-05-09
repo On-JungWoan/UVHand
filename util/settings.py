@@ -6,8 +6,12 @@ import argparse
 import numpy as np
 import os.path as op
 from collections import OrderedDict
+from util.tools import match_name_keywords
 from util.slconfig import DictAction, SLConfig
-
+from datasets import build_dataset
+import datasets.samplers as samplers
+from torch.utils.data import DataLoader
+from arctic_tools.src.factory import collate_custom_fn as lstm_fn
 
 # general arguments
 def get_general_args_parser():
@@ -366,7 +370,6 @@ def get_dn_detr_args_parser(parser):
     return parser
 
 
-from util.tools import match_name_keywords
 def set_training_scheduler(args, model, len_data_loader_train=None, general_lr=None):
     if general_lr is None:
         general_lr = args.lr
@@ -555,3 +558,67 @@ def set_dino_args(args):
         args.debug = False
 
     return args
+
+import sys
+import wandb
+import util.misc as utils
+
+def set_wandb(
+        args,
+        target_model,
+        project_name='2023-ICCV-hand-New',
+        entity_name='jeongwanon',
+    ):
+    
+    # init wandb
+    if (not args.distributed) or (utils.get_local_rank() == 0):
+        wandb.init(
+            project=project_name,
+            entity=entity_name
+        )
+        wandb.config.update(args)
+        wandb.watch(target_model)
+        
+def save_cmd(output_dir):
+    input_cmd = ''
+    for ag in sys.argv:
+        input_cmd += (ag + ' ')
+    with open(os.path.join(output_dir, 'running_cmd.sh'), 'w') as f:
+        f.write(f'python {input_cmd}')
+        
+def make_dataset(args):
+    if not args.eval:
+        dataset_train = build_dataset(image_set='train', args=args)
+    dataset_val = build_dataset(image_set='val', args=args)
+
+    if args.dataset_file == 'arctic':
+        collate_fn=lstm_fn
+    else:
+        collate_fn=utils.collate_fn
+
+    if args.distributed:
+        if args.cache_mode:
+            if not args.eval:
+                sampler_train = samplers.NodeDistributedSampler(dataset_train)
+            sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
+        else:
+            if not args.eval:
+                sampler_train = samplers.DistributedSampler(dataset_train)
+            sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
+    else:
+        if not args.eval:
+            sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+
+    if not args.eval:
+        batch_sampler_train = torch.utils.data.BatchSampler(
+            sampler_train, args.batch_size, drop_last=True)
+        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
+                                    collate_fn=collate_fn, num_workers=args.num_workers,
+                                    pin_memory=True)
+    # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
+    data_loader_val = DataLoader(dataset_val, args.val_batch_size, sampler=sampler_val,
+                                drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
+                                pin_memory=True)
+    
+    return sampler_train, sampler_val, data_loader_train, data_loader_val

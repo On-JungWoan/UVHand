@@ -25,12 +25,9 @@ import datetime
 import numpy as np
 import os.path as op
 from pathlib import Path
-import matplotlib.pyplot as plt
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 
-import json
-import wandb
 from glob import glob
 from cfg import Config
 import util.misc as utils
@@ -45,48 +42,28 @@ from engine import train_pose, test_pose, train_dn, eval_dn, eval_coco
 
 from util.tools import extract_epoch
 from util.scripts import smoothnet_main, submit_result
-from util.settings import (
-    get_general_args_parser, get_deformable_detr_args_parser, get_dino_arg_parser,
-    load_resume, set_training_scheduler, set_arctic_environments,
-    set_dino_args
-)
+from util.settings import *
 
 
 # main script
 def main(args):
-    input_cmd = ''
-    for ag in sys.argv:
-        input_cmd += (ag + ' ')
-    with open(os.path.join(args.output_dir, 'running_cmd.sh'), 'w') as f:
-        f.write(f'python {input_cmd}')
-    
+    # for save running cmd
+    save_cmd(args.output_dir)
+
+    # DDP setup
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
+    # for dino
     if args.modelname == 'dino':
         set_dino_args(args)
-
-    if args.wandb:
-        if args.distributed and utils.get_local_rank() != 0:
-            pass
-        else:
-            wandb.init(
-                project='2023-ICCV-hand-New',
-                entity='jeongwanon'
-            )
-            wandb.config.update(args)
-
-    if args.frozen_weights is not None:
-        assert args.masks, "Frozen training is meant for segmentation only"
-    print(args)
     cfg = Config(args)
-    
+
+    # fix the seed & set device
     if args.distributed:
         device = torch.device(f'{args.device}:{dist.get_rank()}')
     else:
-        device = torch.device(args.device)
-
-    # fix the seed for reproducibility
+        device = torch.device(args.device)    
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -96,96 +73,38 @@ def main(args):
     cudnn.deterministic = True
     random.seed(seed)
 
-    # test
+    # for submit
     if args.extraction_mode != '':
         sys.path.pop(sys.path.index('./arctic_tools'))
         sys.path = ["./origin_arctic"] + sys.path # Change to your own path.
         submit_result(args, cfg)
         sys.exit(0)
 
-    if not args.eval:
-        dataset_train = build_dataset(image_set='train', args=args)
-    dataset_val = build_dataset(image_set='val', args=args)
-
+    # model setup
     model, criterion = build_model(args, cfg)
     model.to(device)
     model_without_ddp = model
 
+    # wandb setup
     if args.wandb:
-        if args.distributed:
-            if utils.get_local_rank() == 0:
-                wandb.watch(model_without_ddp)
-        else:
-            wandb.watch(model_without_ddp)
+        set_wandb(args, model_without_ddp)
 
+    # load dataset
+    sampler_train, sampler_val, data_loader_train, data_loader_val = make_dataset(args)
 
-    if args.dataset_file == 'arctic':
-        collate_fn=lstm_fn
-        # if args.method == 'arctic_lstm' and args.split_window:
-        #         collate_fn=lstm_fn
-        # else:
-        #     collate_fn=utils.collate_custom_fn
-    else:
-        collate_fn=utils.collate_fn
-
-    def collate_test(dataset_train=None, dataset_val=None):
-        if dataset_train is not None:
-            test_train = [
-                [dataset_train[13][0], dataset_train[13][1], dataset_train[13][2]],
-                [dataset_train[1][0], dataset_train[1][1], dataset_train[1][2]],
-                [dataset_train[2][0], dataset_train[2][1], dataset_train[2][2]],
-                [dataset_train[3][0], dataset_train[3][1], dataset_train[3][2]]
-            ]
-            tt = collate_fn(test_train)
-        if dataset_val is not None:
-            test_val = [
-                [dataset_val[13][0], dataset_val[13][1], dataset_val[13][2]],
-                [dataset_val[1][0], dataset_val[1][1], dataset_val[1][2]],
-                [dataset_val[2][0], dataset_val[2][1], dataset_val[2][2]],
-                [dataset_val[3][0], dataset_val[3][1], dataset_val[3][2]]
-            ]    
-            tv = collate_fn(test_val)
-    # collate_test(dataset_val=dataset_val)
-
-    if args.distributed:
-        if args.cache_mode:
-            if not args.eval:
-                sampler_train = samplers.NodeDistributedSampler(dataset_train)
-            sampler_val = samplers.NodeDistributedSampler(dataset_val, shuffle=False)
-        else:
-            if not args.eval:
-                sampler_train = samplers.DistributedSampler(dataset_train)
-            sampler_val = samplers.DistributedSampler(dataset_val, shuffle=False)
-    else:
-        if not args.eval:
-            sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-    if not args.eval:
-        batch_sampler_train = torch.utils.data.BatchSampler(
-            sampler_train, args.batch_size, drop_last=True)
-        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                    collate_fn=collate_fn, num_workers=args.num_workers,
-                                    pin_memory=True)
-    # data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-    data_loader_val = DataLoader(dataset_val, args.val_batch_size, sampler=sampler_val,
-                                drop_last=False, collate_fn=collate_fn, num_workers=args.num_workers,
-                                pin_memory=True)
-
+    # set lr scheduler
     # lr_backbone_names = ["backbone.0", "backbone.neck", "input_proj", "transformer.encoder"]
     if args.eval or args.train_smoothnet:
         optimizer = lr_scheduler = None
     else:
         optimizer, lr_scheduler = set_training_scheduler(args, model_without_ddp, len_data_loader_train = len(data_loader_train))
 
+    # for DDP
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
-    if args.frozen_weights is not None:
-        checkpoint = torch.load(args.frozen_weights, map_location='cpu')
-        model_without_ddp.detr.load_state_dict(checkpoint['model'])
-
+    # load ckpt
     if args.resume:
         assert not args.resume_dir
         model_without_ddp, optimizer, lr_scheduler = load_resume(args, model_without_ddp, args.resume, optimizer, lr_scheduler)
@@ -197,17 +116,9 @@ def main(args):
             print(lr_scheduler.state_dict())
             print('\n\n')
 
+    # start training
     print("Start training")
     start_time = time.time()
-
-
-    if args.train_smoothnet:
-        assert utils.get_local_size() == 1, 'Not implemented yet!'
-        if args.eval:
-            data_loader_train = None
-        smoothnet_main(model_without_ddp, data_loader_train, data_loader_val, args, cfg)
-        sys.exit(0)
-
 
     # for evaluation
     if args.eval:
