@@ -127,7 +127,7 @@ def visualize_arctic_result(args, data, flag, iter=0):
     data = ViewerData(Rt=Rt, K=K, cols=cols, rows=rows, imgnames=imgnames)
     batch = meshes_all, data
 
-    save_foler = op.join(f'{args.output_dir}/visualization/iter_{iter}')
+    save_foler = op.join(f'{args.output_dir}/visualization_{args.start_epoch}/iter_{iter}')
     if not op.isdir(save_foler):
         os.makedirs(save_foler, exist_ok=True)
 
