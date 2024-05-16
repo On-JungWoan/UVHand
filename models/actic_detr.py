@@ -663,7 +663,7 @@ def build(args, cfg):
         "loss/object/kp2d":1.0,
         "loss/object/kp3d":5.0,
         "loss/object/radian":1.0,
-        "loss/object/rot":1000.0,
+        "loss/object/rot":1.0,
         "loss/object/transl":10.0,
         # # "loss/object/transl":10.0,
         # # "loss/penetr": 0.1,

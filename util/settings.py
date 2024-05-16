@@ -584,7 +584,7 @@ def save_cmd(output_dir):
     for ag in sys.argv:
         input_cmd += (ag + ' ')
     with open(os.path.join(output_dir, 'running_cmd.sh'), 'w') as f:
-        f.write(f'python {input_cmd}')
+        f.write(f'PUS_PER_NODE=4 ./tools/run_dist_launch.sh 4 ./tools/run_h2otr.sh  {input_cmd}')
         
 def make_dataset(args):
     if not args.eval:
