@@ -24,25 +24,18 @@ import argparse
 import datetime
 import numpy as np
 import os.path as op
+from cfg import Config
 from pathlib import Path
+import util.misc as utils
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 
 from glob import glob
-from cfg import Config
-import util.misc as utils
-import datasets.samplers as samplers
-from torch.utils.data import DataLoader
-from util.slconfig import SLConfig
-
-from models import build_model
-from datasets import build_dataset
-from arctic_tools.src.factory import collate_custom_fn as lstm_fn
-from engine import train_pose, test_pose, train_dn, eval_dn, eval_coco
-
-from util.tools import extract_epoch
-from util.scripts import smoothnet_main, submit_result
 from util.settings import *
+from models import build_model
+from util.tools import extract_epoch
+from util.scripts import submit_result
+from engine import train_pose, test_pose, train_dn, eval_dn, eval_coco
 
 
 # main script
